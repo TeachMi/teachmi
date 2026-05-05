@@ -79,6 +79,7 @@ jobs:
         run: pip install socketsecurity --upgrade
 
       - name: Run Socket scan
+        timeout-minutes: 15
         env:
           SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
           GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -88,7 +89,20 @@ jobs:
             PR_NUMBER=${{ github.event.pull_request.number }}
           fi
 
-          socketcli \
-            --target-path "$GITHUB_WORKSPACE" \
-            --scm github \
-            --pr-number "$PR_NUMBER"
+          for attempt in 1 2 3; do
+            if socketcli \
+              --target-path "$GITHUB_WORKSPACE" \
+              --scm github \
+              --pr-number "$PR_NUMBER"; then
+              exit 0
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              sleep_seconds=$((2 ** attempt))
+              echo "Socket scan attempt $attempt failed. Retrying in ${sleep_seconds}s..."
+              sleep "$sleep_seconds"
+            fi
+          done
+
+          echo "Socket scan failed after 3 attempts."
+          exit 1
