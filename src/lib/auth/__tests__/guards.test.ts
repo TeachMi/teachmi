@@ -8,7 +8,7 @@ function sessionFor(role: "student" | "tutor" | "admin"): Session {
     user: {
       id: `${role}-1`,
       role,
-      email: `${role}@teachmi.local`,
+      email: `${role}@teachme.local`,
     },
   };
 }

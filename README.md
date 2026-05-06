@@ -1,6 +1,6 @@
-# TeachMi App
+# TeachMe App
 
-Product application scaffold for TeachMi. Planning and UX source documents remain in `../design`.
+Product application scaffold for TeachMe. Planning and UX source documents remain in `../design`.
 
 ## Requirements
 

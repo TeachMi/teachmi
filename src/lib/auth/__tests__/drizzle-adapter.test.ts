@@ -35,7 +35,7 @@ describe("Auth.js Drizzle adapter table compatibility", () => {
     await adapter.createUser?.({
       id: "user-1",
       name: "Ada",
-      email: "ada@teachmi.local",
+      email: "ada@teachme.local",
       emailVerified: null,
       image: null,
     });
@@ -61,7 +61,7 @@ describe("Auth.js Drizzle adapter table compatibility", () => {
     expect(calls[0]?.sql).toContain('"role"');
     expect(calls[0]?.sql).toContain('"created_by_kind"');
     expect(calls[0]?.sql).toContain('"created_by_actor"');
-    expect(calls[0]?.params).toEqual(["Ada", "ada@teachmi.local", null, null]);
+    expect(calls[0]?.params).toEqual(["Ada", "ada@teachme.local", null, null]);
 
     expect(calls[1]?.sql).toContain('insert into "accounts"');
     expect(calls[1]?.sql).toContain('"access_token"');

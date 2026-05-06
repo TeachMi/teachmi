@@ -3,7 +3,7 @@ import { getDb } from "../src/lib/db/client";
 import { launchSubjects } from "../src/lib/db/seed-data";
 import { subjects, users } from "../src/lib/db/schema";
 
-const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@teachmi.local";
+const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@teachme.local";
 const now = new Date();
 
 const db = getDb();

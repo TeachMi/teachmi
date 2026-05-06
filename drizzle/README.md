@@ -1,6 +1,6 @@
 # Database Migration Discipline
 
-TeachMi uses Drizzle Kit with forward-only Postgres migrations.
+TeachMe uses Drizzle Kit with forward-only Postgres migrations.
 
 1. One migration per PR. Do not combine unrelated schema changes.
 2. Never edit a merged migration. Drizzle migration history uses hashes; tampering blocks deploys.

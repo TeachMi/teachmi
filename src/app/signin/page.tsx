@@ -30,7 +30,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
     <main className="flex min-h-screen flex-1 items-center justify-center bg-background px-6 py-16 text-foreground">
       <section className="w-full max-w-sm space-y-8 text-right">
         <div className="space-y-3">
-          <p className="text-sm font-semibold text-emerald-800">TeachMi</p>
+          <p className="text-sm font-semibold text-emerald-800">TeachMe</p>
           <h1 className="text-3xl font-semibold text-emerald-950">כניסה לחשבון</h1>
         </div>
         <form action={signInWithGoogle}>

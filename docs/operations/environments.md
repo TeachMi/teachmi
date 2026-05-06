@@ -6,11 +6,11 @@ This runbook tracks the manual provisioning needed after the local CI artifacts 
 
 Last validated: 2026-05-06.
 
-- Vercel project: `teachmi` (`prj_0Y2ISCqvQX7Xey2F5dAoFzZy0Zae`) in team `team_E2buH87hCmWlbNt0hNpNW7iQ`.
-- Neon project: `teachmi` (`ancient-heart-05930329`) in `aws-eu-central-1`.
+- Vercel project: `teachme` (`prj_0Y2ISCqvQX7Xey2F5dAoFzZy0Zae`) in team `team_E2buH87hCmWlbNt0hNpNW7iQ`.
+- Neon project: `teachme` (`ancient-heart-05930329`) in `aws-eu-central-1`.
 - GitHub branches: `main` and `e2e` both point at `14284abe378a17994eaab6cc0252c5339f90d05d`.
-- Production deployment: `dpl_9ZjfabqmHiAzXbpbBLc5aJnkQPvZ`, ready, alias `teachmi-brown.vercel.app`, functions in `fra1`.
-- E2E deployment: `dpl_GwrySCQztEMdztjx8ZNtDkeLUid3`, ready, alias `teachmi-git-e2e-aviels-projects-3a0be2f5.vercel.app`, functions in `fra1`.
+- Production deployment: `dpl_9ZjfabqmHiAzXbpbBLc5aJnkQPvZ`, ready, alias `teachme-brown.vercel.app`, functions in `fra1`.
+- E2E deployment: `dpl_GwrySCQztEMdztjx8ZNtDkeLUid3`, ready, alias `teachme-git-e2e-aviels-projects-3a0be2f5.vercel.app`, functions in `fra1`.
 - GitHub Actions CI passed on both `main` and `e2e` for commit `14284abe378a17994eaab6cc0252c5339f90d05d`.
 - Vercel env vars exist for Production, Development, and Preview scoped to `e2e`, including `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `AUTH_SECRET`, and MVP 1 stub provider selectors.
 

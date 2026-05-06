@@ -20,7 +20,7 @@ export function getSafeCallbackUrl(value: unknown, fallback = defaultPostSignInP
   }
 
   try {
-    const url = new URL(rawValue, "https://teachmi.local");
+    const url = new URL(rawValue, "https://teachme.local");
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     return fallback;
