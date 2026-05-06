@@ -37,6 +37,15 @@ const metaCols = {
   updatedByActor: text("updated_by_actor"),
 };
 
+const authUserMetaCols = {
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
+  createdByKind: text("created_by_kind").notNull().default("system"),
+  createdByActor: text("created_by_actor").notNull().default("authjs"),
+  updatedByKind: text("updated_by_kind"),
+  updatedByActor: text("updated_by_actor"),
+};
+
 // ------------------------------------------------------------------------------
 // users - identity + auth + role + locale + soft-delete
 // ------------------------------------------------------------------------------
@@ -51,7 +60,7 @@ export const users = pgTable(
     image: text("image"),
     // TeachMe extensions
     passwordHash: text("password_hash"),                                            // NULL for OAuth-only users; argon2id (NFR12)
-    role: text("role", { enum: ["student", "tutor", "admin"] }).notNull(),
+    role: text("role", { enum: ["student", "tutor", "admin"] }).notNull().default("student"),
     twoFactorSecret: text("two_factor_secret"),                                     // TOTP secret (MVP 2; encrypted at app layer)
     twoFactorVerifiedAt: timestamp("two_factor_verified_at", { withTimezone: true }),
     // Parent-account model (FR8 / Story 1.19) - under-18 dependents have parentUserId set;
@@ -62,7 +71,7 @@ export const users = pgTable(
     timezone: text("timezone").notNull().default("Asia/Jerusalem"),
     // Soft-delete (FR7)
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
-    ...metaCols,
+    ...authUserMetaCols,
     // NOTE: consent timestamps removed 2026-05-04 - single source of truth is `consent_receipts`.
     // NOTE: dual-role support (FR5) deferred to Phase 2+; `role` remains single-value enum.
   },
@@ -85,13 +94,13 @@ export const accounts = pgTable(
     type: text("type").notNull(),                            // 'oauth' | 'oidc' | 'email' | 'credentials'
     provider: text("provider").notNull(),                    // 'google', 'apple' (deferred), 'credentials'
     providerAccountId: text("provider_account_id").notNull(),
-    refreshToken: text("refresh_token"),
-    accessToken: text("access_token"),
-    expiresAt: integer("expires_at"),
-    tokenType: text("token_type"),
+    refresh_token: text("refresh_token"),
+    access_token: text("access_token"),
+    expires_at: integer("expires_at"),
+    token_type: text("token_type"),
     scope: text("scope"),
-    idToken: text("id_token"),
-    sessionState: text("session_state"),
+    id_token: text("id_token"),
+    session_state: text("session_state"),
   },
   (t) => ({
     providerAccountUnique: unique("uq_accounts_provider_account").on(t.provider, t.providerAccountId),
@@ -881,17 +890,32 @@ export const invoicesRelations = relations(invoices, ({ one }) => ({
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 
+export type Account = typeof accounts.$inferSelect;
+export type NewAccount = typeof accounts.$inferInsert;
+
+export type AuthSession = typeof sessions.$inferSelect;
+export type NewAuthSession = typeof sessions.$inferInsert;
+
+export type VerificationToken = typeof verificationTokens.$inferSelect;
+export type NewVerificationToken = typeof verificationTokens.$inferInsert;
+
 export type TutorProfile = typeof tutorProfiles.$inferSelect;
 export type NewTutorProfile = typeof tutorProfiles.$inferInsert;
 
 export type StudentSettings = typeof studentSettings.$inferSelect;
 export type NewStudentSettings = typeof studentSettings.$inferInsert;
 
+export type TutorDocument = typeof tutorDocuments.$inferSelect;
+export type NewTutorDocument = typeof tutorDocuments.$inferInsert;
+
 export type TutorWizardState = typeof tutorWizardState.$inferSelect;
 export type NewTutorWizardState = typeof tutorWizardState.$inferInsert;
 
 export type Subject = typeof subjects.$inferSelect;
 export type NewSubject = typeof subjects.$inferInsert;
+
+export type TutorSubject = typeof tutorSubjects.$inferSelect;
+export type NewTutorSubject = typeof tutorSubjects.$inferInsert;
 
 export type TutorAvailability = typeof tutorAvailability.$inferSelect;
 export type NewTutorAvailability = typeof tutorAvailability.$inferInsert;
@@ -931,6 +955,12 @@ export type NewPayout = typeof payouts.$inferInsert;
 
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type NewAuditEvent = typeof auditEvents.$inferInsert;
+
+export type WebhookIdempotencyKey = typeof webhookIdempotencyKeys.$inferSelect;
+export type NewWebhookIdempotencyKey = typeof webhookIdempotencyKeys.$inferInsert;
+
+export type TutorGreenInvoiceBusiness = typeof tutorGreenInvoiceBusiness.$inferSelect;
+export type NewTutorGreenInvoiceBusiness = typeof tutorGreenInvoiceBusiness.$inferInsert;
 
 export type NotificationPreferences = typeof notificationPreferences.$inferSelect;
 export type NewNotificationPreferences = typeof notificationPreferences.$inferInsert;

@@ -32,6 +32,8 @@ Last validated: 2026-05-06.
 - Preview deployments: all PRs and feature branches.
 - Fixed E2E alias: `e2e.teachme.app` for the `e2e` branch once DNS is available. Until then, use the Vercel branch alias.
 - Configure env vars per environment from `.env.example`.
+- For Google OAuth, configure `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` in Development, Preview scoped to `e2e`, and Production after OAuth credentials are issued. The callback URL is `/api/auth/callback/google` on each app origin.
+- Configure a Vercel WAF/rate-limit rule for `/api/auth/*` and `/signin` before enabling public traffic. Manual verification for Story 1.4 is: repeated high-frequency requests to auth endpoints are rate-limited, while normal sign-in still reaches Google OAuth.
 
 ## Neon
 
@@ -63,5 +65,6 @@ Validated long-lived branches:
 
 - PRs into `e2e` must pass CI and Socket.
 - PRs from `e2e` into `main` require manual approval and a smoke check of `e2e.teachme.app`.
+- Before public auth traffic, verify the Vercel WAF/rate-limit rule for `/api/auth/*` and `/signin` blocks high-frequency abuse and still allows normal Google OAuth sign-in.
 - Migration dry-run gates are added in Story 1.3 after Drizzle exists.
 - Playwright deploy checks are added in Story 1.9 after the golden path exists.
