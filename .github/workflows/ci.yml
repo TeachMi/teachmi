@@ -26,6 +26,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate promotion source branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$BASE_REF" = "main" ] && [ "$HEAD_REF" != "e2e" ]; then
+            echo "Pull requests into main must promote from e2e."
+            exit 1
+          fi
+
+          if [ "$BASE_REF" = "e2e" ] && [[ "$HEAD_REF" != feature/* ]]; then
+            echo "Pull requests into e2e must come from feature/* branches."
+            exit 1
+          fi
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:

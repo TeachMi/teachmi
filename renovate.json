@@ -6,6 +6,8 @@
     ":semanticCommits",
     ":separateMultipleMajorReleases"
   ],
+  "baseBranches": ["e2e"],
+  "branchPrefix": "feature/renovate/",
   "labels": ["dependencies"],
   "rangeStrategy": "bump",
   "vulnerabilityAlerts": {
