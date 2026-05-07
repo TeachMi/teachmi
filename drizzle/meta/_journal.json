@@ -15,6 +15,13 @@
       "when": 1778043108288,
       "tag": "0001_even_jane_foster",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778180691801,
+      "tag": "0002_goofy_forge",
+      "breakpoints": true
     }
   ]
 }
