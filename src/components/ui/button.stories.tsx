@@ -196,6 +196,16 @@ export const HeroSearch: Story = {
   },
 };
 
+export const AsChildLink: Story = {
+  name: "asChild — render as <a> / Next.js <Link>",
+  args: {
+    asChild: true,
+    variant: "accent",
+    size: "lg",
+    children: <a href="#">חפשו מורה</a>,
+  },
+};
+
 // Catalog
 
 export const AllVariants: Story = {

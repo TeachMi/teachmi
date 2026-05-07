@@ -1,3 +1,4 @@
+import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
@@ -36,6 +37,9 @@ export interface ButtonProps
   iconLeading?: ReactNode;
   iconTrailing?: ReactNode;
   fullWidth?: boolean;
+  /** Render as the child element (e.g. a `<Link>`) while keeping the same styles and props.
+   *  Disables `loading` (the asChild target controls its own content). */
+  asChild?: boolean;
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
@@ -47,6 +51,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     iconLeading,
     iconTrailing,
     fullWidth = false,
+    asChild = false,
     disabled,
     children,
     type = "button",
@@ -55,17 +60,27 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   ref,
 ) {
   const isDisabled = disabled || loading;
+  const composedClassName = cn(
+    buttonVariants({ variant, size }),
+    fullWidth && "w-full",
+    className,
+  );
+
+  if (asChild) {
+    return (
+      <Slot ref={ref} className={composedClassName} {...rest}>
+        {children}
+      </Slot>
+    );
+  }
+
   return (
     <button
       ref={ref}
       type={type}
       disabled={isDisabled}
       aria-busy={loading || undefined}
-      className={cn(
-        buttonVariants({ variant, size }),
-        fullWidth && "w-full",
-        className,
-      )}
+      className={composedClassName}
       {...rest}
     >
       {loading ? (
