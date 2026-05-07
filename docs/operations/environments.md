@@ -68,3 +68,29 @@ Validated long-lived branches:
 - Before public auth traffic, verify the Vercel WAF/rate-limit rule for `/api/auth/*` and `/signin` blocks high-frequency abuse and still allows normal Google OAuth sign-in.
 - Migration dry-run gates are added in Story 1.3 after Drizzle exists.
 - Playwright deploy checks are added in Story 1.9 after the golden path exists.
+
+## Database Migrations (Drizzle)
+
+Drizzle admin commands (`pnpm db:migrate`, `pnpm db:push`, `pnpm db:pull`, `pnpm db:studio`) **require `DATABASE_URL_UNPOOLED`** — the Neon direct/unpooled endpoint. The pooler doesn't support multi-statement migration blocks; running admin commands against it fails mid-transaction with cryptic Neon errors. `drizzle.config.ts` enforces this with a fail-loud check at startup.
+
+Runtime application queries continue to use `DATABASE_URL` (the pooled endpoint) via `src/lib/db/client.ts` — this is the right shape for serverless.
+
+**Operational implications:**
+
+- Vercel environments (Production, E2E, Development, plus per-PR Preview) must provision **both** `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct). Already configured per the validated state above.
+- Local dev `.env`: same — both keys.
+- If a Neon dev branch is paused (auto-suspends after inactivity), the first admin command may hang on websocket handshake. Wake the branch via the Neon dashboard before running migrations, or use a quick read query first.
+
+## Provider Selection (cross-cutting concern #2 — AD-13)
+
+External vendors (PayMe, Green Invoice, gov.il, Daily.co, Resend) live behind the `lib/providers/*` strategy interfaces (Story 1.6). Selection is env-var driven; flipping a vendor from MVP-1 stub to MVP-2 full is a Vercel env-var change, not a code release.
+
+| Env var | MVP 1 default | MVP 2 value | Wired in |
+|---|---|---|---|
+| `PAYMENTS_PROVIDER` | `stub` | `payme` | Story 8.2 |
+| `INVOICE_PROVIDER` | `stub` | `green-invoice` | Stories 8.1 + 8.3 |
+| `GOVIL_PROVIDER` | `stub` | `deeplink` | Stories 2.8 + 2.9 |
+| `LESSON_ROOM_PROVIDER` | `stub` | `daily` | Story 5.1 |
+| `EMAIL_PROVIDER` | `stub` | `resend` | Story 6.1 |
+
+Setting any of these to a value not yet implemented throws a fail-loud "not yet implemented" error pointing to the future story. Whitespace is trimmed; unset / empty values default to `"stub"`.
