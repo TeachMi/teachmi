@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
+import { Button } from "@/components/ui/button";
+import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { formatHebrewWeekday, formatIlsCurrency } from "@/lib/hebrew/format";
 
 export default function Home() {
@@ -23,14 +25,11 @@ export default function Home() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row">
+              <Button asChild variant="accent" size="lg">
+                <Link href="/browse">חפשו מורה</Link>
+              </Button>
               <Link
-                className="inline-flex h-12 items-center justify-center rounded-xl bg-tertiary-fixed px-6 text-sm font-bold text-on-tertiary-fixed shadow-lg transition hover:bg-tertiary-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tertiary-fixed"
-                href="/browse"
-              >
-                חפשו מורה
-              </Link>
-              <Link
-                className="inline-flex h-12 items-center justify-center rounded-xl border border-on-primary/25 px-6 text-sm font-bold text-on-primary transition hover:border-tertiary-fixed hover:text-tertiary-fixed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tertiary-fixed"
+                className="inline-flex h-12 items-center justify-center rounded-xl border border-on-primary/25 px-6 text-sm font-bold text-on-primary transition-colors hover:border-tertiary-fixed hover:text-tertiary-fixed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tertiary-fixed"
                 href="/signin"
               >
                 כניסה לחשבון
@@ -61,30 +60,24 @@ export default function Home() {
 
       <section className="bg-linen">
         <div className="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-6 py-10 md:grid-cols-3">
-          <div className="rounded-xl border border-linen-border bg-surface-lowest p-5 text-start">
-            <h2 className="font-display text-lg font-bold text-primary-container">
-              לומדים בעברית
-            </h2>
-            <p className="mt-2 text-sm leading-7 text-on-surface-variant">
+          <Card padding="sm">
+            <CardTitle className="text-lg">לומדים בעברית</CardTitle>
+            <CardBody className="mt-2 leading-7 text-on-surface-variant">
               כל החוויה בנויה לשפה, לקצב ולציפיות של תלמידים והורים בישראל.
-            </p>
-          </div>
-          <div className="rounded-xl border border-linen-border bg-surface-lowest p-5 text-start">
-            <h2 className="font-display text-lg font-bold text-primary-container">
-              מורים מסודרים
-            </h2>
-            <p className="mt-2 text-sm leading-7 text-on-surface-variant">
+            </CardBody>
+          </Card>
+          <Card padding="sm">
+            <CardTitle className="text-lg">מורים מסודרים</CardTitle>
+            <CardBody className="mt-2 leading-7 text-on-surface-variant">
               המטרה היא לחבר אתכם למורים שפועלים בצורה שקופה, חוקית וברורה.
-            </p>
-          </div>
-          <div className="rounded-xl border border-linen-border bg-surface-lowest p-5 text-start">
-            <h2 className="font-display text-lg font-bold text-primary-container">
-              שיעור בלי בלגן
-            </h2>
-            <p className="mt-2 text-sm leading-7 text-on-surface-variant">
+            </CardBody>
+          </Card>
+          <Card padding="sm">
+            <CardTitle className="text-lg">שיעור בלי בלגן</CardTitle>
+            <CardBody className="mt-2 leading-7 text-on-surface-variant">
               חיפוש, כניסה לחשבון וניהול שיעורים מתחילים ממקום אחד ברור.
-            </p>
-          </div>
+            </CardBody>
+          </Card>
         </div>
       </section>
     </AppShell>

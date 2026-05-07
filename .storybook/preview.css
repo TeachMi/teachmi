@@ -1,0 +1,31 @@
+/* Storybook-only @font-face declarations.
+ * The app uses next/font/local (src/app/layout.tsx) which doesn't run
+ * inside Storybook. We mirror the same TTFs from /public/fonts so
+ * stories render with the production typography.
+ */
+@font-face {
+  font-family: "Heebo";
+  src: url("/fonts/heebo/Heebo-wght.ttf") format("truetype-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Assistant";
+  src: url("/fonts/assistant/Assistant-wght.ttf") format("truetype-variations");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-heebo: "Heebo";
+  --font-assistant: "Assistant";
+}
+
+body {
+  background: var(--surface);
+  color: var(--on-surface);
+  font-family: var(--font-heebo), Arial, Helvetica, sans-serif;
+}

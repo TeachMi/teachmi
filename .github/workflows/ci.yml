@@ -62,6 +62,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Storybook coverage (every components/ui/*.tsx has *.stories.tsx)
+        run: pnpm check:stories
+
       - name: Unit tests
         run: pnpm test
 
