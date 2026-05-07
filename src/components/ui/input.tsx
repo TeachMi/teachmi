@@ -3,21 +3,26 @@ import { forwardRef, useId, type InputHTMLAttributes, type ReactNode } from "rea
 import { cn } from "@/lib/cn";
 
 const inputVariants = cva(
-  "block w-full rounded-lg border bg-surface-lowest text-on-surface placeholder:text-outline transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tertiary-accent disabled:cursor-not-allowed disabled:bg-surface-low disabled:text-on-surface-variant",
+  "block w-full rounded-lg border text-on-surface placeholder:text-outline transition-colors focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim focus:border-primary-fixed-dim disabled:cursor-not-allowed disabled:opacity-60",
   {
     variants: {
       tone: {
-        default: "border-linen-border focus-visible:border-primary-container",
-        error: "border-danger focus-visible:border-danger",
+        default: "border-linen-border",
+        error: "border-danger focus:ring-danger/40 focus:border-danger",
+      },
+      surface: {
+        white: "bg-surface-lowest",
+        linen: "bg-linen",
       },
       size: {
-        sm: "h-8 px-3 text-xs",
-        md: "h-10 px-3 text-sm",
-        lg: "h-12 px-4 text-base",
+        sm: "px-3 py-2 text-xs",
+        md: "px-4 py-3 text-sm",
+        lg: "px-4 py-3.5 text-base",
       },
     },
     defaultVariants: {
       tone: "default",
+      surface: "white",
       size: "md",
     },
   },
@@ -37,6 +42,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   {
     className,
     tone,
+    surface,
     size,
     label,
     hint,
@@ -52,7 +58,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   const inputId = id ?? generatedId;
   const hintId = hint ? `${inputId}-hint` : undefined;
   const errorId = error ? `${inputId}-error` : undefined;
-  const describedBy = [ariaDescribedBy, hintId, errorId].filter(Boolean).join(" ") || undefined;
+  const describedBy =
+    [ariaDescribedBy, hintId, errorId].filter(Boolean).join(" ") || undefined;
   const resolvedTone = error ? "error" : tone;
 
   return (
@@ -68,7 +75,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
         disabled={disabled}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy}
-        className={cn(inputVariants({ tone: resolvedTone, size }), className)}
+        className={cn(inputVariants({ tone: resolvedTone, surface, size }), className)}
         {...rest}
       />
       {hint && !error && (
