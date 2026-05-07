@@ -1,3 +1,4 @@
+import { AppShell } from "@/components/layout/AppShell";
 import { signOut } from "@/lib/auth/auth";
 import { requireAuth } from "@/lib/auth/guards";
 
@@ -14,24 +15,50 @@ export default async function DashboardPage() {
   const displayName = user.name ?? user.email ?? "TeachMe";
 
   return (
-    <main className="flex min-h-screen flex-1 bg-background px-6 py-16 text-foreground">
+    <AppShell
+      activeHref="/dashboard"
+      headerAction={
+        <form action={signOutAction}>
+          <button
+            className="h-10 rounded-lg border border-linen-border bg-surface-lowest px-4 text-sm font-bold text-on-surface shadow-sm transition hover:border-primary-fixed-dim hover:text-primary-container focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-container"
+            type="submit"
+          >
+            יציאה
+          </button>
+        </form>
+      }
+      mainClassName="flex flex-1 px-6 py-16"
+    >
       <section className="mx-auto flex w-full max-w-5xl flex-col gap-8">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-3 text-right">
-            <p className="text-sm font-semibold text-emerald-800">TeachMe</p>
-            <h1 className="text-3xl font-semibold text-emerald-950">לוח הבקרה</h1>
-            <p className="text-base leading-7 text-zinc-700">{displayName}</p>
+        <div className="space-y-3 text-start">
+          <p className="text-sm font-bold text-primary-container">TeachMe</p>
+          <h1 className="font-display text-3xl font-extrabold text-primary-container">
+            לוח הבקרה
+          </h1>
+          <p className="text-base leading-7 text-on-surface-variant">{displayName}</p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="rounded-xl border border-linen-border bg-surface-lowest p-5 text-start">
+            <p className="text-sm text-on-surface-variant">השיעור הבא</p>
+            <h2 className="mt-2 font-display text-xl font-bold text-primary-container">
+              מוכן לסיפורי הדשבורד
+            </h2>
           </div>
-          <form action={signOutAction}>
-            <button
-              className="h-10 rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-900 shadow-sm transition hover:border-emerald-700 hover:text-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-              type="submit"
-            >
-              יציאה
-            </button>
-          </form>
+          <div className="rounded-xl border border-linen-border bg-surface-lowest p-5 text-start">
+            <p className="text-sm text-on-surface-variant">מעטפת</p>
+            <h2 className="mt-2 font-display text-xl font-bold text-primary-container">
+              RTL מלא
+            </h2>
+          </div>
+          <div className="rounded-xl border border-linen-border bg-surface-lowest p-5 text-start">
+            <p className="text-sm text-on-surface-variant">חשבון</p>
+            <h2 className="mt-2 font-display text-xl font-bold text-primary-container">
+              מחובר
+            </h2>
+          </div>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }

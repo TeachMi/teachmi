@@ -18,4 +18,13 @@ pnpm lint
 pnpm start
 ```
 
-The UI is Hebrew-first and RTL from the root layout. Later BASE stories add the full app shell, design tokens, providers, auth, Storybook, and E2E harness.
+The UI is Hebrew-first and RTL from the root layout. The app shell and design tokens use the TeachMe mock palette from `../design/mocks/theme.js`.
+
+## Fonts
+
+Hebrew fonts are self-hosted through `next/font/local` so production builds do not depend on build-time Google Fonts downloads:
+
+- `public/fonts/heebo/Heebo-wght.ttf`
+- `public/fonts/assistant/Assistant-wght.ttf`
+
+Both files are sourced from the Google Fonts repository and licensed under the SIL Open Font License 1.1.
