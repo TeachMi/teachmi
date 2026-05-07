@@ -1,4 +1,6 @@
 import { AppShell } from "@/components/layout/AppShell";
+import { Button } from "@/components/ui/button";
+import { Card, CardBody } from "@/components/ui/card";
 import { signOut } from "@/lib/auth/auth";
 import { requireAuth } from "@/lib/auth/guards";
 
@@ -19,12 +21,9 @@ export default async function DashboardPage() {
       activeHref="/dashboard"
       headerAction={
         <form action={signOutAction}>
-          <button
-            className="h-10 rounded-lg border border-linen-border bg-surface-lowest px-4 text-sm font-bold text-on-surface shadow-sm transition hover:border-primary-fixed-dim hover:text-primary-container focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-container"
-            type="submit"
-          >
+          <Button type="submit" variant="outline" size="md">
             יציאה
-          </button>
+          </Button>
         </form>
       }
       mainClassName="flex flex-1 px-6 py-16"
@@ -39,24 +38,24 @@ export default async function DashboardPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="rounded-xl border border-linen-border bg-surface-lowest p-5 text-start">
+          <Card padding="sm">
             <p className="text-sm text-on-surface-variant">השיעור הבא</p>
-            <h2 className="mt-2 font-display text-xl font-bold text-primary-container">
+            <CardBody className="mt-2 font-display text-xl font-bold text-primary-container">
               מוכן לסיפורי הדשבורד
-            </h2>
-          </div>
-          <div className="rounded-xl border border-linen-border bg-surface-lowest p-5 text-start">
+            </CardBody>
+          </Card>
+          <Card padding="sm">
             <p className="text-sm text-on-surface-variant">מעטפת</p>
-            <h2 className="mt-2 font-display text-xl font-bold text-primary-container">
+            <CardBody className="mt-2 font-display text-xl font-bold text-primary-container">
               RTL מלא
-            </h2>
-          </div>
-          <div className="rounded-xl border border-linen-border bg-surface-lowest p-5 text-start">
+            </CardBody>
+          </Card>
+          <Card padding="sm">
             <p className="text-sm text-on-surface-variant">חשבון</p>
-            <h2 className="mt-2 font-display text-xl font-bold text-primary-container">
+            <CardBody className="mt-2 font-display text-xl font-bold text-primary-container">
               מחובר
-            </h2>
-          </div>
+            </CardBody>
+          </Card>
         </div>
       </section>
     </AppShell>

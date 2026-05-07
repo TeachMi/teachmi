@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
+import { Button } from "@/components/ui/button";
 import { auth, signIn } from "@/lib/auth/auth";
 import { defaultPostSignInPath, getSafeCallbackUrl } from "@/lib/auth/callback-url";
 
@@ -53,15 +54,19 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
         </div>
         <form action={signInWithGoogle}>
           <input name="callbackUrl" type="hidden" value={callbackUrl} />
-          <button
-            className="flex h-12 w-full items-center justify-center gap-3 rounded-lg border border-linen-border bg-surface-lowest px-4 text-base font-bold text-on-surface shadow-sm transition hover:border-primary-fixed-dim hover:text-primary-container focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-container"
+          <Button
             type="submit"
+            variant="outline"
+            size="lg"
+            fullWidth
+            iconLeading={
+              <span aria-hidden="true" className="text-lg">
+                G
+              </span>
+            }
           >
-            <span aria-hidden="true" className="text-lg">
-              G
-            </span>
-            <span>כניסה עם Google</span>
-          </button>
+            כניסה עם Google
+          </Button>
         </form>
       </section>
     </AppShell>
