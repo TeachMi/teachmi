@@ -786,6 +786,29 @@ export const dataExportTokens = pgTable(
 );
 
 // ------------------------------------------------------------------------------
+// _dev_email_outbox - dev/preview-only visibility surface for the StubEmailProvider.
+// Underscore-prefix signals "debug surface, not a product table". Empty in prod
+// because EMAIL_PROVIDER=resend swaps the Stub out (Story 6.1).
+// ------------------------------------------------------------------------------
+export const devEmailOutbox = pgTable(
+  "_dev_email_outbox",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    kind: text("kind").notNull(),                                                // 'transactional' | 'marketing'
+    toAddress: text("to_address").notNull(),
+    subject: text("subject").notNull(),
+    templateId: text("template_id").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    consentReceiptRef: text("consent_receipt_ref"),                              // null for transactional
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    kindCheck: check("ck_dev_email_outbox_kind", sql`${t.kind} in ('transactional','marketing')`),
+    createdAtIdx: index("idx_dev_email_outbox_created_at").on(t.createdAt),
+  }),
+);
+
+// ------------------------------------------------------------------------------
 // Relations - enable typed `db.query.users.findFirst({ with: { tutorProfile: true } })` etc.
 // ------------------------------------------------------------------------------
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -973,3 +996,6 @@ export type NewNotificationLog = typeof notificationsLog.$inferInsert;
 
 export type DataExportToken = typeof dataExportTokens.$inferSelect;
 export type NewDataExportToken = typeof dataExportTokens.$inferInsert;
+
+export type DevEmailOutbox = typeof devEmailOutbox.$inferSelect;
+export type NewDevEmailOutbox = typeof devEmailOutbox.$inferInsert;
