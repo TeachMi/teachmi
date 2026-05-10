@@ -1,5 +1,6 @@
 import type { Preview } from '@storybook/nextjs-vite'
 import React from 'react'
+import { DirectionProvider } from '@radix-ui/react-direction'
 import '../src/app/globals.css'
 import './preview.css'
 
@@ -36,9 +37,13 @@ const preview: Preview = {
         document.documentElement.setAttribute('lang', lang)
       }
       return React.createElement(
-        'div',
-        { dir: direction, lang, className: 'min-h-[6rem] bg-surface p-6 text-on-surface font-body' },
-        React.createElement(Story, null)
+        DirectionProvider,
+        { dir: direction },
+        React.createElement(
+          'div',
+          { dir: direction, lang, className: 'min-h-[6rem] bg-surface p-6 text-on-surface font-body' },
+          React.createElement(Story, null)
+        )
       )
     },
   ],
