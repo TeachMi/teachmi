@@ -29,6 +29,11 @@ export const ModalOverlay = forwardRef<
   );
 });
 
+// Centering: `left-1/2 -translate-x-1/2` is intentional and direction-agnostic.
+// The modal's left edge sits at 50% of the viewport width, then the element shifts
+// 50% of its own width leftward — net result is centered in BOTH LTR and RTL.
+// Logical `start-1/2 -translate-x-1/2` would NOT center in RTL (start = right edge
+// at 50%, then translateX(-50%) leaves it off-center to the left). Mirrors shadcn.
 const modalContentVariants = cva(
   "fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl bg-surface-lowest shadow-2xl outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=open]:duration-[250ms]",
   {
