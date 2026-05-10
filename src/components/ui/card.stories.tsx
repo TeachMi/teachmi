@@ -8,6 +8,7 @@ import {
   CardTitle,
 } from "./card";
 import { Button } from "./button";
+import { Input } from "./input";
 
 const meta = {
   title: "UI/Card",
@@ -148,7 +149,15 @@ export const Disabled: Story = {
 
 export const TutorCard: Story = {
   name: "Composition — tutor card (browse / featured)",
-  parameters: { layout: "padded" },
+  parameters: {
+    layout: "padded",
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/browse.html` — the tutor result card grid. Photo + rating chip overlay, name + price, subject sub-label, availability tag, primary CTA. Real copy from the mock (`דניאל כהן`, `פסיכומטרי ומתמטיקה`, `זמין מחר 16:00`).",
+      },
+    },
+  },
   render: () => (
     <Card padding="none" radius="xl" className="max-w-xs overflow-hidden">
       <div className="relative h-56 overflow-hidden bg-surface-high">
@@ -180,21 +189,22 @@ export const TutorCard: Story = {
 export const FormSection: Story = {
   name: "Composition — form section card (signup / login)",
   args: { radius: "2xl", padding: "md" },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/signup.html` — the \"פרטי הסטודנט/ית\" student form section + matching `mocks/login.html` form-card pattern. Single Card with header + form body, primary submit CTA at the bottom.",
+      },
+    },
+  },
   render: (args) => (
     <Card {...args} className="max-w-sm">
       <CardHeader>
         <CardTitle>פרטי הסטודנט/ית</CardTitle>
       </CardHeader>
-      <form className="space-y-4 text-start" onSubmit={(e) => e.preventDefault()}>
-        <div>
-          <label className="block text-sm font-bold mb-1.5">שם מלא</label>
-          <input
-            type="text"
-            placeholder="ישראל ישראלי"
-            className="w-full border border-linen-border rounded-lg px-4 py-3 bg-surface-lowest text-sm focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim"
-          />
-        </div>
-        <Button variant="primary" fullWidth size="lg">
+      <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+        <Input label="שם מלא" placeholder="ישראל ישראלי" required />
+        <Button variant="primary" fullWidth size="lg" type="submit">
           צרו חשבון
         </Button>
       </form>

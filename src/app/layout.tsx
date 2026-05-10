@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { Analytics } from "@vercel/analytics/next";
+import { RadixProviders } from "@/components/providers/radix-providers";
 import "./globals.css";
 
 const heebo = localFont({
@@ -38,7 +39,7 @@ export default function RootLayout({
       className={`${heebo.variable} ${assistant.variable} h-full bg-surface antialiased`}
     >
       <body className="flex min-h-full flex-col bg-surface font-body text-on-surface">
-        {children}
+        <RadixProviders dir="rtl">{children}</RadixProviders>
         <Analytics />
       </body>
     </html>
