@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { Input } from "./input";
+import { Card, CardBody } from "./card";
 
 const meta = {
   title: "UI/Input",
@@ -112,13 +113,22 @@ export const English: Story = {
 
 export const LoginForm: Story = {
   name: "Composition — login form",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/login.html` — email + password fields stacked inside a white card on the linen background. Real placeholder copy from the mock.",
+      },
+    },
+  },
   render: () => (
-    <form
-      className="space-y-4 max-w-sm bg-white border border-linen-border rounded-2xl p-6"
-      onSubmit={(e) => e.preventDefault()}
-    >
-      <Input label="אימייל" type="email" placeholder="you@example.com" required />
-      <Input label="סיסמה" type="password" placeholder="••••••••" required />
-    </form>
+    <Card radius="2xl" className="max-w-sm">
+      <CardBody>
+        <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+          <Input label="אימייל" type="email" placeholder="you@example.com" required />
+          <Input label="סיסמה" type="password" placeholder="••••••••" required />
+        </form>
+      </CardBody>
+    </Card>
   ),
 };
