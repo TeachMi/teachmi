@@ -4,17 +4,38 @@
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
-# ⚠️ Known broken: `pnpm dev` and `pnpm start` (as of 2026-05-11, mid Story 1.12)
+# Proxy / Auth middleware shape — `export { auth as proxy }`, not `export default auth(handler)`
 
-**Do not run `pnpm dev` or `pnpm start` on this repo.** Both fail in ways that have, repeatedly, frozen the local Windows machine by exhausting memory. Use `pnpm build` + static-HTML inspection of `.next/server/app/*.html` for verification until this is fixed.
+`src/proxy.ts` re-exports `auth` from `lib/auth/auth.ts` under the **named** export `proxy`, not as a default. The reason is subtle but load-bearing:
 
-**`pnpm dev` symptom:** Boots ("Ready in ~500ms") but every page compile fails with `Error: Can't resolve 'tailwindcss' in 'C:\workspace'`. The resolver is rooted at `C:\workspace` (the parent of `teachmi-code/`), not `teachmi-code/` itself. Removing the parent's `package.json` / `pnpm-lock.yaml` / `node_modules` did **not** fix it — there's another marker we haven't identified. Setting `turbopack.root` and `outputFileTracingRoot` in `next.config.ts` did **not** fix it. The watcher then keeps trying and exhausts paging.
+```ts
+// src/proxy.ts — current, working
+export { auth as proxy } from "@/lib/auth/auth";
+export const config = { matcher: ["/dashboard/:path*"] };
+```
 
-**`pnpm start` symptom:** Boots cleanly. Every request returns HTTP 500 with `The Proxy file "/proxy" must export a function named 'proxy' or a default function.` This is a runtime check in Next 16's Proxy/Middleware loader. `src/proxy.ts` (from Story 1.4) does `export default auth(...)` from `next-auth@5.0.0-beta.31`. `next build` accepts the shape; `next start` rejects it. Likely a next-auth-beta ↔ Next 16 incompatibility.
+**Why not `export default auth((request) => { ... })` (the next-auth v5 docs pattern)?** `auth.ts` configures NextAuth with a **dynamic** config factory (`NextAuth(() => createAuthConfig())`) — this defers DB-client creation until auth is actually invoked, which is needed because the Drizzle adapter loads DB env vars eagerly and would break unit tests that don't have a DATABASE_URL. In the dynamic-config branch of next-auth v5 beta, the outer `auth` function is `async` (see `node_modules/next-auth/lib/index.js` lines 41–86), so `auth(handler)` returns a `Promise<NextMiddleware>` — not the `NextMiddleware` the TypeScript signature claims. `next start`'s Proxy loader checks `typeof handlerUserland === 'function'` at runtime and rejects Promise-typed defaults, throwing `The Proxy file "/proxy" must export a function named 'proxy' or a default function.`
 
-**What works:** `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm check:stories`, `pnpm run ci`. The whole CI pipeline is green; only the live dev/serve surface is broken.
+**Why `export { auth as default } from "..."` also doesn't work:** Next 16's build-time static analyzer (`get-page-static-info.js`) only recognizes `default` from `ExportDefaultDeclaration`/`ExportDefaultExpression`, not from `ExportNamedDeclaration` specifiers. But the same analyzer **does** recognize `proxy` as a valid named export via `export { foo as proxy }`. Hence the chosen shape.
 
-**Before any UI-heavy story (1.13+, Epics 2-7) is started, somebody needs a focused half-hour to fix this** — the static-HTML escape hatch will not scale once stories involve forms, client-side state, or auth-gated views.
+**If you ever need to add custom logic** (cookie inspection, audit logging, redirect rewrites), wrap auth manually instead of using the `auth(handler)` wrapper pattern. Either:
+
+```ts
+// Option A: export a wrapping function (satisfies both static analyzer + runtime check)
+import { auth } from "@/lib/auth/auth";
+export default async function proxy(request: NextRequest) {
+  // pre-logic
+  const result = await (auth as unknown as (req: NextRequest) => Promise<Response>)(request);
+  // post-logic
+  return result;
+}
+```
+
+Or switch `auth.ts` to static config (`NextAuth(createAuthConfig())`) — but then `getAuthAdapter()` runs at module-import time and breaks any test that imports any module that transitively imports `auth.ts`. Don't go there without solving the test DB-stub problem.
+
+# Workspace root: keep `C:\workspace\` clean
+
+Next.js 16's Turbopack uses `find-up` to locate the workspace root, walking up from the project dir looking for `pnpm-workspace.yaml` or any lockfile. The result is the directory of the **highest** match. If a stray `package.json` or `pnpm-lock.yaml` lives at `C:\workspace\` (the parent of `teachmi-code/`), Next will pick `C:\workspace\` as the root, scope its file watcher to that entire tree (multi-GB including `TeachMe/`, `_bmad/`, sibling repos), and exhaust paging memory until the machine freezes. If you ever see the warning "Next.js inferred your workspace root, but it may not be correct" with `Detected additional lockfiles` pointing inside `teachmi-code/`, **clear the offending parent files** rather than tweaking `turbopack.root` (which doesn't override the find-up walk).
 
 # Storybook authoring rule — composition stories must mirror a mock
 
