@@ -27,9 +27,11 @@ async function tryReadSession() {
   // already-signed-in redirect is a UX convenience, not a security boundary,
   // so degrade to "no session" rather than crashing the whole page.
   // Same precedent as src/app/signup/page.tsx (commit 912124e).
+  // We DO log the error: a transient Neon outage shouldn't be invisible.
   try {
     return await auth();
-  } catch {
+  } catch (err) {
+    console.error("[signin/page] auth() failed; rendering as signed-out", err);
     return null;
   }
 }

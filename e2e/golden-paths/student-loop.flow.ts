@@ -8,7 +8,12 @@ export function buildStudentEmail(testInfo: TestInfo): string {
     .replace(/(^-|-$)/g, "")
     .slice(0, 40);
 
-  return `student-loop+${runId}-${normalizedTitle || "smoke"}@example.test`;
+  // Story 1.14 code-review: include workerIndex so parallel Playwright workers
+  // don't collide on the same "user" + sessions rows when GITHUB_RUN_ID is the
+  // fallback `"local"` (multiple devs against a shared Neon dev branch).
+  const worker = testInfo.workerIndex;
+
+  return `student-loop+${runId}-w${worker}-${normalizedTitle || "smoke"}@example.test`;
 }
 
 export async function completeStudentLoop(page: Page, testInfo: TestInfo): Promise<void> {
@@ -32,12 +37,14 @@ export async function completeStudentLoop(page: Page, testInfo: TestInfo): Promi
     return;
   }
 
-  const baseUrl = new URL(page.url());
+  // Use `url` (not `domain`) so Playwright resolves the host from the URL —
+  // avoids the localhost ↔ 127.0.0.1 cross-navigation drop where a fixed
+  // domain would refuse to set on the other hostname.
   await page.context().addCookies([
     {
       name: getSessionCookieName(),
       value: verified.sessionToken,
-      domain: baseUrl.hostname,
+      url: page.url(),
       path: "/",
       httpOnly: true,
       sameSite: "Lax",

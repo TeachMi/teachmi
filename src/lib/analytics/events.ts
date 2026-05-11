@@ -7,7 +7,6 @@
 // for the full Story 1.8 scope.
 
 import type { AppRole } from "../auth/roles";
-import type { AuthRateLimitAction } from "../auth/rate-limit";
 
 // `auth.signup_attempt` / `auth.signin_attempt` exist only as `audit_events`
 // rows — not PostHog events. Counting per-attempt at the analytics layer would
@@ -26,12 +25,22 @@ export interface EmailVerifiedEvent {
 }
 
 // Generalized in Story 1.14 from `SignupRateLimitedEvent` — fires for any
-// throttled auth action (signup / signup_resend / signin).
-export interface AuthRateLimitedEvent {
-  event: "signup_rate_limited" | "signin_rate_limited";
+// throttled auth action. Split into two literal-typed branches (Story 1.14
+// code review) so an `event: "signup_rate_limited"` + `action: "signin"` mix
+// can't compile.
+export interface SignupRateLimitedEvent {
+  event: "signup_rate_limited";
   anonymizedIp: string;
-  action: AuthRateLimitAction;
+  action: "signup" | "signup_resend";
 }
+
+export interface SigninRateLimitedEvent {
+  event: "signin_rate_limited";
+  anonymizedIp: string;
+  action: "signin";
+}
+
+export type AuthRateLimitedEvent = SignupRateLimitedEvent | SigninRateLimitedEvent;
 
 export interface SignInFailedEvent {
   event: "signin_failed";
@@ -41,7 +50,8 @@ export interface SignInFailedEvent {
 export type AnalyticsEvent =
   | SignupCompletedEvent
   | EmailVerifiedEvent
-  | AuthRateLimitedEvent
+  | SignupRateLimitedEvent
+  | SigninRateLimitedEvent
   | SignInFailedEvent;
 
 export type AnalyticsEventName = AnalyticsEvent["event"];

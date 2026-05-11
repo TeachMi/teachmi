@@ -3,7 +3,6 @@
 import { useActionState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { CheckboxField } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { signInAction } from "./actions";
 import { SIGNIN_INITIAL_STATE, type SignInActionState } from "./signin-state";
@@ -52,8 +51,9 @@ export function SignInForm({ callbackUrl }: SignInFormProps) {
         surface="linen"
       />
 
-      {/* Visual placeholder — backend wiring deferred post-MVP (story 1.14 scope). */}
-      <CheckboxField name="remember" value="on" label="זכור אותי במכשיר זה" />
+      {/* TODO(post-MVP): expose session-duration choice (the mock's "remember me"
+          checkbox was removed in 1.14 code-review — a rendered checkbox that
+          ignored the user's preference would have been worse than no checkbox). */}
 
       {state.formError && (
         <p

@@ -71,6 +71,7 @@ describe("authorizeWithCredentials — short-circuits before verify()", () => {
         emailVerified: new Date(),
         image: null,
         passwordHash: null,
+        deletedAt: null,
       },
     ]);
     const result = await authorizeWithCredentials(
@@ -80,6 +81,28 @@ describe("authorizeWithCredentials — short-circuits before verify()", () => {
     expect(result).toBeNull();
     // Verify NOT called — confirms the short-circuit timing trade-off is in effect.
     expect(calls.count).toBe(0);
+  });
+
+  it("returns null when the user is soft-deleted (deletedAt set)", async () => {
+    const { db, calls, deps } = makeDeps();
+    db.queueSelect([
+      {
+        id: "user-deleted",
+        email: "deleted@example.com",
+        name: null,
+        role: "student",
+        emailVerified: new Date(),
+        image: null,
+        passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$abc$def",
+        deletedAt: new Date("2026-04-01T00:00:00Z"),
+      },
+    ]);
+    const result = await authorizeWithCredentials(
+      { email: "deleted@example.com", password: "hello12345" },
+      deps,
+    );
+    expect(result).toBeNull();
+    expect(calls.count).toBe(0); // short-circuit before verify
   });
 
   it("returns null when the user's email is not verified", async () => {
@@ -93,6 +116,7 @@ describe("authorizeWithCredentials — short-circuits before verify()", () => {
         emailVerified: null,
         image: null,
         passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$abc$def",
+        deletedAt: null,
       },
     ]);
     const result = await authorizeWithCredentials(
@@ -116,6 +140,7 @@ describe("authorizeWithCredentials — verify() outcomes", () => {
         emailVerified: new Date(),
         image: null,
         passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$abc$def",
+        deletedAt: null,
       },
     ]);
     const result = await authorizeWithCredentials(
@@ -138,6 +163,7 @@ describe("authorizeWithCredentials — verify() outcomes", () => {
         emailVerified: verifiedAt,
         image: "https://cdn.example/avatar.png",
         passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$abc$def",
+        deletedAt: null,
       },
     ]);
     const result = await authorizeWithCredentials(
@@ -165,6 +191,7 @@ describe("authorizeWithCredentials — verify() outcomes", () => {
         emailVerified: new Date(),
         image: null,
         passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$abc$def",
+        deletedAt: null,
       },
     ]);
     const result = await authorizeWithCredentials(
@@ -189,6 +216,7 @@ describe("authorizeWithCredentials — email normalization", () => {
         emailVerified: new Date(),
         image: null,
         passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$abc$def",
+        deletedAt: null,
       },
     ]);
 

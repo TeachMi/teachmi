@@ -2,13 +2,10 @@ import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import type { Adapter } from "next-auth/adapters";
 import NextAuth, { type NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
-import Credentials from "next-auth/providers/credentials";
 import { getDb } from "../db/client";
 import { accounts, sessions, users, verificationTokens } from "../db/schema";
 import { defaultPostSignInPath, getSafeCallbackUrl } from "./callback-url";
 import { isAppRole } from "./roles";
-import { authorizeWithCredentials } from "./credentials-authorize";
-import { verifyPassword } from "./password-hashing";
 
 let authAdapter: Adapter | null = null;
 
@@ -37,36 +34,16 @@ function getUserRole(user: unknown) {
 export function createAuthConfig(): NextAuthConfig {
   return {
     adapter: getAuthAdapter(),
-    providers: [
-      Google,
-      Credentials({
-        // The provider name (used as the first arg to `signIn("credentials", ...)`).
-        name: "credentials",
-        credentials: {
-          email: { label: "Email", type: "email" },
-          password: { label: "Password", type: "password" },
-        },
-        async authorize(input) {
-          const email = typeof input?.email === "string" ? input.email : "";
-          const password = typeof input?.password === "string" ? input.password : "";
-          return authorizeWithCredentials(
-            { email, password },
-            {
-              db: getDb() as unknown as Parameters<
-                typeof authorizeWithCredentials
-              >[1]["db"],
-              verifyPassword,
-            },
-          );
-        },
-      }),
-    ],
+    // Email + password sign-in does NOT use the Auth.js Credentials provider —
+    // Auth.js v5 hardcodes a JWT cookie for Credentials regardless of
+    // session.strategy (see @auth/core/lib/actions/callback/index.js:247-274
+    // and @auth/core/providers/credentials.d.ts:74-75). Going through the
+    // provider would break session-shape parity with the verify Route Handler
+    // (Story 1.13) which inserts a `sessions` row + sets a UUID-token cookie.
+    // The Server Action at src/app/signin/actions.ts does the same direct
+    // INSERT + cookie set; Auth.js only handles Google OAuth here.
+    providers: [Google],
     session: {
-      // Database sessions are LOAD-BEARING for the Credentials provider —
-      // switching to "jwt" would skip the adapter's `createSession` and
-      // produce a JWT cookie instead, diverging from the verify Route Handler
-      // (Story 1.13) that inserts directly into the `sessions` table. Both
-      // paths must produce structurally identical rows + cookies.
       strategy: "database",
     },
     pages: {

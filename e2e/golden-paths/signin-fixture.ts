@@ -26,7 +26,10 @@ import { eq } from "drizzle-orm";
 import { auditEvents, sessions, users } from "../../src/lib/db/schema";
 import { buildStudentEmail } from "./student-loop.flow";
 
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// Short-lived: a single Playwright spec never needs more than a few minutes.
+// Keep the fixture cookie short-lived so a stale fixture row never lingers as
+// a usable session in a shared environment.
+const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 // Pre-computed argon2id hash of "hello12345" using the OWASP params declared
 // in src/lib/auth/password-hashing.ts. Static so the fixture doesn't pay the
@@ -53,6 +56,16 @@ export function getSessionCookieName(): string {
 export async function createVerifiedSession(
   testInfo: TestInfo,
 ): Promise<VerifiedSession | null> {
+  // Hard refusal in production. Even with a misconfigured CI step, the fixture
+  // must NOT provision a known-credential user in a non-test DB. The
+  // `KNOWN_PASSWORD_HASH` below is a documented test password — anyone who
+  // grabs this code could brute-force it offline.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "[signin-fixture] refuses to run when NODE_ENV === 'production' — this fixture provisions a known-credential test user.",
+    );
+  }
+
   const url = process.env.DATABASE_URL;
   if (!url) return null;
 

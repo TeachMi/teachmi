@@ -35,6 +35,7 @@ interface UsersRow {
   emailVerified: Date | null;
   image: string | null;
   passwordHash: string | null;
+  deletedAt: Date | null;
 }
 
 interface SelectChain {
@@ -76,6 +77,7 @@ export async function authorizeWithCredentials(
       emailVerified: users.emailVerified,
       image: users.image,
       passwordHash: users.passwordHash,
+      deletedAt: users.deletedAt,
     })
     .from(users)
     .where(eq(users.email, email));
@@ -84,6 +86,7 @@ export async function authorizeWithCredentials(
   if (!row) return null;
 
   // Short-circuit before the expensive verify() call. See module docstring.
+  if (row.deletedAt !== null) return null; // soft-deleted (Story 1.17 future)
   if (!row.passwordHash) return null;
   if (!row.emailVerified) return null;
 
