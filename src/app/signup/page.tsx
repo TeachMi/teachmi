@@ -11,8 +11,20 @@ export const metadata: Metadata = {
   description: "פתיחת חשבון ב-TeachMe — חיפוש מורים מומחים או הצטרפות כמורה.",
 };
 
+async function tryReadSession() {
+  // `auth()` lazily initializes the DrizzleAdapter, which calls `getDb()` —
+  // that throws when DATABASE_URL is unset (e.g., CI E2E runner). The
+  // already-signed-in redirect is a UX convenience, not a security boundary,
+  // so degrade to "no session" rather than crashing the whole page.
+  try {
+    return await auth();
+  } catch {
+    return null;
+  }
+}
+
 export default async function SignupPage() {
-  const session = await auth();
+  const session = await tryReadSession();
   if (session?.user) {
     redirect("/dashboard");
   }
