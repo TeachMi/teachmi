@@ -13,11 +13,15 @@ export function validatePassword(input: string): PasswordValidationResult {
     return { ok: false, reason: "too_short" };
   }
 
-  if (!/[A-Za-z]/.test(input)) {
+  // \p{L} — any Unicode letter (Hebrew, Latin, Cyrillic, CJK, …). The UI is
+  // Hebrew-only at MVP 1, so rejecting Hebrew-character passwords (the old
+  // /[A-Za-z]/ behavior) would have surfaced a confusing error to the target
+  // audience. Argon2 hashes any bytes, so non-ASCII passwords are safe to store.
+  if (!/\p{L}/u.test(input)) {
     return { ok: false, reason: "missing_letter" };
   }
 
-  if (!/[0-9]/.test(input)) {
+  if (!/\p{N}/u.test(input)) {
     return { ok: false, reason: "missing_digit" };
   }
 

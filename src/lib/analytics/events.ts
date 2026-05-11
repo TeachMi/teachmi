@@ -7,12 +7,10 @@
 import type { AppRole } from "../auth/roles";
 import type { AuthRateLimitAction } from "../auth/rate-limit";
 
-export interface SignupAttemptEvent {
-  event: "signup_attempt";
-  ip: string;
-  emailHash: string;
-  role: AppRole;
-}
+// `auth.signup_attempt` exists only as an `audit_events` row — not a PostHog
+// event. Counting per-attempt at the analytics layer would mostly duplicate the
+// audit-row stream and pollute Loop-gate dashboards. Re-add `SignupAttemptEvent`
+// here only if a future analytics need actually consumes it.
 
 export interface SignupCompletedEvent {
   event: "signup_completed";
@@ -33,7 +31,6 @@ export interface SignupRateLimitedEvent {
 }
 
 export type AnalyticsEvent =
-  | SignupAttemptEvent
   | SignupCompletedEvent
   | EmailVerifiedEvent
   | SignupRateLimitedEvent;

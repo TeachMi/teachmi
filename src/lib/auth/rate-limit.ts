@@ -2,7 +2,16 @@ import { createHash } from "node:crypto";
 import type { AuditEventInput } from "../db/audit";
 
 export const RATE_LIMIT_THRESHOLD = 5;
+/**
+ * When `x-forwarded-for` is unset or returns the literal `"unknown"`, every
+ * such request shares one rate-limit bucket. We tighten the threshold for that
+ * bucket so a single misconfigured proxy can't act as an amplifier for
+ * everyone behind it. Real bypass mitigation is the Vercel WAF deferred handoff
+ * (story AC8).
+ */
+export const RATE_LIMIT_THRESHOLD_UNKNOWN_IP = 1;
 export const RATE_LIMIT_WINDOW_SECONDS = 60;
+export const UNKNOWN_IP = "unknown";
 
 export type AuthRateLimitAction = "signup" | "signup_resend" | "signin";
 
@@ -16,8 +25,16 @@ export type RateLimitResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
 
-export function evaluateRateLimit(opts: { recentAttempts: number }): RateLimitResult {
-  if (opts.recentAttempts >= RATE_LIMIT_THRESHOLD) {
+export function thresholdForIp(ip: string): number {
+  return ip === UNKNOWN_IP ? RATE_LIMIT_THRESHOLD_UNKNOWN_IP : RATE_LIMIT_THRESHOLD;
+}
+
+export function evaluateRateLimit(opts: {
+  recentAttempts: number;
+  threshold?: number;
+}): RateLimitResult {
+  const threshold = opts.threshold ?? RATE_LIMIT_THRESHOLD;
+  if (opts.recentAttempts >= threshold) {
     return { allowed: false, retryAfterSeconds: RATE_LIMIT_WINDOW_SECONDS };
   }
   return { allowed: true };

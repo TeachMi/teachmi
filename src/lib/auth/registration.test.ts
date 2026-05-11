@@ -23,6 +23,15 @@ describe("validatePassword", () => {
     expect(validatePassword("hello12345")).toEqual({ ok: true });
   });
 
+  it("accepts Hebrew letters (Unicode \\p{L})", () => {
+    expect(validatePassword("שלום123ABC")).toEqual({ ok: true });
+  });
+
+  it("accepts Cyrillic / CJK letters (Unicode \\p{L})", () => {
+    expect(validatePassword("Привет1234")).toEqual({ ok: true });
+    expect(validatePassword("password123日本")).toEqual({ ok: true });
+  });
+
   it("checks length before character classes (length wins when shorter)", () => {
     expect(validatePassword("a1")).toEqual({ ok: false, reason: "too_short" });
   });

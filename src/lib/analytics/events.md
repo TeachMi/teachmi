@@ -10,12 +10,11 @@
 
 | Name | Gate | When it fires | Properties |
 |---|---|---|---|
-| `signup_attempt` | Loop (precursor) | Every POST to `/signup` (Server Action `registerAction`), whether allowed or rate-limited. Mirrors the `auth.signup_attempt` audit-event row. | `ip` (raw, server-only), `emailHash` (sha256[0..16]), `role` |
 | `signup_completed` | Loop | After a `users` row is inserted with `email_verified=null` and the verification email is dispatched. | `userId`, `role` |
 | `email_verified` | Loop | After the verify route handler marks `users.email_verified` and creates a session. | `userId`, `role` |
 | `signup_rate_limited` | (operational) | When `evaluateRateLimit` denies an auth attempt. | `anonymizedIp` (ip:<sha256[0..8]>), `action` |
 
-The `signup_attempt` event carries the raw IP because it fires server-side only and feeds back-end abuse-investigation analytics; the user-visible `signup_rate_limited` event uses the anonymized form (`ip:<sha256[0..8]>`) to keep PostHog out of the GDPR-PII surface.
+**Note on signup attempts.** Each POST to `/signup` writes an `auth.signup_attempt` row to `audit_events` (with raw IP in `actor_meta` and a `sha256[0..16]` email-hash in `payload`). That stream is the abuse-investigation surface — it deliberately does NOT mirror to PostHog. Loop-gate dashboards consume `signup_completed`; throttling activity surfaces via `signup_rate_limited`. Re-add a PostHog `signup_attempt` event only if analytics genuinely needs per-attempt counts beyond what `signup_completed` ÷ `signup_rate_limited` already gives.
 
 ## Strategic Gate has no events
 

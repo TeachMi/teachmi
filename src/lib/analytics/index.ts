@@ -2,7 +2,6 @@ export type {
   AnalyticsEvent,
   AnalyticsEventName,
   EmailVerifiedEvent,
-  SignupAttemptEvent,
   SignupCompletedEvent,
   SignupRateLimitedEvent,
 } from "./events";
