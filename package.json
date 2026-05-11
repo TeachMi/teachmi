@@ -23,7 +23,9 @@
     "check:stories": "node scripts/check-stories.mjs",
     "ci": "pnpm typecheck && pnpm lint && pnpm check:stories && pnpm test && pnpm build",
     "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build"
+    "build-storybook": "storybook build",
+    "test:e2e": "playwright test",
+    "test:e2e:throttled": "RUN_THROTTLED_E2E=1 playwright test e2e/golden-paths/student-loop.throttled.spec.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.2",
@@ -49,6 +51,7 @@
   },
   "devDependencies": {
     "@chromatic-com/storybook": "^5.1.2",
+    "@playwright/test": "^1.59.1",
     "@storybook/addon-a11y": "^10.3.6",
     "@storybook/addon-docs": "^10.3.6",
     "@storybook/addon-onboarding": "^10.3.6",
