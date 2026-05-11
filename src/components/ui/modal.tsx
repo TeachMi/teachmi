@@ -29,6 +29,11 @@ export const ModalOverlay = forwardRef<
   );
 });
 
+// Centering: `left-1/2 -translate-x-1/2` is intentional and direction-agnostic
+// (both `left` and `translateX` are physical, so the math is the same in RTL and LTR).
+// Logical `start-1/2 -translate-x-1/2` would place the start edge at 50% of the viewport
+// — in RTL that means the right edge sits at viewport center, then translateX(-50%) shifts
+// the box ~half its width off-viewport to the left. Don't "fix" this to start-1/2.
 const modalContentVariants = cva(
   "fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl bg-surface-lowest shadow-2xl outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=open]:duration-[250ms]",
   {

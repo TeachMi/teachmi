@@ -164,7 +164,7 @@ export const TutorCard: Story = {
         <div className="absolute inset-0 flex items-center justify-center text-secondary text-xs">
           (תמונת המורה)
         </div>
-        <div className="absolute top-3 right-3 bg-tertiary-fixed/95 backdrop-blur px-2.5 py-1 rounded-full text-xs font-bold flex items-center gap-1">
+        <div className="absolute top-3 end-3 bg-tertiary-fixed/95 backdrop-blur px-2.5 py-1 rounded-full text-xs font-bold flex items-center gap-1">
           <span aria-hidden>★</span>
           <span>4.9</span>
         </div>

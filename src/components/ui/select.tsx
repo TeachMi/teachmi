@@ -101,7 +101,7 @@ export const SelectTrigger = forwardRef<
     >
       <span className="truncate text-start">{children}</span>
       <SelectPrimitive.Icon asChild>
-        <ChevronDown className="text-on-surface-variant rtl:-scale-x-100" />
+        <ChevronDown className="text-on-surface-variant" />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   );
