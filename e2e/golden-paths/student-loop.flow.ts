@@ -1,4 +1,4 @@
-import { expect, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 export function buildStudentEmail(testInfo: TestInfo): string {
   const runId = process.env.GITHUB_RUN_ID ?? "local";
@@ -12,22 +12,38 @@ export function buildStudentEmail(testInfo: TestInfo): string {
 }
 
 export async function completeStudentLoop(page: Page, testInfo: TestInfo): Promise<void> {
-  // Reference the helper so it's not flagged as unused once full signup is wired.
-  void testInfo;
-  void buildStudentEmail;
-
   // Smoke-check the new signup page renders (Hebrew RTL + post-Story-1.13 heading).
-  // We deliberately do NOT submit the form here: signup is now a real Server
-  // Action that creates a `users` row + verification token + audit rows, and
-  // the verify-link click that completes the loop requires either DB access to
-  // the `_dev_email_outbox` (to pull the token) or a verified-user fixture —
-  // neither is wired yet. The signup orchestration itself is covered by the
-  // integration tests in `src/app/signup/__tests__/registration-flow.test.ts`,
-  // `resend-flow.test.ts`, and `verify-flow.test.ts` (FakeDb-based, no real Neon).
-  // When Story 1.14 (signin) lands a programmatic-login test fixture, restore
-  // the full loop here.
   await page.goto("/signup");
   await expect(page.getByRole("heading", { name: "ברוכים הבאים ל-TeachMe" })).toBeVisible();
+
+  // Story 1.14 — programmatic-login fixture. Bypasses the signin UI (which is
+  // exercised by integration tests + a page-render smoke check elsewhere). The
+  // fixture inserts a verified user + active session row via Drizzle, then we
+  // attach the session cookie before continuing the loop. If DATABASE_URL is
+  // unset (local dev), we skip the full loop gracefully — the signup-render
+  // assertion above still runs and catches build/render regressions.
+  const { createVerifiedSession, getSessionCookieName } = await import("./signin-fixture");
+  const verified = await createVerifiedSession(testInfo);
+  if (!verified) {
+    test.skip(
+      true,
+      "DATABASE_URL not set — programmatic-login fixture cannot run; skipping full golden-path loop. (Set DATABASE_URL to run end-to-end.)",
+    );
+    return;
+  }
+
+  const baseUrl = new URL(page.url());
+  await page.context().addCookies([
+    {
+      name: getSessionCookieName(),
+      value: verified.sessionToken,
+      domain: baseUrl.hostname,
+      path: "/",
+      httpOnly: true,
+      sameSite: "Lax",
+      expires: Math.floor(verified.expiresMs / 1000),
+    },
+  ]);
 
   await page.goto("/browse");
   await expect(page.getByRole("heading", { name: "מורים זמינים לשיעור ראשון" })).toBeVisible();
