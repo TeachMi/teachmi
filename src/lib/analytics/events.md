@@ -6,15 +6,19 @@
 > Do NOT call `track()` with an event name that is not in the typed `AnalyticsEvent`
 > discriminated union.
 
-## Events (Story 1.13)
+## Events (Story 1.13 + Story 1.14)
 
 | Name | Gate | When it fires | Properties |
 |---|---|---|---|
 | `signup_completed` | Loop | After a `users` row is inserted with `email_verified=null` and the verification email is dispatched. | `userId`, `role` |
 | `email_verified` | Loop | After the verify route handler marks `users.email_verified` and creates a session. | `userId`, `role` |
-| `signup_rate_limited` | (operational) | When `evaluateRateLimit` denies an auth attempt. | `anonymizedIp` (ip:<sha256[0..8]>), `action` |
+| `signup_rate_limited` | (operational) | When `evaluateRateLimit` denies a signup or signup-resend attempt. | `anonymizedIp` (ip:<sha256[0..8]>), `action` |
+| `signin_rate_limited` | (operational) | When `evaluateRateLimit` denies a signin attempt (Story 1.14). | `anonymizedIp` (ip:<sha256[0..8]>), `action: "signin"` |
+| `signin_failed` | (operational) | When the Credentials provider rejects a signin attempt — generic "invalid email or password" (Story 1.14). No `signin_succeeded` PostHog event: session-create telemetry is owned by Story 1.8's Auth.js wiring. | `anonymizedIp` |
 
-**Note on signup attempts.** Each POST to `/signup` writes an `auth.signup_attempt` row to `audit_events` (with raw IP in `actor_meta` and a `sha256[0..16]` email-hash in `payload`). That stream is the abuse-investigation surface — it deliberately does NOT mirror to PostHog. Loop-gate dashboards consume `signup_completed`; throttling activity surfaces via `signup_rate_limited`. Re-add a PostHog `signup_attempt` event only if analytics genuinely needs per-attempt counts beyond what `signup_completed` ÷ `signup_rate_limited` already gives.
+**Note on signup + signin attempts.** Each POST to `/signup` writes an `auth.signup_attempt` row to `audit_events`; each POST to `/signin` writes an `auth.signin_attempt` row. Successful signins also write `auth.signin_succeeded` (with `actor_id`), and failed signins write `auth.signin_failed`. These are the abuse-investigation surface — they deliberately do NOT mirror to PostHog. Loop-gate dashboards consume `signup_completed` / `email_verified`; throttling activity surfaces via `signup_rate_limited` / `signin_rate_limited`. Re-add a PostHog `auth.signup_attempt` / `auth.signin_attempt` event only if analytics genuinely needs per-attempt counts beyond what the completion + rate-limit events already give.
+
+**Story 1.14 type rename.** The TypeScript interface formerly known as `SignupRateLimitedEvent` is now `AuthRateLimitedEvent` (covers signup + signin uniformly via the `action` discriminator). Runtime event names are unchanged.
 
 ## Strategic Gate has no events
 
