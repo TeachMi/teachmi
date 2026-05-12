@@ -47,11 +47,45 @@ export interface SignInFailedEvent {
   anonymizedIp: string;
 }
 
+// --- Tutor onboarding (Story 2.1, FR10) ---
+
+/**
+ * Fires once per tutor on first successful `submitProfileAction`. Re-submits
+ * during the `changes-requested` cycle do NOT re-fire — `tutorProfileEdited`
+ * (Story 2.5) covers post-approval edits.
+ *
+ * Payload is intentionally PII-free: no bio text, no R2 keys, no full subject
+ * list — only counts and presence flags.
+ */
+export interface TutorProfileCreatedEvent {
+  event: "tutor_profile_created";
+  tutorUserId: string;
+  subjectCount: number;
+  has45MinPrice: boolean;
+  has60MinPrice: boolean;
+  hasIntroVideo: boolean;
+  hasPhoto: boolean;
+  bioLength: number;
+}
+
+/**
+ * Generalized rate-limit event for tutor-onboarding actions. Mirrors the
+ * `Auth*RateLimitedEvent` split convention so the `action` literal can't drift
+ * from the event source.
+ */
+export interface TutorRateLimitedEvent {
+  event: "tutor_rate_limited";
+  anonymizedIp: string;
+  action: "submit_profile" | "save_draft" | "request_upload";
+}
+
 export type AnalyticsEvent =
   | SignupCompletedEvent
   | EmailVerifiedEvent
   | SignupRateLimitedEvent
   | SigninRateLimitedEvent
-  | SignInFailedEvent;
+  | SignInFailedEvent
+  | TutorProfileCreatedEvent
+  | TutorRateLimitedEvent;
 
 export type AnalyticsEventName = AnalyticsEvent["event"];

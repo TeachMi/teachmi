@@ -206,7 +206,8 @@ export const tutorProfiles = pgTable(
     city: text("city"),
     introVideoR2Key: text("intro_video_r2_key"),                                // R2 object key; presigned URL for view
     profilePhotoR2Key: text("profile_photo_r2_key"),
-    hourlyPriceIls: integer("hourly_price_ils").notNull(),                      // whole shekels
+    hourlyPriceIls: integer("hourly_price_ils").notNull(),                      // 60-min price, whole shekels
+    lesson45PriceIls: integer("lesson_45_price_ils"),                           // 45-min price, whole shekels (nullable for drafts; required at submit per FR10)
     lessonLengthMinutes: smallint("lesson_length_minutes").notNull().default(60),
     commissionRateOverride: numeric("commission_rate_override", { precision: 5, scale: 4 }), // NULL = platform default; e.g., 0.2000 = 20%
     // Vetting
@@ -242,7 +243,7 @@ export const tutorDocuments = pgTable(
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     tutorUserId: uuid("tutor_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    docType: text("doc_type", { enum: ["id", "qualification", "certificate", "other"] }).notNull(),
+    docType: text("doc_type", { enum: ["id", "qualification", "certificate", "intro_video", "other"] }).notNull(),
     r2Key: text("r2_key").notNull(),
     mimeType: text("mime_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
