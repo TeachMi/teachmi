@@ -20,6 +20,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:seed": "tsx scripts/seed.ts",
+    "seed:dogfood": "tsx scripts/seed-dogfood.ts",
     "check:stories": "node scripts/check-stories.mjs",
     "ci": "pnpm typecheck && pnpm lint && pnpm check:stories && pnpm test && pnpm build",
     "storybook": "storybook dev -p 6006",
