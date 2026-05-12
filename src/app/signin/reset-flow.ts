@@ -73,7 +73,9 @@ interface UpdateChain {
   set(set: unknown): { where(condition: unknown): Promise<unknown> };
 }
 interface DeleteChain {
-  where(condition: unknown): Promise<unknown>;
+  where(condition: unknown): Promise<unknown> & {
+    returning(cols: unknown): Promise<unknown[]>;
+  };
 }
 export interface DbForReset {
   select<TRow = unknown>(cols: unknown): SelectChain<TRow>;
@@ -148,6 +150,20 @@ export async function runResetPassword(
       );
 
     if (!rateLimit.allowed) {
+      // Code-review patch (2026-05-12): write an explicit-outcome audit row
+      // so audit-log queries counting `payload->>'outcome' = 'rate_limited'`
+      // can distinguish throttled confirms (spec AC4 step 2 deviation otherwise).
+      await db.insert(auditEvents).values(
+        toAuditEventValues({
+          eventType: "auth.password_reset_confirm_attempt",
+          actorKind: "user",
+          actorId: null,
+          actorMeta: ip,
+          targetType: "user",
+          targetId: null,
+          payload: { outcome: "rate_limited" },
+        }),
+      );
       track({
         event: "password_reset_rate_limited",
         anonymizedIp: anonymizeIpForAnalytics(ip),
@@ -196,19 +212,25 @@ export async function runResetPassword(
     return { ok: false, state: { ok: false, fieldErrors } };
   }
 
-  // -- Token lookup + validity --
+  // -- Token consume (atomic SELECT+DELETE via RETURNING) --
+  // Code-review patch (2026-05-12): the prior SELECT-then-DELETE was a TOCTOU
+  // race — two concurrent submits with the same valid token both passed the
+  // SELECT, both updated the password (last write wins), both reported success.
+  // DELETE … RETURNING consumes atomically: only the winner gets a row back.
+  // An expired token is still consumed (positive cleanup) and is reported as
+  // expired by `evaluateResetTokenValidity`.
   let tokenRow: ResetTokenRow | null = null;
   try {
-    const rows = await db
-      .select<TokenLookupRow>({
+    const rows = (await db
+      .delete(passwordResetTokens)
+      .where(eq(passwordResetTokens.token, token))
+      .returning({
         identifier: passwordResetTokens.identifier,
         expires: passwordResetTokens.expires,
-      })
-      .from(passwordResetTokens)
-      .where(eq(passwordResetTokens.token, token));
+      })) as TokenLookupRow[];
     tokenRow = rows[0] ?? null;
   } catch (err) {
-    log.error("[runResetPassword] token lookup failed", err);
+    log.error("[runResetPassword] token consume failed", err);
     return { ok: false, state: { ok: false, formError: UNEXPECTED_HE } };
   }
 
@@ -299,13 +321,10 @@ export async function runResetPassword(
       })
       .where(eq(users.id, userId));
 
-    // 7b. Consume the used token.
-    await db
-      .delete(passwordResetTokens)
-      .where(eq(passwordResetTokens.token, token));
+    // 7b. (Token already consumed atomically above via DELETE … RETURNING.)
 
     // 7c. Best-effort: invalidate any OTHER un-consumed reset tokens for this
-    //     identifier. Defense against a parallel-token race.
+    //     identifier. Defense against an attacker holding a parallel token.
     await db
       .delete(passwordResetTokens)
       .where(eq(passwordResetTokens.identifier, identifier));

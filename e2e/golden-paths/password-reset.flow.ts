@@ -5,7 +5,7 @@
 import type { TestInfo } from "@playwright/test";
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { devEmailOutbox, users } from "../../src/lib/db/schema";
 import { hash } from "@node-rs/argon2";
 
@@ -62,7 +62,13 @@ export async function provisionVerifiedUser(
     })
     .onConflictDoNothing({ target: users.email });
 
-  await db.update(users).set({ passwordHash }).where(eq(users.email, email));
+  // Code-review patch (2026-05-12): reset deletedAt as well, so a prior test
+  // run that soft-deleted this fixture user doesn't silently funnel into the
+  // forgot flow's no_user / oauth_only branches and produce confusing failures.
+  await db
+    .update(users)
+    .set({ passwordHash, deletedAt: null })
+    .where(eq(users.email, email));
 
   const rows = await db
     .select({ id: users.id })
@@ -88,6 +94,10 @@ export async function peekResetUrl(email: string): Promise<string | null> {
   const sql = neon(url);
   const db = drizzle(sql);
 
+  // Code-review patch (2026-05-12): explicit ORDER BY created_at DESC + LIMIT 1.
+  // Without an explicit order, Postgres is free to return rows in any order —
+  // a stale row from a prior test run on the same worker could mask the new one.
+  // Mirrors `scripts/peek-reset-email.ts`.
   const rows = await db
     .select({ payload: devEmailOutbox.payload })
     .from(devEmailOutbox)
@@ -96,13 +106,10 @@ export async function peekResetUrl(email: string): Promise<string | null> {
         eq(devEmailOutbox.toAddress, email),
         eq(devEmailOutbox.templateId, "auth-password-reset"),
       ),
-    );
+    )
+    .orderBy(desc(devEmailOutbox.createdAt))
+    .limit(1);
 
-  // Take the latest by createdAt — Drizzle doesn't order by default; we sort
-  // in JS since rows in this flow are bounded to single-digits.
-  // (devEmailOutbox doesn't expose a numeric ord in this select, so any row
-  // with the matching templateId is fine for a single-test invocation.)
-  const latest = rows[rows.length - 1];
-  const payload = latest?.payload as { resetUrl?: string } | undefined;
+  const payload = rows[0]?.payload as { resetUrl?: string } | undefined;
   return payload?.resetUrl ?? null;
 }

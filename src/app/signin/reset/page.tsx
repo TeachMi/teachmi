@@ -47,7 +47,11 @@ async function lookupTokenRow(token: string) {
 
 export default async function ResetPasswordPage({ searchParams }: PageProps) {
   const params = await searchParams;
-  const token = firstString(params?.token);
+  // Code-review patch (2026-05-12): trim before the DB lookup so a token that
+  // got trailing whitespace from an email-client line-wrap doesn't bypass the
+  // pre-check (the submit-side flow already trims; the pre-check must match
+  // or a valid token with stray whitespace shows the error page).
+  const token = firstString(params?.token)?.trim() ?? "";
 
   if (!token) {
     redirect("/signin/reset/error?reason=not_found");
