@@ -74,12 +74,27 @@ jobs:
       - name: Storybook coverage (every components/ui/*.tsx has *.stories.tsx)
         run: pnpm check:stories
 
-      - name: Fetch base ref for migration coverage check
+      - name: Compute changed files for migration coverage check
         if: github.event_name == 'pull_request'
-        run: git fetch origin "${{ github.base_ref }}":"refs/remotes/origin/${{ github.base_ref }}"
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Use the PR event's exact base/head SHAs — guaranteed reachable
+          # with fetch-depth: 0 on the checkout. Sidesteps git's
+          # merge-base / shallow-fetch fragility around ref names.
+          CHANGED=$(git diff --name-only --diff-filter=AM "$BASE_SHA" "$HEAD_SHA")
+          {
+            echo "files<<EOF"
+            echo "$CHANGED"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Migration coverage (schema.ts edits require a new drizzle/*.sql)
         if: github.event_name == 'pull_request'
+        env:
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
         run: pnpm check:migrations
 
       - name: Unit tests
