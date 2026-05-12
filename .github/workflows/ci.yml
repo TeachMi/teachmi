@@ -29,6 +29,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history on PRs so the check:migrations step can compute
+          # a merge-base against the base ref. On non-PR events, default
+          # depth=1 is fine.
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
 
       - name: Validate promotion source branch
         if: github.event_name == 'pull_request'
@@ -68,10 +73,6 @@ jobs:
 
       - name: Storybook coverage (every components/ui/*.tsx has *.stories.tsx)
         run: pnpm check:stories
-
-      - name: Fetch base ref for migration coverage check
-        if: github.event_name == 'pull_request'
-        run: git fetch --depth=1 origin "${{ github.base_ref }}"
 
       - name: Migration coverage (schema.ts edits require a new drizzle/*.sql)
         if: github.event_name == 'pull_request'
