@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
+import { isStubUrl } from "@/lib/providers/files";
 import { profileFormAction } from "./actions";
 import { PhotoCropModal } from "./PhotoCropModal";
 import { PROFILE_ACTION_INITIAL_STATE } from "./state";
@@ -97,8 +98,11 @@ export function ProfileForm({
   //  (#5) preserve what the user typed when the submit action returns an error.
   //  (#4) recompute "bio too short" / "name too short" client-side so the
   //       server-returned error dismisses live as the user types past the bound.
-  const [bio, setBio] = useState(initialValues.bio);
-  const [displayName, setDisplayName] = useState(initialValues.displayName);
+  // Code-review patch M10 (2026-05-13): `?? ""` everywhere — `initialValues.bio`
+  // can be null/undefined when the tutor's draft is empty, and `bio.trim()`
+  // on undefined would crash the form on first render.
+  const [bio, setBio] = useState(initialValues.bio ?? "");
+  const [displayName, setDisplayName] = useState(initialValues.displayName ?? "");
   const [price45, setPrice45] = useState<string>(
     initialValues.price45Ils?.toString() ?? "",
   );
@@ -107,16 +111,45 @@ export function ProfileForm({
   );
 
   const formRef = useRef<HTMLFormElement | null>(null);
+  /** Pending debounce timer; cleared by the immediate-save path to prevent races. */
+  const debounceTimerRef = useRef<number | null>(null);
+
+  // Code-review patch H6 (2026-05-13): revoke blob: URLs from a useEffect
+  // cleanup rather than inside a setState callback. React state updaters may
+  // run multiple times (StrictMode dev, concurrent rendering) — revoking
+  // inside the setter can free the URL while another render still references
+  // it via `photoState.previewUrl`. The effect ties revocation to the URL's
+  // lifetime: it revokes the previous URL only after a new URL is committed.
+  useEffect(() => {
+    const url = photoState.previewUrl;
+    if (!url?.startsWith("blob:")) return;
+    return () => URL.revokeObjectURL(url);
+  }, [photoState.previewUrl]);
+  useEffect(() => {
+    const url = videoState.previewUrl;
+    if (!url?.startsWith("blob:")) return;
+    return () => URL.revokeObjectURL(url);
+  }, [videoState.previewUrl]);
 
   /**
    * Fire a save-draft action right now (not on the 30s debounce). Used after
    * uploads so the R2 key reaches `tutor_wizard_state` before the user can
    * reload. Overrides pass directly into FormData since React state setters
    * are async and `new FormData(formEl)` would still see the pre-set value.
+   *
+   * Code-review patch H5 (2026-05-13): gate on `pending` AND clear any armed
+   * debounce timer before firing. Without this, the immediate-save and a
+   * still-pending debounced save can interleave; the second one's stale
+   * FormData snapshot would overwrite the fresh R2 key.
    */
   function persistDraftImmediately(overrides: Record<string, string>) {
+    if (pending) return;
     const formEl = formRef.current;
     if (!formEl) return;
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
     const fd = new FormData(formEl);
     fd.set("intent", "save");
     for (const [key, value] of Object.entries(overrides)) {
@@ -125,18 +158,25 @@ export function ProfileForm({
     startTransition(() => formAction(fd));
   }
 
-  // Debounced auto-save on any field change.
+  // Debounced auto-save on any field change. Stores the timer ID in a ref so
+  // `persistDraftImmediately` can cancel it before firing immediately.
   useEffect(() => {
     if (pending) return;
     const formEl = formRef.current;
     if (!formEl) return;
 
-    const handler = window.setTimeout(() => {
+    debounceTimerRef.current = window.setTimeout(() => {
       const fd = new FormData(formEl);
       fd.set("intent", "save");
       startTransition(() => formAction(fd));
+      debounceTimerRef.current = null;
     }, AUTO_SAVE_DEBOUNCE_MS);
-    return () => window.clearTimeout(handler);
+    return () => {
+      if (debounceTimerRef.current !== null) {
+        window.clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+    };
     // Track keystroke changes via a tick state. Subjects toggles also re-arm.
   }, [selectedSubjects, photoState.r2Key, videoState.r2Key, pending, formAction]);
 
@@ -248,7 +288,7 @@ export function ProfileForm({
         headers: { "Content-Type": file.type },
         body: file,
       });
-      if (!putRes.ok && init.uploadUrl.startsWith("https://stub.r2.local/")) {
+      if (!putRes.ok && isStubUrl(init.uploadUrl)) {
         // Stub endpoint isn't a real server; PUT will resolve as network error
         // in the browser but the form's contract is purely metadata-tracking
         // at MVP 1. Treat stub URLs as success regardless of fetch result.
@@ -258,7 +298,7 @@ export function ProfileForm({
       }
     } catch {
       // Same stub-URL allowance as above.
-      if (!init.uploadUrl.startsWith("https://stub.r2.local/")) {
+      if (!isStubUrl(init.uploadUrl)) {
         setPhotoError("העלאה נכשלה. נסו שוב.");
         return;
       }
@@ -269,19 +309,16 @@ export function ProfileForm({
       setPhotoError(confirm.formError);
       return;
     }
-    // Use the LOCAL object URL for preview, not the server-returned URL.
+    // Use the LOCAL object URL for preview when the server returned a stub URL.
     // The stub provider returns `https://stub.r2.local/...` which isn't a
     // real server — the browser would render the broken-image alt text
-    // ("תמונת פרופיל") instead of the photo the user just chose. Real R2
-    // (MVP 2) returns a usable presigned GET URL; falling back to that URL
-    // for production is fine since the file may not be in memory anymore.
-    const isStubUrl = confirm.previewUrl.startsWith("https://stub.r2.local/");
-    const previewUrl = isStubUrl ? URL.createObjectURL(file) : confirm.previewUrl;
-    setPhotoState((prev) => {
-      // Revoke the previous blob URL to avoid leaks across re-uploads.
-      if (prev.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(prev.previewUrl);
-      return { r2Key: confirm.r2Key, previewUrl };
-    });
+    // instead of the photo the user just chose. Real R2 (MVP 2) returns a
+    // usable presigned GET URL; that path passes through unchanged.
+    // Blob-URL lifecycle (revocation) lives in the useEffect above (H6).
+    const previewUrl = isStubUrl(confirm.previewUrl)
+      ? URL.createObjectURL(file)
+      : confirm.previewUrl;
+    setPhotoState({ r2Key: confirm.r2Key, previewUrl });
     // Persist the new R2 key into the wizard_state draft immediately — the
     // 30s auto-save debounce would lose this key if the user reloaded sooner.
     persistDraftImmediately({ photoR2Key: confirm.r2Key });
@@ -330,7 +367,7 @@ export function ProfileForm({
         setVideoState((prev) => ({ ...prev, progressPercent: percent })),
       );
     } catch (err) {
-      if (!init.uploadUrl.startsWith("https://stub.r2.local/")) {
+      if (!isStubUrl(init.uploadUrl)) {
         setVideoState((prev) => ({
           ...prev,
           uploading: false,
@@ -353,20 +390,17 @@ export function ProfileForm({
       }));
       return;
     }
-    // Use the LOCAL object URL for preview when the server returned a stub URL
-    // (same reasoning as the photo handler — real R2 presigned GET URLs work,
-    // stub URLs don't). Revoke previous blob URL to avoid leaks on re-record.
-    const isStubUrl = confirm.previewUrl.startsWith("https://stub.r2.local/");
-    const previewUrl = isStubUrl ? URL.createObjectURL(file) : confirm.previewUrl;
-    setVideoState((prev) => {
-      if (prev.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(prev.previewUrl);
-      return {
-        r2Key: confirm.r2Key,
-        previewUrl,
-        uploading: false,
-        progressPercent: 100,
-        error: null,
-      };
+    // Same stub-URL handling as the photo path. Blob-URL revocation lives in
+    // the useEffect above (H6).
+    const previewUrl = isStubUrl(confirm.previewUrl)
+      ? URL.createObjectURL(file)
+      : confirm.previewUrl;
+    setVideoState({
+      r2Key: confirm.r2Key,
+      previewUrl,
+      uploading: false,
+      progressPercent: 100,
+      error: null,
     });
     // Persist the new R2 key into the wizard_state draft immediately.
     persistDraftImmediately({ introVideoR2Key: confirm.r2Key });
@@ -393,7 +427,6 @@ export function ProfileForm({
         name="introVideoR2Key"
         value={videoState.r2Key ?? ""}
       />
-      <input type="hidden" name="displayName" value={displayName} />
 
       {submitHasErrors && (
         <Card
@@ -423,6 +456,26 @@ export function ProfileForm({
         <h3 className="mb-4 font-display text-lg font-bold text-primary-container">
           תמונה וביוגרפיה
         </h3>
+        {/* Display name (#2 resolution, 2026-05-13). The hidden input was */}
+        {/* sending the session.user.name unchanged with no way to fix it; */}
+        {/* tutors whose signup name was empty/short couldn't ever submit. */}
+        {/* Now a real input — and this is the name students will see on */}
+        {/* marketplace browse cards, so they should be able to refine it. */}
+        <div className="mb-4">
+          <Input
+            name="displayName"
+            label="שם תצוגה"
+            hint="זה השם שיופיע לסטודנטים בכרטיסי החיפוש."
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            error={showDisplayNameError ? submitFieldErrors.displayName : undefined}
+            surface="linen"
+            minLength={PROFILE_FORM_LIMITS.DISPLAY_NAME_MIN_CHARS}
+            maxLength={PROFILE_FORM_LIMITS.DISPLAY_NAME_MAX_CHARS}
+            placeholder="ד״ר ישראלה י."
+            autoComplete="name"
+          />
+        </div>
         {/* Single shared row of labels above the two input columns. This is */}
         {/* the cleanest way to top-align the avatar with the textarea: both */}
         {/* columns start at the SAME baseline, and the labels live above. In */}

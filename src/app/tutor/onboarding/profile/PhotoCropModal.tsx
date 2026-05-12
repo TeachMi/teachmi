@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Cropper, { type Area } from "react-easy-crop";
 import { Button } from "@/components/ui/button";
 
@@ -23,18 +23,25 @@ interface PhotoCropModalProps {
  * 12MP iPhone shot, (c) avoids needing image-processing libs on the server.
  */
 export function PhotoCropModal({ file, onConfirm, onCancel }: PhotoCropModalProps) {
-  const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const croppedAreaPixelsRef = useRef<Area | null>(null);
   const [busy, setBusy] = useState(false);
+  // Code-review patch M6 (2026-05-13): block confirm until react-easy-crop
+  // has fired `onCropComplete` at least once. Without this, a quick double-
+  // click on "שמרו" before the cropper finished its initial layout would
+  // hit the early-return in `handleConfirm` and the user would see no
+  // feedback.
+  const [cropReady, setCropReady] = useState(false);
 
-  // Load the picked file into an object URL once; revoke on unmount.
+  // Patch M7 (2026-05-13): derive the blob URL with `useMemo` (per-file
+  // identity) and revoke from a cleanup-only effect. The previous shape
+  // (`useState` + `setState(url)` inside `useEffect`) tripped the
+  // `react-hooks/set-state-in-effect` ESLint rule.
+  const imageSrc = useMemo(() => URL.createObjectURL(file), [file]);
   useEffect(() => {
-    const url = URL.createObjectURL(file);
-    setImageSrc(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
+    return () => URL.revokeObjectURL(imageSrc);
+  }, [imageSrc]);
 
   // ESC to cancel.
   useEffect(() => {
@@ -47,16 +54,22 @@ export function PhotoCropModal({ file, onConfirm, onCancel }: PhotoCropModalProp
 
   const onCropComplete = useCallback((_area: Area, areaPixels: Area) => {
     croppedAreaPixelsRef.current = areaPixels;
+    setCropReady(true);
   }, []);
 
+  // Code-review patch M1 (2026-05-13): wrap in try/finally so `setBusy(false)`
+  // ALWAYS runs. Previously busy stayed true on the success path, which
+  // mattered if the parent re-rendered the modal post-confirm (e.g., a
+  // second crop attempt while the previous blob upload was still in flight).
   async function handleConfirm() {
-    if (!imageSrc || !croppedAreaPixelsRef.current) return;
+    if (!croppedAreaPixelsRef.current) return;
     setBusy(true);
     try {
       const blob = await cropImageToBlob(imageSrc, croppedAreaPixelsRef.current);
       onConfirm(blob);
     } catch (err) {
       console.error("[PhotoCropModal] crop failed", err);
+    } finally {
       setBusy(false);
     }
   }
@@ -78,19 +91,17 @@ export function PhotoCropModal({ file, onConfirm, onCancel }: PhotoCropModalProp
           </p>
         </div>
         <div className="relative h-[360px] w-full bg-black">
-          {imageSrc && (
-            <Cropper
-              image={imageSrc}
-              crop={crop}
-              zoom={zoom}
-              aspect={1}
-              cropShape="round"
-              showGrid={false}
-              onCropChange={setCrop}
-              onZoomChange={setZoom}
-              onCropComplete={onCropComplete}
-            />
-          )}
+          <Cropper
+            image={imageSrc}
+            crop={crop}
+            zoom={zoom}
+            aspect={1}
+            cropShape="round"
+            showGrid={false}
+            onCropChange={setCrop}
+            onZoomChange={setZoom}
+            onCropComplete={onCropComplete}
+          />
         </div>
         <div className="space-y-3 px-6 py-4">
           <label className="block text-start">
@@ -113,6 +124,7 @@ export function PhotoCropModal({ file, onConfirm, onCancel }: PhotoCropModalProp
               size="md"
               fullWidth
               loading={busy}
+              disabled={!cropReady}
             >
               שמרו את החיתוך
             </Button>
@@ -163,9 +175,13 @@ async function cropImageToBlob(imageSrc: string, area: Area): Promise<Blob> {
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
+  // Patch M2 (2026-05-13): no `crossOrigin = "anonymous"`. This modal only
+  // ever loads a `blob:` URL created locally from the picked File — blobs
+  // don't need CORS, and setting `crossOrigin` on a blob URL triggered a
+  // tainted-canvas SecurityError on some Safari builds. If a future caller
+  // needs to crop a remote image, set crossOrigin THEN, not globally here.
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error("Failed to load image for cropping."));
     img.src = src;

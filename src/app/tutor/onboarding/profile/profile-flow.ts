@@ -274,7 +274,16 @@ export async function runSubmitProfile(
     //    another tutor's r2Key cannot flip that tutor's document back to
     //    "pending". The ownership-prefix check at the action layer already
     //    blocks this earlier; the SQL filter is defense in depth.
-    await db
+    //
+    //    Row-count guard (code-review patch 2026-05-13): if the UPDATE
+    //    matches zero rows, the upload-confirm row was deleted by an admin
+    //    action OR moved to approved/rejected status between confirm and
+    //    submit. Without this guard the submit would silently succeed but
+    //    leave `tutor_profiles.intro_video_r2_key` pointing at a key with
+    //    no tutor_documents row — admin queue (Story 2.4) never surfaces
+    //    the video for review. Throw so the orchestrator's catch returns
+    //    a clear form error and the user re-uploads.
+    const documentsUpdated = (await db
       .update(tutorDocuments)
       .set({
         vettingStatus: "pending",
@@ -287,7 +296,13 @@ export async function runSubmitProfile(
           eq(tutorDocuments.r2Key, input.introVideoR2Key),
           eq(tutorDocuments.tutorUserId, deps.tutorUserId),
         ),
+      )
+      .returning({ id: tutorDocuments.id })) as { id: string }[];
+    if (documentsUpdated.length === 0) {
+      throw new Error(
+        "[runSubmitProfile] intro_video document not found — admin moved it or row was deleted",
       );
+    }
 
     // 5. Mark phase 2 complete on the wizard state. Filter UPDATE by both
     //    userId AND phase=2 so future phase-3+ rows (Stories 2.2+) aren't

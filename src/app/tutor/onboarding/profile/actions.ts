@@ -13,10 +13,7 @@ import { runSaveDraft, runSubmitProfile, type TutorDb } from "./profile-flow";
 import {
   parseFormDataIntoDraftInput,
 } from "./profile-form-schema";
-import {
-  PROFILE_ACTION_INITIAL_STATE,
-  type ProfileActionState,
-} from "./state";
+import type { ProfileActionState } from "./state";
 
 /**
  * Unified Server Action wired into the client form's `useActionState`. The

@@ -60,6 +60,8 @@ describe("runSubmitProfile — happy path (first submit)", () => {
     db.queueSelect([]);
     // Insert returning → profile id.
     db.queueReturning([{ id: "tp-1" }]);
+    // tutor_documents UPDATE returning → matched 1 row (patch H9, 2026-05-13).
+    db.queueReturning([{ id: "td-1" }]);
     // Wizard state lookup → empty (no draft yet).
     db.queueSelect([]);
 
@@ -129,6 +131,8 @@ describe("runSubmitProfile — re-submit after changes-requested", () => {
         introVideoR2Key: `intros/${TUTOR_ID}/old.mp4`,
       },
     ]);
+    // tutor_documents UPDATE returning → matched 1 row (patch H9, 2026-05-13).
+    db.queueReturning([{ id: "td-existing" }]);
     db.queueSelect([{ phase: 2 }]);
 
     const result = await runSubmitProfile(VALID_INPUT, deps);

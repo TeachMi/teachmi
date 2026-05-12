@@ -8,7 +8,7 @@ import { toAuditEventValues } from "../../../../lib/db/audit";
 import { auditEvents, tutorDocuments } from "../../../../lib/db/schema";
 import { track } from "../../../../lib/analytics";
 import { anonymizeIpForAnalytics } from "../../../../lib/auth/rate-limit";
-import { getFilesProvider } from "../../../../lib/providers/files";
+import { getFilesProvider, isStubUrl } from "../../../../lib/providers/files";
 import { readIp } from "../../../signup/_lib/origin";
 import { requireTutor } from "../_lib/require-tutor";
 import { checkTutorRateLimit } from "../_lib/tutor-rate-limit";
@@ -154,20 +154,25 @@ export async function confirmProfilePhotoUploadAction(input: {
   // we stage the key in the form's hidden field and let submitProfileAction
   // write it. This action only records the audit row for the trail.
   //
-  // Sequential write (no tx) — neon-http driver does not support transactions
-  // (`No transactions support in neon-http driver`). Stories 1.13/1.14 use the
-  // same sequential pattern with cleanup-on-failure.
+  // Sequential write (no tx) — neon-http driver does not support transactions.
+  // The audit insert is wrapped in try/catch so a transient audit failure
+  // logs but does NOT surface as a 500 to the client (the user-visible
+  // upload itself has already succeeded).
   const db = getDb();
-  await db.insert(auditEvents).values(
-    toAuditEventValues({
-      eventType: "tutor.profile_photo_uploaded",
-      actorKind: "user",
-      actorId: user.id,
-      targetType: "tutor_profile",
-      targetId: user.id,
-      payload: { r2Key: input.r2Key },
-    }),
-  );
+  try {
+    await db.insert(auditEvents).values(
+      toAuditEventValues({
+        eventType: "tutor.profile_photo_uploaded",
+        actorKind: "user",
+        actorId: user.id,
+        targetType: "tutor_profile",
+        targetId: user.id,
+        payload: { r2Key: input.r2Key },
+      }),
+    );
+  } catch (err) {
+    console.error("[confirmProfilePhotoUploadAction] audit write failed", err);
+  }
 
   const previewUrl = await getFilesProvider().generatePresignedGetUrl({
     bucket: "tutor-profile-photos",
@@ -276,49 +281,77 @@ export async function confirmIntroVideoUploadAction(input: {
 
   const db = getDb();
 
-  // Code-review patch (2026-05-12): idempotency. A tutor triple-clicking
-  // "החליפו סרטון" (or hitting the action via network retry) previously
-  // created multiple `tutor_documents` rows with `vetting_status="pending"`,
-  // polluting the admin queue (Story 2.4) with duplicates. DELETE prior
-  // pending rows for THIS user before inserting the new one. The orphan
-  // R2 objects this leaves behind are already a documented deferred issue
-  // (deferred-work.md under Story 2.1) — DELETE keeps the admin queue clean,
-  // which is the more important invariant. The audit row written below
-  // preserves the trail. Filter: (tutorUserId, docType, status=pending).
+  // Idempotency + double-click guard (code-review patches 2026-05-12 + 2026-05-13).
   //
-  // Sequential writes (no tx) — neon-http does not support transactions.
-  // Failure between the DELETE and the INSERT would leave the tutor with no
-  // pending intro_video row; the submit action's validation surfaces a clear
-  // "intro video required" error, so the worst case is a re-upload prompt.
-  await db
-    .delete(tutorDocuments)
+  // Without idempotency, a tutor triple-clicking "החליפו סרטון" (or a
+  // network-layer retry) could create multiple `tutor_documents` rows with
+  // `vetting_status="pending"`, polluting the admin queue (Story 2.4) with
+  // duplicates. DELETE-then-INSERT removes the duplicates problem on the
+  // happy path, but two concurrent requests can still race (both DELETE
+  // succeed against zero rows, both INSERT succeed, result: two pending rows
+  // for the same tutor).
+  //
+  // Defense: short-circuit if a pending row already exists for this exact
+  // r2Key + tutor combo (e.g., a retry of the same upload). Otherwise do the
+  // DELETE-then-INSERT for the "user picked a different file" case.
+  //
+  // Sequential writes (no tx — neon-http constraint). Failure between the
+  // DELETE and the INSERT leaves the tutor with no pending intro_video row;
+  // the submit action's validation surfaces a clear "intro video required"
+  // error, so the worst case is a re-upload prompt.
+  const existing = (await db
+    .select({ id: tutorDocuments.id })
+    .from(tutorDocuments)
     .where(
       and(
         eq(tutorDocuments.tutorUserId, user.id),
+        eq(tutorDocuments.r2Key, input.r2Key),
         eq(tutorDocuments.docType, "intro_video"),
         eq(tutorDocuments.vettingStatus, "pending"),
       ),
+    )) as { id: string }[];
+
+  if (existing.length === 0) {
+    await db
+      .delete(tutorDocuments)
+      .where(
+        and(
+          eq(tutorDocuments.tutorUserId, user.id),
+          eq(tutorDocuments.docType, "intro_video"),
+          eq(tutorDocuments.vettingStatus, "pending"),
+        ),
+      );
+    await db.insert(tutorDocuments).values({
+      tutorUserId: user.id,
+      docType: "intro_video",
+      r2Key: input.r2Key,
+      mimeType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      vettingStatus: "pending",
+      createdByKind: "user",
+      createdByActor: user.id,
+    });
+  }
+
+  // Audit insert wrapped — see photo confirm for rationale.
+  try {
+    await db.insert(auditEvents).values(
+      toAuditEventValues({
+        eventType: "tutor.intro_video_uploaded",
+        actorKind: "user",
+        actorId: user.id,
+        targetType: "tutor_profile",
+        targetId: user.id,
+        payload: {
+          r2Key: input.r2Key,
+          sizeBytes: input.sizeBytes,
+          mimeType: input.contentType,
+        },
+      }),
     );
-  await db.insert(tutorDocuments).values({
-    tutorUserId: user.id,
-    docType: "intro_video",
-    r2Key: input.r2Key,
-    mimeType: input.contentType,
-    sizeBytes: input.sizeBytes,
-    vettingStatus: "pending",
-    createdByKind: "user",
-    createdByActor: user.id,
-  });
-  await db.insert(auditEvents).values(
-    toAuditEventValues({
-      eventType: "tutor.intro_video_uploaded",
-      actorKind: "user",
-      actorId: user.id,
-      targetType: "tutor_profile",
-      targetId: user.id,
-      payload: { r2Key: input.r2Key, sizeBytes: input.sizeBytes, mimeType: input.contentType },
-    }),
-  );
+  } catch (err) {
+    console.error("[confirmIntroVideoUploadAction] audit write failed", err);
+  }
 
   const previewUrl = await getFilesProvider().generatePresignedGetUrl({
     bucket: "tutor-intro-videos",
@@ -333,12 +366,17 @@ export async function confirmIntroVideoUploadAction(input: {
 // URLs (`https://stub.r2.local/...`) are filtered to null because the browser
 // can't fetch them — the form renders an "uploaded" placeholder instead. Real
 // R2 presigned GET URLs pass through unchanged.
+//
+// Uses `Promise.allSettled` rather than `Promise.all` so a single presigning
+// failure (transient network blip, expired creds) returns `null` for THAT
+// asset rather than crashing the whole page render — the photo URL is
+// independent of the video URL.
 export async function getTutorProfilePreviewUrls(input: {
   introVideoR2Key: string | null;
   photoR2Key: string | null;
 }): Promise<{ photoUrl: string | null; introVideoUrl: string | null }> {
   const provider = getFilesProvider();
-  const [photoUrl, introVideoUrl] = await Promise.all([
+  const [photoResult, videoResult] = await Promise.allSettled([
     input.photoR2Key
       ? provider.generatePresignedGetUrl({
           bucket: "tutor-profile-photos",
@@ -355,13 +393,22 @@ export async function getTutorProfilePreviewUrls(input: {
       : Promise.resolve(null as string | null),
   ]);
   return {
-    photoUrl: filterStubUrl(photoUrl),
-    introVideoUrl: filterStubUrl(introVideoUrl),
+    photoUrl: filterStubUrl(unwrapSettled(photoResult, "photo")),
+    introVideoUrl: filterStubUrl(unwrapSettled(videoResult, "introVideo")),
   };
+}
+
+function unwrapSettled(
+  result: PromiseSettledResult<string | null>,
+  label: string,
+): string | null {
+  if (result.status === "fulfilled") return result.value;
+  console.error(`[getTutorProfilePreviewUrls] presign for ${label} failed`, result.reason);
+  return null;
 }
 
 function filterStubUrl(url: string | null): string | null {
   if (!url) return null;
-  return url.startsWith("https://stub.r2.local/") ? null : url;
+  return isStubUrl(url) ? null : url;
 }
 
