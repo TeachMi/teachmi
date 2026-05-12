@@ -40,11 +40,50 @@ export interface SigninRateLimitedEvent {
   action: "signin";
 }
 
-export type AuthRateLimitedEvent = SignupRateLimitedEvent | SigninRateLimitedEvent;
+// Story 1.15: password-reset request (the forgot form submit) and confirm
+// (the new-password submit). Two literal-typed branches so an
+// `event: "password_reset_rate_limited"` row carries the action that was
+// throttled — split per the same Story 1.14 code-review insight that split
+// SigninRateLimitedEvent from SignupRateLimitedEvent.
+export interface PasswordResetRequestRateLimitedEvent {
+  event: "password_reset_rate_limited";
+  anonymizedIp: string;
+  action: "password_reset_request";
+}
+
+export interface PasswordResetConfirmRateLimitedEvent {
+  event: "password_reset_rate_limited";
+  anonymizedIp: string;
+  action: "password_reset_confirm";
+}
+
+export type PasswordResetRateLimitedEvent =
+  | PasswordResetRequestRateLimitedEvent
+  | PasswordResetConfirmRateLimitedEvent;
+
+export type AuthRateLimitedEvent =
+  | SignupRateLimitedEvent
+  | SigninRateLimitedEvent
+  | PasswordResetRateLimitedEvent;
 
 export interface SignInFailedEvent {
   event: "signin_failed";
   anonymizedIp: string;
+}
+
+// Fires on every successful password-reset request that ACTUALLY sent an email
+// (i.e., a real user with a passwordHash). The no-user and oauth-only branches
+// are anti-enumeration silent no-ops and do NOT emit this event — only the
+// audit-event row distinguishes them.
+export interface PasswordResetRequestedEvent {
+  event: "password_reset_requested";
+  anonymizedIp: string;
+}
+
+export interface PasswordResetCompletedEvent {
+  event: "password_reset_completed";
+  userId: string;
+  role: AppRole;
 }
 
 export type AnalyticsEvent =
@@ -52,6 +91,10 @@ export type AnalyticsEvent =
   | EmailVerifiedEvent
   | SignupRateLimitedEvent
   | SigninRateLimitedEvent
-  | SignInFailedEvent;
+  | PasswordResetRequestRateLimitedEvent
+  | PasswordResetConfirmRateLimitedEvent
+  | SignInFailedEvent
+  | PasswordResetRequestedEvent
+  | PasswordResetCompletedEvent;
 
 export type AnalyticsEventName = AnalyticsEvent["event"];

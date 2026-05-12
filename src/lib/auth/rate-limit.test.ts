@@ -91,6 +91,24 @@ describe("buildAttemptAuditEvent", () => {
     const event = buildAttemptAuditEvent({ ip: "10.0.0.1", action: "signup_resend" });
     expect(event.eventType).toBe("auth.signup_resend_attempt");
   });
+
+  it("maps password_reset_request to the right event type", () => {
+    const event = buildAttemptAuditEvent({
+      ip: "10.0.0.1",
+      action: "password_reset_request",
+      email: "user@example.com",
+    });
+    expect(event.eventType).toBe(RATE_LIMIT_EVENT_TYPES.password_reset_request);
+    expect(event.eventType).toBe("auth.password_reset_request_attempt");
+    expect(event.actorMeta).toBe("10.0.0.1");
+    expect(event.payload).toEqual({ emailHash: hashEmailForAudit("user@example.com") });
+  });
+
+  it("maps password_reset_confirm to the right event type", () => {
+    const event = buildAttemptAuditEvent({ ip: "10.0.0.1", action: "password_reset_confirm" });
+    expect(event.eventType).toBe("auth.password_reset_confirm_attempt");
+    expect(event.payload).toEqual({});
+  });
 });
 
 describe("rateLimitWindowStart", () => {

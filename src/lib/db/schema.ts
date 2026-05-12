@@ -142,6 +142,28 @@ export const verificationTokens = pgTable(
 );
 
 // ------------------------------------------------------------------------------
+// password_reset_tokens - Story 1.15 FR4 — separate table from verificationTokens
+// despite the identical shape. Two reasons (see story Dev Notes):
+//   1. Asymmetric consumption: verify is atomic-on-link-click; reset is a
+//      two-request flow (click lands user on form, submit consumes token).
+//   2. Independent TTL tunability (future) and a self-evident audit surface
+//      ("what is this token's purpose" = the table name, no inference).
+// Same shape as verificationTokens deliberately — the helpers + lookup
+// patterns are interchangeable, only the table differs.
+// ------------------------------------------------------------------------------
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    identifier: text("identifier").notNull(),          // email (lower-cased)
+    token: text("token").notNull(),
+    expires: timestamp("expires", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.identifier, t.token] }),
+  }),
+);
+
+// ------------------------------------------------------------------------------
 // audit_events - append-only (NFR16 + concern #3)
 // Written same-tx with the action it audits via lib/db/audit.ts helper.
 // ------------------------------------------------------------------------------
