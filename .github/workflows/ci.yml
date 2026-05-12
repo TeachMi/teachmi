@@ -74,6 +74,13 @@ jobs:
       - name: Storybook coverage (every components/ui/*.tsx has *.stories.tsx)
         run: pnpm check:stories
 
+      - name: Fetch base ref for migration coverage check
+        if: github.event_name == 'pull_request'
+        # `fetch-depth: 0` on the checkout deepens the HEAD ref's history
+        # but doesn't fetch other branches at all. The PR's base SHA lives
+        # on the base branch's history, so we need to fetch it explicitly.
+        run: git fetch origin "${{ github.base_ref }}"
+
       - name: Compute changed files for migration coverage check
         if: github.event_name == 'pull_request'
         id: changed
@@ -81,9 +88,6 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # Use the PR event's exact base/head SHAs — guaranteed reachable
-          # with fetch-depth: 0 on the checkout. Sidesteps git's
-          # merge-base / shallow-fetch fragility around ref names.
           CHANGED=$(git diff --name-only --diff-filter=AM "$BASE_SHA" "$HEAD_SHA")
           {
             echo "files<<EOF"
