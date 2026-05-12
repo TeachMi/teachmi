@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { getDb } from "../../../../lib/db/client";
-import { runWithAuditEvent, toAuditEventValues } from "../../../../lib/db/audit";
+import { toAuditEventValues } from "../../../../lib/db/audit";
 import { auditEvents, tutorDocuments } from "../../../../lib/db/schema";
 import { track } from "../../../../lib/analytics";
 import { anonymizeIpForAnalytics } from "../../../../lib/auth/rate-limit";
@@ -150,24 +150,23 @@ export async function confirmProfilePhotoUploadAction(input: {
     return { ok: false, formError: "מפתח R2 לא תקין." };
   }
 
+  // Photo metadata lives directly on tutor_profiles, not in tutor_documents;
+  // we stage the key in the form's hidden field and let submitProfileAction
+  // write it. This action only records the audit row for the trail.
+  //
+  // Sequential write (no tx) — neon-http driver does not support transactions
+  // (`No transactions support in neon-http driver`). Stories 1.13/1.14 use the
+  // same sequential pattern with cleanup-on-failure.
   const db = getDb();
-  await runWithAuditEvent(
-    db,
-    async (tx) => {
-      void tx;
-      // Photo metadata lives directly on tutor_profiles, not in tutor_documents;
-      // we stage the key in the form's hidden field and let submitProfileAction
-      // write it. This action exists for the audit-trail symmetry with the
-      // intro-video confirm path.
-    },
-    {
+  await db.insert(auditEvents).values(
+    toAuditEventValues({
       eventType: "tutor.profile_photo_uploaded",
       actorKind: "user",
       actorId: user.id,
       targetType: "tutor_profile",
       targetId: user.id,
       payload: { r2Key: input.r2Key },
-    },
+    }),
   );
 
   const previewUrl = await getFilesProvider().generatePresignedGetUrl({
@@ -286,37 +285,39 @@ export async function confirmIntroVideoUploadAction(input: {
   // (deferred-work.md under Story 2.1) — DELETE keeps the admin queue clean,
   // which is the more important invariant. The audit row written below
   // preserves the trail. Filter: (tutorUserId, docType, status=pending).
-  await runWithAuditEvent(
-    db,
-    async (tx) => {
-      await tx
-        .delete(tutorDocuments)
-        .where(
-          and(
-            eq(tutorDocuments.tutorUserId, user.id),
-            eq(tutorDocuments.docType, "intro_video"),
-            eq(tutorDocuments.vettingStatus, "pending"),
-          ),
-        );
-      await tx.insert(tutorDocuments).values({
-        tutorUserId: user.id,
-        docType: "intro_video",
-        r2Key: input.r2Key,
-        mimeType: input.contentType,
-        sizeBytes: input.sizeBytes,
-        vettingStatus: "pending",
-        createdByKind: "user",
-        createdByActor: user.id,
-      });
-    },
-    {
+  //
+  // Sequential writes (no tx) — neon-http does not support transactions.
+  // Failure between the DELETE and the INSERT would leave the tutor with no
+  // pending intro_video row; the submit action's validation surfaces a clear
+  // "intro video required" error, so the worst case is a re-upload prompt.
+  await db
+    .delete(tutorDocuments)
+    .where(
+      and(
+        eq(tutorDocuments.tutorUserId, user.id),
+        eq(tutorDocuments.docType, "intro_video"),
+        eq(tutorDocuments.vettingStatus, "pending"),
+      ),
+    );
+  await db.insert(tutorDocuments).values({
+    tutorUserId: user.id,
+    docType: "intro_video",
+    r2Key: input.r2Key,
+    mimeType: input.contentType,
+    sizeBytes: input.sizeBytes,
+    vettingStatus: "pending",
+    createdByKind: "user",
+    createdByActor: user.id,
+  });
+  await db.insert(auditEvents).values(
+    toAuditEventValues({
       eventType: "tutor.intro_video_uploaded",
       actorKind: "user",
       actorId: user.id,
       targetType: "tutor_profile",
       targetId: user.id,
       payload: { r2Key: input.r2Key, sizeBytes: input.sizeBytes, mimeType: input.contentType },
-    },
+    }),
   );
 
   const previewUrl = await getFilesProvider().generatePresignedGetUrl({
@@ -328,7 +329,10 @@ export async function confirmIntroVideoUploadAction(input: {
   return { ok: true, r2Key: input.r2Key, previewUrl };
 }
 
-// Helper exposed for the dashboard CTA and other server-side readers.
+// Helper exposed for the dashboard CTA and other server-side readers. Stub
+// URLs (`https://stub.r2.local/...`) are filtered to null because the browser
+// can't fetch them — the form renders an "uploaded" placeholder instead. Real
+// R2 presigned GET URLs pass through unchanged.
 export async function getTutorProfilePreviewUrls(input: {
   introVideoR2Key: string | null;
   photoR2Key: string | null;
@@ -350,6 +354,14 @@ export async function getTutorProfilePreviewUrls(input: {
         })
       : Promise.resolve(null as string | null),
   ]);
-  return { photoUrl, introVideoUrl };
+  return {
+    photoUrl: filterStubUrl(photoUrl),
+    introVideoUrl: filterStubUrl(introVideoUrl),
+  };
+}
+
+function filterStubUrl(url: string | null): string | null {
+  if (!url) return null;
+  return url.startsWith("https://stub.r2.local/") ? null : url;
 }
 

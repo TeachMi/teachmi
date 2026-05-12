@@ -54,7 +54,7 @@ export function WizardShell({ currentPhase, children }: WizardShellProps) {
           aria-label="שלבי האשף"
           className="mx-auto max-w-5xl px-6 py-5"
         >
-          <ol className="flex flex-row-reverse items-center justify-between">
+          <ol className="flex items-center justify-between">
             {PHASES.map((phase, idx) => {
               const isComplete = phase.number < currentPhase;
               const isActive = phase.number === currentPhase;
@@ -63,7 +63,7 @@ export function WizardShell({ currentPhase, children }: WizardShellProps) {
               return (
                 <li
                   key={phase.number}
-                  className="flex flex-1 flex-row-reverse items-center"
+                  className="flex flex-1 items-center"
                   aria-current={isActive ? "step" : undefined}
                 >
                   <div className="flex flex-col items-center">

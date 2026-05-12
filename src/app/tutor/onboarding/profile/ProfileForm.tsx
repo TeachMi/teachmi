@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
 import { profileFormAction } from "./actions";
+import { PhotoCropModal } from "./PhotoCropModal";
 import { PROFILE_ACTION_INITIAL_STATE } from "./state";
 import {
   confirmIntroVideoUploadAction,
@@ -89,7 +90,40 @@ export function ProfileForm({
   });
   const [photoError, setPhotoError] = useState<string | null>(null);
 
+  /** Source File for the crop modal. Non-null while the modal is open. */
+  const [photoToCrop, setPhotoToCrop] = useState<File | null>(null);
+
+  // Client-mirrored copies of the text fields. Two purposes:
+  //  (#5) preserve what the user typed when the submit action returns an error.
+  //  (#4) recompute "bio too short" / "name too short" client-side so the
+  //       server-returned error dismisses live as the user types past the bound.
+  const [bio, setBio] = useState(initialValues.bio);
+  const [displayName, setDisplayName] = useState(initialValues.displayName);
+  const [price45, setPrice45] = useState<string>(
+    initialValues.price45Ils?.toString() ?? "",
+  );
+  const [price60, setPrice60] = useState<string>(
+    initialValues.price60Ils?.toString() ?? "",
+  );
+
   const formRef = useRef<HTMLFormElement | null>(null);
+
+  /**
+   * Fire a save-draft action right now (not on the 30s debounce). Used after
+   * uploads so the R2 key reaches `tutor_wizard_state` before the user can
+   * reload. Overrides pass directly into FormData since React state setters
+   * are async and `new FormData(formEl)` would still see the pre-set value.
+   */
+  function persistDraftImmediately(overrides: Record<string, string>) {
+    const formEl = formRef.current;
+    if (!formEl) return;
+    const fd = new FormData(formEl);
+    fd.set("intent", "save");
+    for (const [key, value] of Object.entries(overrides)) {
+      fd.set(key, value);
+    }
+    startTransition(() => formAction(fd));
+  }
 
   // Debounced auto-save on any field change.
   useEffect(() => {
@@ -115,22 +149,89 @@ export function ProfileForm({
   const lastSavedAt =
     state.intent === "save" && state.ok ? state.savedAt : undefined;
 
+  // (#4) Dismiss server-returned errors as the user fixes the underlying value
+  // client-side. Without this, the "bio under 50 chars" error stays visible
+  // even after the user types past the threshold — they'd have to submit again
+  // to see it disappear.
+  const bioTrimmedLen = bio.trim().length;
+  const showBioError =
+    submitFieldErrors.bio !== undefined &&
+    (bioTrimmedLen < PROFILE_FORM_LIMITS.BIO_MIN_CHARS ||
+      bioTrimmedLen > PROFILE_FORM_LIMITS.BIO_MAX_CHARS);
+  const showDisplayNameError =
+    submitFieldErrors.displayName !== undefined &&
+    displayName.trim().length < PROFILE_FORM_LIMITS.DISPLAY_NAME_MIN_CHARS;
+  // Price dismissal accounts for BOTH the per-field bounds AND the relational
+  // invariant (price45 < price60). The latter is a "wrong combination" error
+  // that doesn't go away just by typing — only by the user changing the values
+  // so one is genuinely lower than the other.
+  const bothPricesParseable = isValidPrice(price45) && isValidPrice(price60);
+  const pricePairInvariantSatisfied =
+    bothPricesParseable && Number(price45) < Number(price60);
+  const showPrice45Error =
+    submitFieldErrors.price45Ils !== undefined &&
+    (!isValidPrice(price45) || !pricePairInvariantSatisfied);
+  const showPrice60Error =
+    submitFieldErrors.price60Ils !== undefined &&
+    (!isValidPrice(price60) || !pricePairInvariantSatisfied);
+
+  // Collect a flat list of remaining (post-client-dismissal) error messages so
+  // we can surface them at the top of the form. Without this, a submit click
+  // that fails validation on a field below the fold (intro video, subjects)
+  // looks like the button "did nothing".
+  const submitFieldErrorList: string[] = [];
+  if (state.intent === "submit" && !state.ok) {
+    if (showDisplayNameError && submitFieldErrors.displayName) submitFieldErrorList.push(submitFieldErrors.displayName);
+    if (showBioError && submitFieldErrors.bio) submitFieldErrorList.push(submitFieldErrors.bio);
+    if (submitFieldErrors.subjects) submitFieldErrorList.push(submitFieldErrors.subjects);
+    if (showPrice45Error && submitFieldErrors.price45Ils) submitFieldErrorList.push(submitFieldErrors.price45Ils);
+    if (showPrice60Error && submitFieldErrors.price60Ils) submitFieldErrorList.push(submitFieldErrors.price60Ils);
+    if (submitFieldErrors.introVideoR2Key) submitFieldErrorList.push(submitFieldErrors.introVideoR2Key);
+  }
+  const submitHasErrors =
+    state.intent === "submit" && !state.ok &&
+    (submitFormError !== undefined || submitFieldErrorList.length > 0);
+
+  // Scroll the error summary into view after a failed submit so the user
+  // sees what's wrong instead of thinking the button did nothing.
+  useEffect(() => {
+    if (submitHasErrors && formRef.current) {
+      formRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [submitHasErrors]);
+
   function toggleSubject(slug: string) {
     setSelectedSubjects((prev) =>
       prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug],
     );
   }
 
-  async function handlePhotoUpload(file: File) {
+  function handlePhotoPicked(file: File) {
     setPhotoError(null);
     if (!(ALLOWED_PHOTO_MIME_TYPES as readonly string[]).includes(file.type)) {
       setPhotoError(`סוג קובץ לא נתמך. בחרו ${ALLOWED_PHOTO_MIME_TYPES.join(" / ")}.`);
       return;
     }
+    // Photo size check runs on the ORIGINAL pick — crop output is 400×400 JPEG
+    // (~50KB) so the 5MB limit is really only a sanity guard against
+    // multi-megapixel uploads tying up the browser's canvas memory.
     if (file.size > PROFILE_FORM_LIMITS.PHOTO_MAX_BYTES) {
       setPhotoError("התמונה גדולה מ-5MB.");
       return;
     }
+    // Open the crop modal; uploading happens after the user confirms the crop.
+    setPhotoToCrop(file);
+  }
+
+  async function handleCroppedPhoto(croppedBlob: Blob) {
+    setPhotoToCrop(null);
+    setPhotoError(null);
+    // The crop output is always image/jpeg (see PhotoCropModal.tsx). Wrap as a
+    // File so the upload-init action's MIME validation accepts it.
+    const file = new File([croppedBlob], "profile.jpg", {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
 
     const init = await requestProfilePhotoUploadUrlAction({
       contentType: file.type,
@@ -168,7 +269,22 @@ export function ProfileForm({
       setPhotoError(confirm.formError);
       return;
     }
-    setPhotoState({ r2Key: confirm.r2Key, previewUrl: confirm.previewUrl });
+    // Use the LOCAL object URL for preview, not the server-returned URL.
+    // The stub provider returns `https://stub.r2.local/...` which isn't a
+    // real server — the browser would render the broken-image alt text
+    // ("תמונת פרופיל") instead of the photo the user just chose. Real R2
+    // (MVP 2) returns a usable presigned GET URL; falling back to that URL
+    // for production is fine since the file may not be in memory anymore.
+    const isStubUrl = confirm.previewUrl.startsWith("https://stub.r2.local/");
+    const previewUrl = isStubUrl ? URL.createObjectURL(file) : confirm.previewUrl;
+    setPhotoState((prev) => {
+      // Revoke the previous blob URL to avoid leaks across re-uploads.
+      if (prev.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(prev.previewUrl);
+      return { r2Key: confirm.r2Key, previewUrl };
+    });
+    // Persist the new R2 key into the wizard_state draft immediately — the
+    // 30s auto-save debounce would lose this key if the user reloaded sooner.
+    persistDraftImmediately({ photoR2Key: confirm.r2Key });
   }
 
   async function handleVideoUpload(file: File) {
@@ -237,13 +353,23 @@ export function ProfileForm({
       }));
       return;
     }
-    setVideoState({
-      r2Key: confirm.r2Key,
-      previewUrl: confirm.previewUrl,
-      uploading: false,
-      progressPercent: 100,
-      error: null,
+    // Use the LOCAL object URL for preview when the server returned a stub URL
+    // (same reasoning as the photo handler — real R2 presigned GET URLs work,
+    // stub URLs don't). Revoke previous blob URL to avoid leaks on re-record.
+    const isStubUrl = confirm.previewUrl.startsWith("https://stub.r2.local/");
+    const previewUrl = isStubUrl ? URL.createObjectURL(file) : confirm.previewUrl;
+    setVideoState((prev) => {
+      if (prev.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(prev.previewUrl);
+      return {
+        r2Key: confirm.r2Key,
+        previewUrl,
+        uploading: false,
+        progressPercent: 100,
+        error: null,
+      };
     });
+    // Persist the new R2 key into the wizard_state draft immediately.
+    persistDraftImmediately({ introVideoR2Key: confirm.r2Key });
   }
 
   const subjectsExceedingSoftCap =
@@ -267,19 +393,22 @@ export function ProfileForm({
         name="introVideoR2Key"
         value={videoState.r2Key ?? ""}
       />
-      <input
-        type="hidden"
-        name="displayName"
-        defaultValue={initialValues.displayName}
-      />
+      <input type="hidden" name="displayName" value={displayName} />
 
-      {submitFormError && (
+      {submitHasErrors && (
         <Card
           tone="error"
           role="alert"
-          className="text-sm font-bold text-danger"
+          className="text-sm text-danger"
         >
-          {submitFormError}
+          <p className="font-bold">{submitFormError ?? "השליחה נכשלה. תקנו את השדות המסומנים ונסו שוב."}</p>
+          {submitFieldErrorList.length > 0 && (
+            <ul className="mt-2 list-inside list-disc text-xs">
+              {submitFieldErrorList.map((msg, i) => (
+                <li key={i}>{msg}</li>
+              ))}
+            </ul>
+          )}
         </Card>
       )}
 
@@ -294,23 +423,43 @@ export function ProfileForm({
         <h3 className="mb-4 font-display text-lg font-bold text-primary-container">
           תמונה וביוגרפיה
         </h3>
-        <div className="flex flex-row-reverse gap-5">
-          <div className="shrink-0">
+        {/* Single shared row of labels above the two input columns. This is */}
+        {/* the cleanest way to top-align the avatar with the textarea: both */}
+        {/* columns start at the SAME baseline, and the labels live above. In */}
+        {/* RTL the first child of `flex` is on the right. */}
+        <div className="mb-1.5 flex items-baseline gap-5">
+          <div className="w-24 shrink-0 text-center">
+            <span className="text-xs font-bold text-on-surface">תמונת פרופיל</span>
+          </div>
+          <div className="flex-1">
+            <span className="text-sm font-bold text-on-surface">ביוגרפיה קצרה</span>
+          </div>
+        </div>
+        <div className="flex items-start gap-5">
+          <div className="flex w-24 shrink-0 flex-col items-center">
             <div className="h-24 w-24 overflow-hidden rounded-full border-2 border-linen-border bg-surface-container">
               {photoState.previewUrl ? (
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img
                   src={photoState.previewUrl}
-                  alt="תמונת פרופיל"
+                  alt=""
                   className="h-full w-full object-cover"
                 />
+              ) : photoState.r2Key ? (
+                // R2 key on file but no fetchable preview URL (stub mode, or
+                // the user reloaded after upload). Acknowledge the upload
+                // visually instead of showing the empty placeholder.
+                <div className="flex h-full w-full flex-col items-center justify-center text-primary-container">
+                  <span aria-hidden="true" className="text-2xl leading-none">✓</span>
+                  <span className="mt-1 text-[10px] font-bold">הועלתה</span>
+                </div>
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-on-surface-variant">
                   ללא
                 </div>
               )}
             </div>
-            <label className="mt-2 inline-block cursor-pointer border-b border-primary-container text-xs font-bold text-primary-container">
+            <label className="mt-2 inline-block cursor-pointer text-center border-b border-primary-container text-xs font-bold text-primary-container">
               {photoState.r2Key ? "החליפו תמונה" : "העלו תמונה"}
               <input
                 type="file"
@@ -318,12 +467,15 @@ export function ProfileForm({
                 className="sr-only"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) void handlePhotoUpload(file);
+                  if (file) handlePhotoPicked(file);
+                  // Reset input so picking the SAME file again still fires onChange
+                  // (useful if the user cancels the crop and tries the same image).
+                  e.target.value = "";
                 }}
               />
             </label>
             {photoError && (
-              <p role="alert" className="mt-1 text-xs font-bold text-danger">
+              <p role="alert" className="mt-1 text-center text-xs font-bold text-danger">
                 {photoError}
               </p>
             )}
@@ -332,11 +484,11 @@ export function ProfileForm({
             <Textarea
               name="bio"
               rows={4}
-              label="ביוגרפיה קצרה"
               hint="המלצה: 50-1000 תווים. הזכירו ניסיון, גישה, ועל מי תוכלו לעזור."
               maxLength={PROFILE_FORM_LIMITS.BIO_MAX_CHARS}
-              defaultValue={initialValues.bio}
-              error={submitFieldErrors.bio}
+              value={bio}
+              onChange={(e) => setBio(e.target.value)}
+              error={showBioError ? submitFieldErrors.bio : undefined}
               surface="linen"
               placeholder="ספרו על עצמכם בקצרה..."
             />
@@ -404,14 +556,16 @@ export function ProfileForm({
           <PriceInput
             name="price45Ils"
             label="שיעור 45 דק׳"
-            defaultValue={initialValues.price45Ils ?? undefined}
-            error={submitFieldErrors.price45Ils}
+            value={price45}
+            onChange={setPrice45}
+            error={showPrice45Error ? submitFieldErrors.price45Ils : undefined}
           />
           <PriceInput
             name="price60Ils"
             label="שיעור 60 דק׳"
-            defaultValue={initialValues.price60Ils ?? undefined}
-            error={submitFieldErrors.price60Ils}
+            value={price60}
+            onChange={setPrice60}
+            error={showPrice60Error ? submitFieldErrors.price60Ils : undefined}
           />
         </div>
       </Card>
@@ -446,6 +600,31 @@ export function ProfileForm({
               />
             </label>
           </div>
+        ) : videoState.r2Key ? (
+          // R2 key recorded but no fetchable preview URL (stub mode, or page
+          // reload after upload). Acknowledge the upload + offer to replace.
+          <Card tone="success" padding="md" className="text-start">
+            <p className="mb-1 font-display font-bold text-primary-container">
+              ✓ סרטון הועלה
+            </p>
+            <p className="mb-3 text-xs text-on-surface-variant">
+              הסרטון נשמר ויוצג לסטודנטים אחרי אישור האדמין.
+            </p>
+            <label className="inline-block cursor-pointer">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-linen-border bg-surface-lowest px-4 py-2 text-sm font-bold text-on-surface hover:border-primary-fixed-dim">
+                החליפו סרטון
+              </span>
+              <input
+                type="file"
+                accept={ALLOWED_INTRO_VIDEO_MIME_TYPES.join(",")}
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleVideoUpload(file);
+                }}
+              />
+            </label>
+          </Card>
         ) : (
           <Card
             tone="highlighted"
@@ -560,6 +739,14 @@ export function ProfileForm({
           {saveError && saveError}
         </div>
       )}
+
+      {photoToCrop && (
+        <PhotoCropModal
+          file={photoToCrop}
+          onConfirm={(blob) => void handleCroppedPhoto(blob)}
+          onCancel={() => setPhotoToCrop(null)}
+        />
+      )}
     </form>
   );
 }
@@ -567,18 +754,30 @@ export function ProfileForm({
 interface PriceInputProps {
   name: string;
   label: string;
-  defaultValue: number | undefined;
+  value: string;
+  onChange: (value: string) => void;
   error: string | undefined;
 }
 
-function PriceInput({ name, label, defaultValue, error }: PriceInputProps) {
+function isValidPrice(raw: string): boolean {
+  if (raw.trim() === "") return false;
+  const parsed = Number(raw);
+  return (
+    Number.isInteger(parsed) &&
+    parsed >= PROFILE_FORM_LIMITS.PRICE_MIN_ILS &&
+    parsed <= PROFILE_FORM_LIMITS.PRICE_MAX_ILS
+  );
+}
+
+function PriceInput({ name, label, value, onChange, error }: PriceInputProps) {
   return (
     <Input
       type="number"
       name={name}
       label={label}
       surface="linen"
-      defaultValue={defaultValue}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
       min={PROFILE_FORM_LIMITS.PRICE_MIN_ILS}
       max={PROFILE_FORM_LIMITS.PRICE_MAX_ILS}
       step={1}

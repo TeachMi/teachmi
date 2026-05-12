@@ -82,17 +82,17 @@ interface DeleteWhere {
   where(condition: unknown): Promise<unknown>;
 }
 
-export interface TutorTransaction {
+/**
+ * Minimal Drizzle-compatible surface the orchestrators consume. We deliberately
+ * do NOT require `db.transaction(...)` here — the neon-http driver throws
+ * `No transactions support in neon-http driver`. The orchestrators sequence
+ * writes manually instead; tests assert on the resulting capture arrays.
+ */
+export interface TutorDb {
   select(cols: unknown): SelectFrom;
   insert(table: unknown): InsertValues;
   update(table: unknown): UpdateSet;
   delete(table: unknown): DeleteWhere;
-}
-
-export interface TutorDb {
-  transaction<TResult>(
-    callback: (transaction: TutorTransaction) => Promise<TResult>,
-  ): Promise<TResult>;
 }
 
 // --- Deps ------------------------------------------------------------------
@@ -174,196 +174,186 @@ export async function runSubmitProfile(
     };
   }
 
+  // Sequential writes (no transaction) — neon-http driver does not support
+  // transactions. Same pattern Stories 1.13/1.14 use. Partial failure leaves
+  // the DB in an inconsistent state; the next submit attempt's upsert logic
+  // converges back to the intended end state. Documented in deferred-work.md.
   try {
-    const result = await deps.db.transaction(async (tx) => {
-      // 1. Look up any existing profile + intro-video doc state.
-      const existingRows = (await tx
-        .select({
-          id: tutorProfiles.id,
-          vettingStatus: tutorProfiles.vettingStatus,
-          introVideoR2Key: tutorProfiles.introVideoR2Key,
-        })
-        .from(tutorProfiles)
-        .where(eq(tutorProfiles.userId, deps.tutorUserId))) as ExistingProfileLookup[];
+    const db = deps.db;
 
-      const existing = existingRows[0] ?? null;
-      const isFirstSubmit = existing === null;
+    // 1. Look up any existing profile.
+    const existingRows = (await db
+      .select({
+        id: tutorProfiles.id,
+        vettingStatus: tutorProfiles.vettingStatus,
+        introVideoR2Key: tutorProfiles.introVideoR2Key,
+      })
+      .from(tutorProfiles)
+      .where(eq(tutorProfiles.userId, deps.tutorUserId))) as ExistingProfileLookup[];
 
-      // 2. Upsert tutor_profiles.
-      let tutorProfileId: string;
-      if (existing === null) {
-        const inserted = (await tx
-          .insert(tutorProfiles)
-          .values({
-            userId: deps.tutorUserId,
-            displayName: input.displayName,
-            bio: input.bio,
-            city: input.city,
-            introVideoR2Key: input.introVideoR2Key,
-            profilePhotoR2Key: input.photoR2Key,
-            hourlyPriceIls: input.price60Ils,
-            lesson45PriceIls: input.price45Ils,
-            lessonLengthMinutes: 60,
-            vettingStatus: "pending",
-            isActive: false,
-            createdByKind: "user",
-            createdByActor: deps.tutorUserId,
-          })
-          .returning({ id: tutorProfiles.id })) as { id: string }[];
-        tutorProfileId = inserted[0]?.id ?? "";
-        if (!tutorProfileId) {
-          throw new Error("[runSubmitProfile] insert returned no id");
-        }
-      } else {
-        await tx
-          .update(tutorProfiles)
-          .set({
-            displayName: input.displayName,
-            bio: input.bio,
-            city: input.city,
-            introVideoR2Key: input.introVideoR2Key,
-            profilePhotoR2Key: input.photoR2Key,
-            hourlyPriceIls: input.price60Ils,
-            lesson45PriceIls: input.price45Ils,
-            // Re-submitting after changes-requested flips us back to "pending"
-            // for re-review (Story 2.4 owns the admin queue surface). Approved
-            // profiles editing high-impact fields is Story 2.5's concern — this
-            // story owns initial submit + changes-requested re-submit.
-            vettingStatus: "pending",
-            isActive: false,
-            updatedAt: deps.now(),
-            updatedByKind: "user",
-            updatedByActor: deps.tutorUserId,
-          })
-          .where(eq(tutorProfiles.id, existing.id));
-        tutorProfileId = existing.id;
-      }
+    const existing = existingRows[0] ?? null;
+    const isFirstSubmit = existing === null;
 
-      // 3. Replace tutor_subjects junction (DELETE-then-INSERT).
-      await tx
-        .delete(tutorSubjects)
-        .where(eq(tutorSubjects.tutorUserId, deps.tutorUserId));
-
-      // Code-review patch (2026-05-12, patch #6): the outer `missing.length > 0`
-      // guard above already errored on unknown slugs, so by here every slug is
-      // resolvable. Removing the dead-defense `continue` makes the intent
-      // explicit and surfaces any future inconsistency loudly via assertion.
-      for (const slug of input.subjects) {
-        const subjectId = subjectIds.get(slug);
-        if (!subjectId) {
-          throw new Error(
-            `[runSubmitProfile] invariant violation: slug ${slug} passed pre-check but not in subjectIds map`,
-          );
-        }
-        await tx.insert(tutorSubjects).values({
-          tutorUserId: deps.tutorUserId,
-          subjectId,
+    // 2. Upsert tutor_profiles.
+    let tutorProfileId: string;
+    if (existing === null) {
+      const inserted = (await db
+        .insert(tutorProfiles)
+        .values({
+          userId: deps.tutorUserId,
+          displayName: input.displayName,
+          bio: input.bio,
+          city: input.city,
+          introVideoR2Key: input.introVideoR2Key,
+          profilePhotoR2Key: input.photoR2Key,
+          hourlyPriceIls: input.price60Ils,
+          lesson45PriceIls: input.price45Ils,
+          lessonLengthMinutes: 60,
+          vettingStatus: "pending",
+          isActive: false,
           createdByKind: "user",
           createdByActor: deps.tutorUserId,
-        });
+        })
+        .returning({ id: tutorProfiles.id })) as { id: string }[];
+      tutorProfileId = inserted[0]?.id ?? "";
+      if (!tutorProfileId) {
+        throw new Error("[runSubmitProfile] insert returned no id");
       }
-
-      // 4. Re-confirm the intro_video document row (the upload-confirm action
-      //    inserted it in pending state already; this UPDATE is idempotent.)
-      //    Code-review patch (2026-05-12, patch #4): filter by BOTH r2Key AND
-      //    tutorUserId so an attacker who learns another tutor's r2Key cannot
-      //    flip that tutor's document back to "pending". The ownership-prefix
-      //    check above (patch #3) already blocks this earlier, but defense in
-      //    depth — the SQL must enforce the scope too.
-      await tx
-        .update(tutorDocuments)
+    } else {
+      await db
+        .update(tutorProfiles)
         .set({
+          displayName: input.displayName,
+          bio: input.bio,
+          city: input.city,
+          introVideoR2Key: input.introVideoR2Key,
+          profilePhotoR2Key: input.photoR2Key,
+          hourlyPriceIls: input.price60Ils,
+          lesson45PriceIls: input.price45Ils,
+          // Re-submitting after changes-requested flips us back to "pending"
+          // for re-review (Story 2.4 owns the admin queue surface). Approved
+          // profiles editing high-impact fields is Story 2.5's concern — this
+          // story owns initial submit + changes-requested re-submit.
           vettingStatus: "pending",
+          isActive: false,
+          updatedAt: deps.now(),
+          updatedByKind: "user",
+          updatedByActor: deps.tutorUserId,
+        })
+        .where(eq(tutorProfiles.id, existing.id));
+      tutorProfileId = existing.id;
+    }
+
+    // 3. Replace tutor_subjects junction (DELETE-then-INSERT).
+    await db
+      .delete(tutorSubjects)
+      .where(eq(tutorSubjects.tutorUserId, deps.tutorUserId));
+
+    // Code-review patch (2026-05-12, patch #6): the outer `missing.length > 0`
+    // guard above already errored on unknown slugs, so by here every slug is
+    // resolvable. Removing the dead-defense `continue` makes the intent
+    // explicit and surfaces any future inconsistency loudly via assertion.
+    for (const slug of input.subjects) {
+      const subjectId = subjectIds.get(slug);
+      if (!subjectId) {
+        throw new Error(
+          `[runSubmitProfile] invariant violation: slug ${slug} passed pre-check but not in subjectIds map`,
+        );
+      }
+      await db.insert(tutorSubjects).values({
+        tutorUserId: deps.tutorUserId,
+        subjectId,
+        createdByKind: "user",
+        createdByActor: deps.tutorUserId,
+      });
+    }
+
+    // 4. Re-confirm the intro_video document row (the upload-confirm action
+    //    inserted it in pending state already; this UPDATE is idempotent.)
+    //    Filter by BOTH r2Key AND tutorUserId so an attacker who learns
+    //    another tutor's r2Key cannot flip that tutor's document back to
+    //    "pending". The ownership-prefix check at the action layer already
+    //    blocks this earlier; the SQL filter is defense in depth.
+    await db
+      .update(tutorDocuments)
+      .set({
+        vettingStatus: "pending",
+        updatedAt: deps.now(),
+        updatedByKind: "user",
+        updatedByActor: deps.tutorUserId,
+      })
+      .where(
+        and(
+          eq(tutorDocuments.r2Key, input.introVideoR2Key),
+          eq(tutorDocuments.tutorUserId, deps.tutorUserId),
+        ),
+      );
+
+    // 5. Mark phase 2 complete on the wizard state. Filter UPDATE by both
+    //    userId AND phase=2 so future phase-3+ rows (Stories 2.2+) aren't
+    //    clobbered.
+    const wizardRows = (await db
+      .select({ phase: tutorWizardState.phase })
+      .from(tutorWizardState)
+      .where(eq(tutorWizardState.userId, deps.tutorUserId))) as { phase: number }[];
+    const hasPhase2 = wizardRows.some((row) => row.phase === 2);
+    if (hasPhase2) {
+      await db
+        .update(tutorWizardState)
+        .set({
+          data: serializeDraftForPersistence(input),
+          completedAt: deps.now(),
           updatedAt: deps.now(),
           updatedByKind: "user",
           updatedByActor: deps.tutorUserId,
         })
         .where(
           and(
-            eq(tutorDocuments.r2Key, input.introVideoR2Key),
-            eq(tutorDocuments.tutorUserId, deps.tutorUserId),
+            eq(tutorWizardState.userId, deps.tutorUserId),
+            eq(tutorWizardState.phase, 2),
           ),
         );
+    } else {
+      await db.insert(tutorWizardState).values({
+        userId: deps.tutorUserId,
+        phase: 2,
+        data: serializeDraftForPersistence(input),
+        completedAt: deps.now(),
+        createdByKind: "user",
+        createdByActor: deps.tutorUserId,
+      });
+    }
 
-      // 5. Mark phase 2 complete on the wizard state.
-      //    Code-review patch (2026-05-12, patch #9): filter UPDATE by both
-      //    userId AND phase=2. The previous code admitted "real Drizzle call
-      //    (production) uses and(eq(userId), eq(phase, 2))" but production
-      //    actually used userId-only — would have clobbered future phase 3+
-      //    rows once Stories 2.2+ ship. Safe today (only phase 2 exists), but
-      //    future-proofing required.
-      const wizardRows = (await tx
-        .select({ phase: tutorWizardState.phase })
-        .from(tutorWizardState)
-        .where(eq(tutorWizardState.userId, deps.tutorUserId))) as { phase: number }[];
-      const hasPhase2 = wizardRows.some((row) => row.phase === 2);
-      if (hasPhase2) {
-        await tx
-          .update(tutorWizardState)
-          .set({
-            data: serializeDraftForPersistence(input),
-            completedAt: deps.now(),
-            updatedAt: deps.now(),
-            updatedByKind: "user",
-            updatedByActor: deps.tutorUserId,
-          })
-          .where(
-            and(
-              eq(tutorWizardState.userId, deps.tutorUserId),
-              eq(tutorWizardState.phase, 2),
-            ),
-          );
-      } else {
-        await tx.insert(tutorWizardState).values({
-          userId: deps.tutorUserId,
+    // 6. Audit-event row (sequential — not same-tx; see header comment).
+    await db.insert(auditEvents).values(
+      toAuditEventValues({
+        eventType: "tutor.profile_submitted",
+        actorKind: "user",
+        actorId: deps.tutorUserId,
+        targetType: "tutor_profile",
+        targetId: tutorProfileId,
+        payload: {
           phase: 2,
-          data: serializeDraftForPersistence(input),
-          completedAt: deps.now(),
-          createdByKind: "user",
-          createdByActor: deps.tutorUserId,
-        });
-      }
+          isFirstSubmit,
+          subjectCount: input.subjects.length,
+          hasIntroVideo: true,
+          hasPhoto: input.photoR2Key !== null,
+        },
+      }),
+    );
 
-      // 6. Audit-event row, same-tx.
-      await tx.insert(auditEvents).values(
-        toAuditEventValues({
-          eventType: "tutor.profile_submitted",
-          actorKind: "user",
-          actorId: deps.tutorUserId,
-          targetType: "tutor_profile",
-          targetId: tutorProfileId,
-          payload: {
-            phase: 2,
-            isFirstSubmit,
-            subjectCount: input.subjects.length,
-            hasIntroVideo: true,
-            hasPhoto: input.photoR2Key !== null,
-          },
-        }),
-      );
-
-      return { tutorProfileId, isFirstSubmit, input };
-    });
-
-    // 7. Post-tx analytics (only on first submit; re-submits during
-    //    changes-requested cycles do NOT re-fire). Idempotency guard relies on
-    //    the SELECT-before-INSERT inside the tx — concurrent submits at the
-    //    boundary would both see "no existing row" and INSERT; the unique
-    //    `uq_tutor_profiles_user_id` constraint stops the second from
-    //    succeeding, but its caller still sees isFirstSubmit=true. Real DB
-    //    backstop is the unique index; closed-beta scale makes the race
-    //    practically nonexistent. Documented as a deferred-work entry.
-    if (result.isFirstSubmit) {
+    // 7. Analytics on first submit only.
+    if (isFirstSubmit) {
       try {
         deps.track({
           event: "tutor_profile_created",
           tutorUserId: deps.tutorUserId,
-          subjectCount: result.input.subjects.length,
+          subjectCount: input.subjects.length,
           has45MinPrice: true,
           has60MinPrice: true,
           hasIntroVideo: true,
-          hasPhoto: result.input.photoR2Key !== null,
-          bioLength: result.input.bio.length,
+          hasPhoto: input.photoR2Key !== null,
+          bioLength: input.bio.length,
         });
       } catch (err) {
         // PostHog is fire-and-forget; never block the redirect on analytics.
@@ -373,12 +363,12 @@ export async function runSubmitProfile(
 
     return {
       ok: true,
-      isFirstSubmit: result.isFirstSubmit,
-      tutorProfileId: result.tutorProfileId,
+      isFirstSubmit,
+      tutorProfileId,
       redirectTo: "/tutor/onboarding/agreement",
     };
   } catch (err) {
-    log.error("[runSubmitProfile] transaction failed", err);
+    log.error("[runSubmitProfile] sequential writes failed", err);
     return {
       ok: false,
       formError: "אירעה שגיאה. נסו שוב בעוד דקה.",
@@ -399,57 +389,55 @@ export async function runSaveDraft(
   const data = serializeDraftForPersistence(clamped);
   const savedAt = deps.now();
 
+  // Sequential writes (no transaction) — neon-http does not support tx.
   try {
-    await deps.db.transaction(async (tx) => {
-      const existingRows = (await tx
-        .select({ phase: tutorWizardState.phase })
-        .from(tutorWizardState)
-        .where(eq(tutorWizardState.userId, deps.tutorUserId))) as { phase: number }[];
-      const hasPhase2 = existingRows.some((row) => row.phase === 2);
+    const db = deps.db;
+    const existingRows = (await db
+      .select({ phase: tutorWizardState.phase })
+      .from(tutorWizardState)
+      .where(eq(tutorWizardState.userId, deps.tutorUserId))) as { phase: number }[];
+    const hasPhase2 = existingRows.some((row) => row.phase === 2);
 
-      if (hasPhase2) {
-        // Code-review patch (2026-05-12, patch #9): filter UPDATE by both
-        // userId AND phase=2 — same future-safety reasoning as runSubmitProfile.
-        await tx
-          .update(tutorWizardState)
-          .set({
-            data,
-            updatedAt: savedAt,
-            updatedByKind: "user",
-            updatedByActor: deps.tutorUserId,
-          })
-          .where(
-            and(
-              eq(tutorWizardState.userId, deps.tutorUserId),
-              eq(tutorWizardState.phase, 2),
-            ),
-          );
-      } else {
-        await tx.insert(tutorWizardState).values({
-          userId: deps.tutorUserId,
-          phase: 2,
+    if (hasPhase2) {
+      await db
+        .update(tutorWizardState)
+        .set({
           data,
-          completedAt: null,
-          createdByKind: "user",
-          createdByActor: deps.tutorUserId,
-        });
-      }
+          updatedAt: savedAt,
+          updatedByKind: "user",
+          updatedByActor: deps.tutorUserId,
+        })
+        .where(
+          and(
+            eq(tutorWizardState.userId, deps.tutorUserId),
+            eq(tutorWizardState.phase, 2),
+          ),
+        );
+    } else {
+      await db.insert(tutorWizardState).values({
+        userId: deps.tutorUserId,
+        phase: 2,
+        data,
+        completedAt: null,
+        createdByKind: "user",
+        createdByActor: deps.tutorUserId,
+      });
+    }
 
-      await tx.insert(auditEvents).values(
-        toAuditEventValues({
-          eventType: "tutor.profile_draft_saved",
-          actorKind: "user",
-          actorId: deps.tutorUserId,
-          targetType: "tutor_profile",
-          targetId: deps.tutorUserId,
-          payload: { phase: 2, fieldsSaved: Object.keys(data) },
-        }),
-      );
-    });
+    await db.insert(auditEvents).values(
+      toAuditEventValues({
+        eventType: "tutor.profile_draft_saved",
+        actorKind: "user",
+        actorId: deps.tutorUserId,
+        targetType: "tutor_profile",
+        targetId: deps.tutorUserId,
+        payload: { phase: 2, fieldsSaved: Object.keys(data) },
+      }),
+    );
 
     return { ok: true, savedAt };
   } catch (err) {
-    log.error("[runSaveDraft] transaction failed", err);
+    log.error("[runSaveDraft] sequential writes failed", err);
     return { ok: false, formError: "שמירה אוטומטית נכשלה." };
   }
 }
