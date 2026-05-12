@@ -29,6 +29,13 @@
       "when": 1778601667327,
       "tag": "0003_productive_tusk",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778623308793,
+      "tag": "0004_consent_receipts_immutable",
+      "breakpoints": true
     }
   ]
 }

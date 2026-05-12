@@ -86,6 +86,19 @@ export interface PasswordResetCompletedEvent {
   role: AppRole;
 }
 
+// Story 1.21: privacy-policy acceptance. Fires from BOTH signup (first-time
+// acceptance) and the re-acceptance flow when documentVersion bumps. The
+// `source` discriminator distinguishes the two so the analytics dashboard can
+// separate "first-time" acceptance rate from "re-acceptance" rate after a
+// policy bump.
+export interface PrivacyPolicyAcceptedEvent {
+  event: "privacy_policy_accepted";
+  userId: string;
+  role: AppRole;
+  documentVersion: string;
+  source: "signup" | "re_acceptance";
+}
+
 export type AnalyticsEvent =
   | SignupCompletedEvent
   | EmailVerifiedEvent
@@ -95,6 +108,7 @@ export type AnalyticsEvent =
   | PasswordResetConfirmRateLimitedEvent
   | SignInFailedEvent
   | PasswordResetRequestedEvent
-  | PasswordResetCompletedEvent;
+  | PasswordResetCompletedEvent
+  | PrivacyPolicyAcceptedEvent;
 
 export type AnalyticsEventName = AnalyticsEvent["event"];

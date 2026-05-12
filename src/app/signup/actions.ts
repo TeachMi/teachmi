@@ -17,12 +17,14 @@ export async function registerAction(
   const hdrs = await headers();
   const ip = readIp(hdrs.get("x-forwarded-for"));
   const origin = readTrustedOrigin(hdrs);
+  const userAgent = hdrs.get("user-agent");
 
   const result = await runRegister(formData, {
     db: getDb() as unknown as Parameters<typeof runRegister>[1]["db"],
     emailProvider: getEmailProvider(),
     ip,
     origin,
+    userAgent,
     track,
     // Dev-only: production-guarded inside isEmailVerificationSkipEnabled().
     skipEmailVerification: isEmailVerificationSkipEnabled(),

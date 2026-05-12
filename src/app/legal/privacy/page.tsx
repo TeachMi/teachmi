@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { LegalPageShell } from "@/components/legal/LegalPageShell";
+import { PrivacyPolicyBody } from "@/components/legal/PrivacyPolicyBody";
 import { getLegalDocument } from "@/lib/legal/documents";
 
 const legalDoc = getLegalDocument("privacy_policy");
@@ -13,5 +14,9 @@ export const metadata: Metadata = {
 export const dynamic = "force-static";
 
 export default function PrivacyPage() {
-  return <LegalPageShell document={legalDoc} />;
+  return (
+    <LegalPageShell document={legalDoc}>
+      <PrivacyPolicyBody />
+    </LegalPageShell>
+  );
 }

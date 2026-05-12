@@ -4,7 +4,12 @@
 // dependencies and converts the outcome into a redirect / state return.
 
 import { and, eq, gte } from "drizzle-orm";
-import { auditEvents, users, verificationTokens } from "../../lib/db/schema";
+import {
+  auditEvents,
+  consentReceipts,
+  users,
+  verificationTokens,
+} from "../../lib/db/schema";
 import { toAuditEventValues } from "../../lib/db/audit";
 import { PASSWORD_MIN_LENGTH, validatePassword } from "../../lib/auth/registration";
 import { hashPassword } from "../../lib/auth/password-hashing";
@@ -25,6 +30,10 @@ import type { EmailProvider } from "../../lib/providers/email";
 import { EMAIL_TEMPLATES } from "../../lib/email-templates";
 import { isAppRole, type AppRole } from "../../lib/auth/roles";
 import type { AnalyticsEvent } from "../../lib/analytics";
+import {
+  CURRENT_PRIVACY_POLICY_VERSION,
+  truncateUserAgent,
+} from "../../lib/legal/privacy-consent";
 import type { RegisterActionState } from "./register-state";
 
 export type RegisterFlowResult =
@@ -58,6 +67,13 @@ export interface RegisterDeps {
   emailProvider: EmailProvider;
   ip: string;
   origin: string;
+  /**
+   * Raw `User-Agent` header value, captured by the action wrapper from
+   * `headers().get("user-agent")`. May be null in non-browser test contexts.
+   * Stored on the `consent_receipts` row alongside `ipAddress` for audit
+   * traceability under NFR16 / FR59. Truncated to 512 chars at insert.
+   */
+  userAgent: string | null;
   track: (event: AnalyticsEvent) => void;
   logger?: { error: (message: string, err?: unknown) => void };
   /**
@@ -103,6 +119,10 @@ export async function runRegister(
     formData.get("tos") === "on" ||
     formData.get("tos") === "true" ||
     formData.get("tos") === "1";
+  const privacyPolicy =
+    formData.get("privacyPolicy") === "on" ||
+    formData.get("privacyPolicy") === "true" ||
+    formData.get("privacyPolicy") === "1";
 
   const fieldErrors: RegisterActionState["fieldErrors"] = {};
   if (name.length < 2) {
@@ -115,6 +135,9 @@ export async function runRegister(
   if (!pw.ok) {
     fieldErrors.password = fieldErrorMessage(pw);
   }
+  if (!privacyPolicy) {
+    fieldErrors.privacyPolicy = "יש לאשר את מדיניות הפרטיות.";
+  }
   if (!tos) {
     fieldErrors.tos = "יש לאשר את תנאי השימוש.";
   }
@@ -125,7 +148,7 @@ export async function runRegister(
       state: {
         ok: false,
         fieldErrors,
-        values: { name, email: emailRaw, role, tos },
+        values: { name, email: emailRaw, role, tos, privacyPolicy },
       },
     };
   }
@@ -171,7 +194,7 @@ export async function runRegister(
         state: {
           ok: false,
           formError: "יותר מדי ניסיונות. נסו שוב בעוד דקה.",
-          values: { name, email: emailRaw, role, tos },
+          values: { name, email: emailRaw, role, tos, privacyPolicy },
         },
       };
     }
@@ -203,7 +226,7 @@ export async function runRegister(
         state: {
           ok: false,
           formError: "אימייל זה כבר רשום במערכת. נסו להיכנס.",
-          values: { name, email: emailRaw, role, tos },
+          values: { name, email: emailRaw, role, tos, privacyPolicy },
         },
       };
     }
@@ -252,6 +275,38 @@ export async function runRegister(
           }),
         );
       }
+
+      // FR59: log the privacy-policy acceptance receipt + audit row. Inside the
+      // same inner try/catch so the cleanup-on-error path covers them — a
+      // half-signed-up user with no consent receipt would be exactly the
+      // regulatory failure FR59 + NFR16 are designed to prevent.
+      const acceptedAt = new Date();
+      await db.insert(consentReceipts).values({
+        userId,
+        documentType: "privacy_policy",
+        documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+        acceptedAt,
+        ipAddress: ip,
+        userAgent: truncateUserAgent(deps.userAgent),
+        signature: null,
+        documentSnapshot: null,
+        createdByKind: "user",
+        createdByActor: userId,
+      });
+
+      await db.insert(auditEvents).values(
+        toAuditEventValues({
+          eventType: "auth.privacy_policy_accepted",
+          actorKind: "user",
+          actorId: userId,
+          targetType: "user",
+          targetId: userId,
+          payload: {
+            documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+            source: "signup",
+          },
+        }),
+      );
     } catch (innerErr) {
       log.error("[runRegister] post-user write failed; cleaning up user row", innerErr);
       try {
@@ -297,6 +352,14 @@ export async function runRegister(
         " stamped email_verified at insert — NEVER reach this branch in prod.",
     );
   }
+
+  track({
+    event: "privacy_policy_accepted",
+    userId,
+    role,
+    documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+    source: "signup",
+  });
 
   track({ event: "signup_completed", userId, role });
 
