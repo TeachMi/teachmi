@@ -13,7 +13,9 @@ The `migrate-e2e` and `migrate-prod` GitHub Action jobs (in `.github/workflows/c
 1. Make the change in `schema.ts`.
 2. Run `pnpm db:generate` to produce a new migration file under `drizzle/`.
 3. Commit `drizzle/<num>_<slug>.sql` + `drizzle/meta/_journal.json` updates in the same PR.
-4. The `check:migrations` CI step refuses to merge if you forget step 2/3.
+4. Run `pnpm run ci` locally before pushing — `check:migrations` will fail if you forgot step 2/3.
+
+**If you skip the local CI check**, the failure mode is: the `migrate-e2e` job fails on push to `e2e` with a Drizzle "schema doesn't match migration journal" error. Recoverable — generate the missing migration, commit, push again. Just slower than catching it locally.
 
 Local-dev migrations remain manual: `DATABASE_URL=<dev-url> pnpm db:migrate`.
 
