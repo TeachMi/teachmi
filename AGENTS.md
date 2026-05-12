@@ -4,6 +4,23 @@
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
+# Schema changes auto-deploy on push to `e2e` and `main`
+
+The `migrate-e2e` and `migrate-prod` GitHub Action jobs (in `.github/workflows/ci.yml`) run `pnpm db:migrate` against the corresponding Neon branch after every push to `e2e` and `main`, once the `quality` job passes. You do **NOT** need to manually run `pnpm db:migrate` against e2e or prod.
+
+**Your job when editing `src/lib/db/schema.ts`:**
+
+1. Make the change in `schema.ts`.
+2. Run `pnpm db:generate` to produce a new migration file under `drizzle/`.
+3. Commit `drizzle/<num>_<slug>.sql` + `drizzle/meta/_journal.json` updates in the same PR.
+4. Run `pnpm run ci` locally before pushing — `check:migrations` will fail if you forgot step 2/3.
+
+**If you skip the local CI check**, the failure mode is: the `migrate-e2e` job fails on push to `e2e` with a Drizzle "schema doesn't match migration journal" error. Recoverable — generate the missing migration, commit, push again. Just slower than catching it locally.
+
+Local-dev migrations remain manual: `DATABASE_URL=<dev-url> pnpm db:migrate`.
+
+**Why this exists:** Stories 1.13 + 1.14 silently shipped to prod for ~24h with code referencing tables that didn't exist (no one had run `pnpm db:migrate` against the prod Neon branch). Discovered 2026-05-12 via dogfood-seed attempt; Story 1.23 closes the gap. See `drizzle/README.md` rule 6.
+
 # Proxy / Auth middleware shape — `export { auth as proxy }`, not `export default auth(handler)`
 
 `src/proxy.ts` re-exports `auth` from `lib/auth/auth.ts` under the **named** export `proxy`, not as a default. The reason is subtle but load-bearing:

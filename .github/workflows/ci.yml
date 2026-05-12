@@ -69,6 +69,15 @@ jobs:
       - name: Storybook coverage (every components/ui/*.tsx has *.stories.tsx)
         run: pnpm check:stories
 
+      # Note: `pnpm check:migrations` is wired into `pnpm run ci` for local
+      # pre-push validation. We deliberately do NOT run it as a separate CI
+      # step here — computing "what files changed in this PR" via git was a
+      # fragile rabbit-hole (5 iterations on Story 1.23 PR). If/when a proper
+      # changed-files action is wanted, use tj-actions/changed-files and add
+      # the step back. The load-bearing safety net is migrate-e2e /
+      # migrate-prod below — those FAIL on push if a generated migration
+      # is missing for a schema change, with a clear error.
+
       - name: Unit tests
         run: pnpm test
 
@@ -191,3 +200,71 @@ jobs:
 
           echo "Socket scan failed after 3 attempts."
           exit 1
+
+  migrate-e2e:
+    name: Apply Drizzle migrations to e2e
+    if: github.ref == 'refs/heads/e2e' && github.event_name == 'push'
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: migrate-e2e
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply Drizzle migrations (e2e)
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.E2E_DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.E2E_DATABASE_URL_UNPOOLED }}
+
+  migrate-prod:
+    name: Apply Drizzle migrations to prod
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: migrate-prod
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply Drizzle migrations (prod)
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}

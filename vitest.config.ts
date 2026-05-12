@@ -22,6 +22,9 @@ export default defineConfig({
           include: [
             'src/**/__tests__/**/*.test.{ts,tsx}',
             'src/**/*.test.{ts,tsx}',
+            // CI-guard scripts (e.g., check-migrations.mjs) under scripts/ —
+            // added by Story 1.23. Pure-Node ESM tests, no TS transpilation.
+            'scripts/**/__tests__/**/*.test.mjs',
           ],
           exclude: [
             '**/*.stories.*',
