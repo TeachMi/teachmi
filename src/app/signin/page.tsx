@@ -18,6 +18,7 @@ interface SignInPageProps {
   searchParams?: Promise<{
     callbackUrl?: string | string[];
     verified?: string | string[];
+    reset?: string | string[];
   }>;
 }
 
@@ -53,6 +54,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
   const params = await searchParams;
   const callbackUrl = getSafeCallbackUrl(params?.callbackUrl, defaultPostSignInPath);
   const verified = readFirstString(params?.verified) === "1";
+  const reset = readFirstString(params?.reset) === "1";
 
   const session = await tryReadSession();
 
@@ -89,6 +91,15 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             className="rounded-lg border border-primary-container/40 bg-primary-fixed/30 px-4 py-3 text-sm font-bold text-primary-container"
           >
             האימייל אומת בהצלחה — היכנסו לחשבון שלכם
+          </div>
+        )}
+
+        {reset && (
+          <div
+            className="rounded-lg border border-primary-container/40 bg-primary-fixed/30 px-4 py-3 text-sm font-bold text-primary-container"
+            role="status"
+          >
+            הסיסמה אופסה בהצלחה. היכנסו עם הסיסמה החדשה.
           </div>
         )}
 

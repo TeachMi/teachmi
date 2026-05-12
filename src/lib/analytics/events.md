@@ -6,7 +6,7 @@
 > Do NOT call `track()` with an event name that is not in the typed `AnalyticsEvent`
 > discriminated union.
 
-## Events (Story 1.13 + Story 1.14)
+## Events (Story 1.13 + Story 1.14 + Story 1.15)
 
 | Name | Gate | When it fires | Properties |
 |---|---|---|---|
@@ -15,6 +15,9 @@
 | `signup_rate_limited` | (operational) | When `evaluateRateLimit` denies a signup or signup-resend attempt. | `anonymizedIp` (ip:<sha256[0..8]>), `action` |
 | `signin_rate_limited` | (operational) | When `evaluateRateLimit` denies a signin attempt (Story 1.14). | `anonymizedIp` (ip:<sha256[0..8]>), `action: "signin"` |
 | `signin_failed` | (operational) | When the Credentials provider rejects a signin attempt — generic "invalid email or password" (Story 1.14). No `signin_succeeded` PostHog event: session-create telemetry is owned by Story 1.8's Auth.js wiring. | `anonymizedIp` |
+| `password_reset_requested` | (operational) | When a forgot-password submit results in an actual email send (real user with a `passwordHash`). The anti-enumeration no-user and oauth-only branches do NOT emit this — only the `audit_events` row distinguishes them (Story 1.15). | `anonymizedIp` |
+| `password_reset_completed` | Loop | After the user submits a new password via a valid reset token, the user row is updated, all their sessions are deleted, and the token is consumed (Story 1.15). | `userId`, `role` |
+| `password_reset_rate_limited` | (operational) | When `evaluateRateLimit` denies either a forgot-form submit or a reset-form submit. The `action` discriminator captures which surface (Story 1.15). | `anonymizedIp` (ip:<sha256[0..8]>), `action: "password_reset_request" \| "password_reset_confirm"` |
 
 **Note on signup + signin attempts.** Each POST to `/signup` writes an `auth.signup_attempt` row to `audit_events`; each POST to `/signin` writes an `auth.signin_attempt` row. Successful signins also write `auth.signin_succeeded` (with `actor_id`), and failed signins write `auth.signin_failed`. These are the abuse-investigation surface — they deliberately do NOT mirror to PostHog. Loop-gate dashboards consume `signup_completed` / `email_verified`; throttling activity surfaces via `signup_rate_limited` / `signin_rate_limited`. Re-add a PostHog `auth.signup_attempt` / `auth.signin_attempt` event only if analytics genuinely needs per-attempt counts beyond what the completion + rate-limit events already give.
 
