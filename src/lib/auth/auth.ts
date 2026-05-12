@@ -34,6 +34,14 @@ function getUserRole(user: unknown) {
 export function createAuthConfig(): NextAuthConfig {
   return {
     adapter: getAuthAdapter(),
+    // Email + password sign-in does NOT use the Auth.js Credentials provider —
+    // Auth.js v5 hardcodes a JWT cookie for Credentials regardless of
+    // session.strategy (see @auth/core/lib/actions/callback/index.js:247-274
+    // and @auth/core/providers/credentials.d.ts:74-75). Going through the
+    // provider would break session-shape parity with the verify Route Handler
+    // (Story 1.13) which inserts a `sessions` row + sets a UUID-token cookie.
+    // The Server Action at src/app/signin/actions.ts does the same direct
+    // INSERT + cookie set; Auth.js only handles Google OAuth here.
     providers: [Google],
     session: {
       strategy: "database",
