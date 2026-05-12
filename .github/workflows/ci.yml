@@ -69,6 +69,14 @@ jobs:
       - name: Storybook coverage (every components/ui/*.tsx has *.stories.tsx)
         run: pnpm check:stories
 
+      - name: Fetch base ref for migration coverage check
+        if: github.event_name == 'pull_request'
+        run: git fetch --depth=1 origin "${{ github.base_ref }}"
+
+      - name: Migration coverage (schema.ts edits require a new drizzle/*.sql)
+        if: github.event_name == 'pull_request'
+        run: pnpm check:migrations
+
       - name: Unit tests
         run: pnpm test
 
@@ -191,3 +199,71 @@ jobs:
 
           echo "Socket scan failed after 3 attempts."
           exit 1
+
+  migrate-e2e:
+    name: Apply Drizzle migrations to e2e
+    if: github.ref == 'refs/heads/e2e' && github.event_name == 'push'
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: migrate-e2e
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply Drizzle migrations (e2e)
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.E2E_DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.E2E_DATABASE_URL_UNPOOLED }}
+
+  migrate-prod:
+    name: Apply Drizzle migrations to prod
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: migrate-prod
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply Drizzle migrations (prod)
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}
