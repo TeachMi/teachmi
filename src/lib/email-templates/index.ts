@@ -14,6 +14,10 @@ export const EMAIL_TEMPLATES = {
     templateId: "auth-verify-email",
     subject: "אימות כתובת אימייל ב-TeachMe",
   },
+  AUTH_PASSWORD_RESET: {
+    templateId: "auth-password-reset",
+    subject: "איפוס סיסמה ב-TeachMe",
+  },
 } as const;
 
 export type EmailTemplateKey = keyof typeof EMAIL_TEMPLATES;

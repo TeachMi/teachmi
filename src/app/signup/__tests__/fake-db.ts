@@ -116,17 +116,31 @@ export class FakeDb {
       set: (set: unknown) => {
         return {
           where: (whereCondition: unknown) => {
-            return {
-              returning: (cols: unknown) => {
-                void cols;
-                if (this.failNext) {
-                  const err = this.failNext;
-                  this.failNext = null;
-                  return Promise.reject(err);
-                }
-                this.updates.push({ table, set, whereCondition });
-                return Promise.resolve(this.returningResponses.shift() ?? []);
-              },
+            // Drizzle's `db.update().set().where()` is awaitable on its own
+            // (returns the executed query) AND can chain `.returning(...)`.
+            // Mirror that by returning a Promise augmented with `.returning`,
+            // same pattern this fake uses for `delete().where()` below.
+            if (this.failNext) {
+              const err = this.failNext;
+              this.failNext = null;
+              const rejected = Promise.reject(err);
+              return Object.assign(rejected, {
+                returning: (cols: unknown) => {
+                  void cols;
+                  return Promise.reject(err) as Promise<unknown[]>;
+                },
+              });
+            }
+            this.updates.push({ table, set, whereCondition });
+            const promise: Promise<unknown> & {
+              returning?: (cols: unknown) => Promise<unknown[]>;
+            } = Promise.resolve(undefined);
+            promise.returning = (cols: unknown) => {
+              void cols;
+              return Promise.resolve(this.returningResponses.shift() ?? []);
+            };
+            return promise as Promise<unknown> & {
+              returning(cols: unknown): Promise<unknown[]>;
             };
           },
         };
