@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { getDb } from "@/lib/db/client";
 import { getEmailProvider } from "@/lib/providers/email";
 import { track } from "@/lib/analytics";
+import { isEmailVerificationSkipEnabled } from "@/lib/auth/dev-flags";
 import { runRegister } from "./registration-flow";
 import { readIp, readTrustedOrigin } from "./_lib/origin";
 import type { RegisterActionState } from "./register-state";
@@ -23,6 +24,8 @@ export async function registerAction(
     ip,
     origin,
     track,
+    // Dev-only: production-guarded inside isEmailVerificationSkipEnabled().
+    skipEmailVerification: isEmailVerificationSkipEnabled(),
   });
 
   if (result.ok) {

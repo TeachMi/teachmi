@@ -219,3 +219,59 @@ describe("runRegister — email-send failure is non-fatal", () => {
     expect(db.insertedInto(verificationTokens)).toHaveLength(1);
   }, 30_000);
 });
+
+describe("runRegister — dev-only skip-email-verification", () => {
+  it("stamps emailVerified=now() on insert, skips token + email, redirects to /signin?verified=1", async () => {
+    const { db, email, recorder, deps } = makeDeps();
+    db.queueSelect<{ id: string }>([]); // rate-limit count
+    db.queueReturning<{ id: string }>([{ id: "user-dev-1" }]);
+
+    const result = await runRegister(validForm(), {
+      ...deps,
+      skipEmailVerification: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe("/signin?verified=1");
+
+    // User row inserted with emailVerified set (a Date instance, value =
+    // approximately now). No verification-token row, no email send.
+    const userInsert = db.insertedInto(users)[0]?.value as Record<string, unknown>;
+    expect(userInsert.email).toBe("test@example.com");
+    expect(userInsert.emailVerified).toBeInstanceOf(Date);
+    expect(db.insertedInto(verificationTokens)).toHaveLength(0);
+    expect(email.sends).toHaveLength(0);
+
+    // Audit row records the bypass via the devEmailVerificationSkipped flag.
+    const userRegistered = db.insertedInto(auditEvents)[1]?.value as Record<string, unknown>;
+    expect(userRegistered.eventType).toBe("auth.user_registered");
+    const payload = userRegistered.payload as Record<string, unknown>;
+    expect(payload.requiresVerification).toBe(false);
+    expect(payload.devEmailVerificationSkipped).toBe(true);
+
+    // signup_completed analytics still fires on this path — the user is fully
+    // registered, just verification-skipped. Loop-gate counts this run.
+    expect(recorder.events).toEqual([
+      { event: "signup_completed", userId: "user-dev-1", role: "student" },
+    ]);
+  }, 30_000);
+
+  it("default (no skipEmailVerification) preserves the email-loop branch", async () => {
+    const { db, email, recorder, deps } = makeDeps();
+    db.queueSelect<{ id: string }>([]);
+    db.queueReturning<{ id: string }>([{ id: "user-default-1" }]);
+
+    const result = await runRegister(validForm(), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe(
+      "/signup/verify-email-sent?email=test%40example.com",
+    );
+    // Email loop intact: token + email send both happen.
+    expect(db.insertedInto(verificationTokens)).toHaveLength(1);
+    expect(email.sends).toHaveLength(1);
+    expect(recorder.events).toHaveLength(1);
+  }, 30_000);
+});
