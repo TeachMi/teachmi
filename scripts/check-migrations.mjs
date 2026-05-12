@@ -29,7 +29,11 @@ function getChangedFiles() {
       .filter(Boolean);
   }
 
-  const baseRef = process.env.GITHUB_BASE_REF || "origin/e2e";
+  // In CI's PR context, GITHUB_BASE_REF is the bare branch name (e.g., "e2e").
+  // We fetched it under refs/remotes/origin/<name>, so prefix accordingly.
+  const baseRef = process.env.GITHUB_BASE_REF
+    ? `origin/${process.env.GITHUB_BASE_REF}`
+    : "origin/e2e";
   // `--diff-filter=AM` = Added or Modified files only (skip deletes / renames).
   const result = spawnSync(
     "git",
