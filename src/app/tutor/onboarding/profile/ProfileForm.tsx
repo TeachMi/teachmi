@@ -13,10 +13,8 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
-import {
-  profileFormAction,
-  PROFILE_ACTION_INITIAL_STATE,
-} from "./actions";
+import { profileFormAction } from "./actions";
+import { PROFILE_ACTION_INITIAL_STATE } from "./state";
 import {
   confirmIntroVideoUploadAction,
   confirmProfilePhotoUploadAction,
@@ -599,7 +597,18 @@ function probeVideoDuration(file: File): Promise<number> {
     video.preload = "metadata";
     video.onloadedmetadata = () => {
       URL.revokeObjectURL(url);
-      resolve(Math.round(video.duration));
+      // Code-review patch (2026-05-12, patch #12): some containers report
+      // Infinity/NaN until the entire media is loaded; those values silently
+      // bypass the upper-bound check both client-side and on the server.
+      // Treat unreadable durations as 0 so the duration-bounds check fires.
+      // Floor (not round) so a 4.6s video doesn't round up to 5 and squeak
+      // past the minimum.
+      const raw = video.duration;
+      if (!Number.isFinite(raw) || raw <= 0) {
+        reject(new Error("לא ניתן לקרוא את אורך הסרטון."));
+        return;
+      }
+      resolve(Math.floor(raw));
     };
     video.onerror = () => {
       URL.revokeObjectURL(url);

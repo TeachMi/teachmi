@@ -24,8 +24,8 @@ const VALID_INPUT = {
   price45Ils: 140,
   price60Ils: 180,
   city: "תל אביב",
-  photoR2Key: "photos/tutor/01HQXY.png",
-  introVideoR2Key: "intros/tutor/01HQXY.mp4",
+  photoR2Key: `photos/${TUTOR_ID}/01HQXY.png`,
+  introVideoR2Key: `intros/${TUTOR_ID}/01HQXY.mp4`,
 };
 
 function makeDeps(overrides: Partial<Parameters<typeof runSubmitProfile>[1]> = {}) {
@@ -78,8 +78,8 @@ describe("runSubmitProfile — happy path (first submit)", () => {
       isActive: false,
       hourlyPriceIls: 180,
       lesson45PriceIls: 140,
-      introVideoR2Key: "intros/tutor/01HQXY.mp4",
-      profilePhotoR2Key: "photos/tutor/01HQXY.png",
+      introVideoR2Key: `intros/${TUTOR_ID}/01HQXY.mp4`,
+      profilePhotoR2Key: `photos/${TUTOR_ID}/01HQXY.png`,
     });
 
     expect(db.deletedFrom(tutorSubjects)).toHaveLength(1);
@@ -126,7 +126,7 @@ describe("runSubmitProfile — re-submit after changes-requested", () => {
       {
         id: "tp-existing",
         vettingStatus: "changes-requested",
-        introVideoR2Key: "intros/tutor/old.mp4",
+        introVideoR2Key: `intros/${TUTOR_ID}/old.mp4`,
       },
     ]);
     db.queueSelect([{ phase: 2 }]);

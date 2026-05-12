@@ -1,10 +1,11 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { getDb } from "../../../../lib/db/client";
-import { runWithAuditEvent } from "../../../../lib/db/audit";
-import { tutorDocuments } from "../../../../lib/db/schema";
+import { runWithAuditEvent, toAuditEventValues } from "../../../../lib/db/audit";
+import { auditEvents, tutorDocuments } from "../../../../lib/db/schema";
 import { track } from "../../../../lib/analytics";
 import { anonymizeIpForAnalytics } from "../../../../lib/auth/rate-limit";
 import { getFilesProvider } from "../../../../lib/providers/files";
@@ -20,6 +21,22 @@ import {
 } from "./profile-form-schema";
 
 const UPLOAD_URL_EXPIRES_SEC = 600;
+
+// Code-review patch (2026-05-12): R2-key prefix guards.
+// The orchestrator must verify any client-supplied r2Key is under the
+// caller's own tutor-id prefix. Without this, a tutor who learns another
+// tutor's r2Key (e.g., via a leaked presigned GET URL) can submit it in
+// their own FormData and either claim that video as their own OR (via the
+// tutor_documents UPDATE in runSubmitProfile) flip the other tutor's
+// vetting_status back to "pending". The orchestrator-side check in
+// runSubmitProfile is the canonical defense; these confirm-action checks
+// are the second line.
+function ownsPhotoKey(userId: string, key: string): boolean {
+  return key.startsWith(`photos/${userId}/`);
+}
+function ownsIntroKey(userId: string, key: string): boolean {
+  return key.startsWith(`intros/${userId}/`);
+}
 
 export type UploadInitResult =
   | { ok: true; uploadUrl: string; r2Key: string; expiresAt: string }
@@ -93,6 +110,29 @@ export async function requestProfilePhotoUploadUrlAction(input: {
     expiresInSec: UPLOAD_URL_EXPIRES_SEC,
   });
 
+  // Code-review patch (2026-05-12): spec AC5 requires
+  // `tutor.profile_photo_upload_requested` audit on URL-issuance. Best-effort
+  // write — a failure here should not block the upload URL return.
+  try {
+    const db = getDb() as unknown as {
+      insert: (table: typeof auditEvents) => {
+        values: (v: unknown) => Promise<unknown>;
+      };
+    };
+    await db.insert(auditEvents).values(
+      toAuditEventValues({
+        eventType: "tutor.profile_photo_upload_requested",
+        actorKind: "user",
+        actorId: user.id,
+        targetType: "tutor_profile",
+        targetId: user.id,
+        payload: { r2Key: key, contentType: input.contentType, sizeBytes: input.sizeBytes },
+      }),
+    );
+  } catch (err) {
+    console.error("[requestProfilePhotoUploadUrlAction] audit write failed", err);
+  }
+
   return { ok: true, uploadUrl, r2Key: key, expiresAt: expiresAt.toISOString() };
 }
 
@@ -103,6 +143,11 @@ export async function confirmProfilePhotoUploadAction(input: {
 
   if (!input.r2Key.trim()) {
     return { ok: false, formError: "מפתח R2 חסר." };
+  }
+  // Code-review patch (2026-05-12): refuse R2 keys not under this user's
+  // prefix. Without this, a tutor could send another tutor's confirmed key.
+  if (!ownsPhotoKey(user.id, input.r2Key)) {
+    return { ok: false, formError: "מפתח R2 לא תקין." };
   }
 
   const db = getDb();
@@ -182,6 +227,33 @@ export async function requestIntroVideoUploadUrlAction(input: {
     expiresInSec: UPLOAD_URL_EXPIRES_SEC,
   });
 
+  // Code-review patch (2026-05-12): spec AC6 requires
+  // `tutor.intro_video_upload_requested` audit on URL-issuance.
+  try {
+    const db = getDb() as unknown as {
+      insert: (table: typeof auditEvents) => {
+        values: (v: unknown) => Promise<unknown>;
+      };
+    };
+    await db.insert(auditEvents).values(
+      toAuditEventValues({
+        eventType: "tutor.intro_video_upload_requested",
+        actorKind: "user",
+        actorId: user.id,
+        targetType: "tutor_profile",
+        targetId: user.id,
+        payload: {
+          r2Key: key,
+          contentType: input.contentType,
+          sizeBytes: input.sizeBytes,
+          durationSec: input.durationSec,
+        },
+      }),
+    );
+  } catch (err) {
+    console.error("[requestIntroVideoUploadUrlAction] audit write failed", err);
+  }
+
   return { ok: true, uploadUrl, r2Key: key, expiresAt: expiresAt.toISOString() };
 }
 
@@ -195,16 +267,37 @@ export async function confirmIntroVideoUploadAction(input: {
   if (!input.r2Key.trim()) {
     return { ok: false, formError: "מפתח R2 חסר." };
   }
+  // Code-review patch (2026-05-12): refuse keys not under this user's prefix.
+  if (!ownsIntroKey(user.id, input.r2Key)) {
+    return { ok: false, formError: "מפתח R2 לא תקין." };
+  }
   if (!isAllowedIntroVideoMime(input.contentType)) {
     return { ok: false, formError: "סוג קובץ לא נתמך." };
   }
 
   const db = getDb();
 
-  // Insert the tutor_documents row + audit row in a single transaction.
+  // Code-review patch (2026-05-12): idempotency. A tutor triple-clicking
+  // "החליפו סרטון" (or hitting the action via network retry) previously
+  // created multiple `tutor_documents` rows with `vetting_status="pending"`,
+  // polluting the admin queue (Story 2.4) with duplicates. DELETE prior
+  // pending rows for THIS user before inserting the new one. The orphan
+  // R2 objects this leaves behind are already a documented deferred issue
+  // (deferred-work.md under Story 2.1) — DELETE keeps the admin queue clean,
+  // which is the more important invariant. The audit row written below
+  // preserves the trail. Filter: (tutorUserId, docType, status=pending).
   await runWithAuditEvent(
     db,
     async (tx) => {
+      await tx
+        .delete(tutorDocuments)
+        .where(
+          and(
+            eq(tutorDocuments.tutorUserId, user.id),
+            eq(tutorDocuments.docType, "intro_video"),
+            eq(tutorDocuments.vettingStatus, "pending"),
+          ),
+        );
       await tx.insert(tutorDocuments).values({
         tutorUserId: user.id,
         docType: "intro_video",

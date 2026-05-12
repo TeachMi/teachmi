@@ -4,7 +4,7 @@
 // + track + requireTutor() user) and converts the outcome into a redirect /
 // state return.
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   tutorProfiles,
   tutorSubjects,
@@ -15,11 +15,30 @@ import {
 import { toAuditEventValues } from "../../../../lib/db/audit";
 import type { AnalyticsEvent } from "../../../../lib/analytics";
 import {
+  PROFILE_FORM_LIMITS,
   parseSubmitInput,
   type ProfileDraftInput,
   type ProfileFieldErrors,
   type ProfileSubmitInput,
 } from "./profile-form-schema";
+
+// Code-review patch (2026-05-12, patch #11): enforce length / count bounds on
+// draft inputs too. Without this, `runSaveDraft` accepted arbitrary-length
+// bio / displayName / subjects[] and persisted them into `tutor_wizard_state.data`
+// — a DoS vector (10MB bio crashes subsequent reads). Truncate (not reject):
+// the user is mid-typing, so we'd rather store what fits than block the save.
+function clampDraftForPersistence(raw: ProfileDraftInput): ProfileDraftInput {
+  return {
+    displayName: raw.displayName?.slice(0, PROFILE_FORM_LIMITS.DISPLAY_NAME_MAX_CHARS),
+    bio: raw.bio?.slice(0, PROFILE_FORM_LIMITS.BIO_MAX_CHARS),
+    subjects: raw.subjects?.slice(0, PROFILE_FORM_LIMITS.SUBJECTS_MAX),
+    price45Ils: raw.price45Ils,
+    price60Ils: raw.price60Ils,
+    city: raw.city?.slice(0, 80),
+    photoR2Key: raw.photoR2Key?.slice(0, PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS),
+    introVideoR2Key: raw.introVideoR2Key?.slice(0, PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS),
+  };
+}
 
 // --- Result types ----------------------------------------------------------
 
@@ -117,6 +136,24 @@ export async function runSubmitProfile(
   }
   const input = parsed.value;
 
+  // Code-review patch (2026-05-12): defense-in-depth R2-key ownership check.
+  // The confirm-upload actions also guard, but a misbehaving / malicious
+  // client could skip the confirm step and submit FormData with another
+  // tutor's r2Key directly. Refuse here as well so submit-without-confirm
+  // can't claim foreign keys.
+  if (!input.introVideoR2Key.startsWith(`intros/${deps.tutorUserId}/`)) {
+    log.error(
+      `[runSubmitProfile] intro_video r2Key does not match tutor prefix: ${input.introVideoR2Key}`,
+    );
+    return { ok: false, formError: "מפתח R2 של סרטון לא תקין." };
+  }
+  if (input.photoR2Key !== null && !input.photoR2Key.startsWith(`photos/${deps.tutorUserId}/`)) {
+    log.error(
+      `[runSubmitProfile] photo r2Key does not match tutor prefix: ${input.photoR2Key}`,
+    );
+    return { ok: false, formError: "מפתח R2 של תמונה לא תקין." };
+  }
+
   let subjectIds: Map<string, string>;
   try {
     subjectIds = await deps.getSubjectIdsBySlug(input.subjects);
@@ -207,9 +244,17 @@ export async function runSubmitProfile(
         .delete(tutorSubjects)
         .where(eq(tutorSubjects.tutorUserId, deps.tutorUserId));
 
+      // Code-review patch (2026-05-12, patch #6): the outer `missing.length > 0`
+      // guard above already errored on unknown slugs, so by here every slug is
+      // resolvable. Removing the dead-defense `continue` makes the intent
+      // explicit and surfaces any future inconsistency loudly via assertion.
       for (const slug of input.subjects) {
         const subjectId = subjectIds.get(slug);
-        if (!subjectId) continue;
+        if (!subjectId) {
+          throw new Error(
+            `[runSubmitProfile] invariant violation: slug ${slug} passed pre-check but not in subjectIds map`,
+          );
+        }
         await tx.insert(tutorSubjects).values({
           tutorUserId: deps.tutorUserId,
           subjectId,
@@ -220,6 +265,11 @@ export async function runSubmitProfile(
 
       // 4. Re-confirm the intro_video document row (the upload-confirm action
       //    inserted it in pending state already; this UPDATE is idempotent.)
+      //    Code-review patch (2026-05-12, patch #4): filter by BOTH r2Key AND
+      //    tutorUserId so an attacker who learns another tutor's r2Key cannot
+      //    flip that tutor's document back to "pending". The ownership-prefix
+      //    check above (patch #3) already blocks this earlier, but defense in
+      //    depth — the SQL must enforce the scope too.
       await tx
         .update(tutorDocuments)
         .set({
@@ -228,11 +278,20 @@ export async function runSubmitProfile(
           updatedByKind: "user",
           updatedByActor: deps.tutorUserId,
         })
-        .where(eq(tutorDocuments.r2Key, input.introVideoR2Key));
+        .where(
+          and(
+            eq(tutorDocuments.r2Key, input.introVideoR2Key),
+            eq(tutorDocuments.tutorUserId, deps.tutorUserId),
+          ),
+        );
 
       // 5. Mark phase 2 complete on the wizard state.
-      //    The draft-save action already upserts the row; we just stamp
-      //    completed_at here on the existing row (or create one if missing).
+      //    Code-review patch (2026-05-12, patch #9): filter UPDATE by both
+      //    userId AND phase=2. The previous code admitted "real Drizzle call
+      //    (production) uses and(eq(userId), eq(phase, 2))" but production
+      //    actually used userId-only — would have clobbered future phase 3+
+      //    rows once Stories 2.2+ ship. Safe today (only phase 2 exists), but
+      //    future-proofing required.
       const wizardRows = (await tx
         .select({ phase: tutorWizardState.phase })
         .from(tutorWizardState)
@@ -248,11 +307,12 @@ export async function runSubmitProfile(
             updatedByKind: "user",
             updatedByActor: deps.tutorUserId,
           })
-          .where(eq(tutorWizardState.userId, deps.tutorUserId));
-        // ^ NB: filter is intentionally userId-only since `update.where`
-        //   does not chain a second `eq` in our minimal surface; the
-        //   real Drizzle call (production) uses `and(eq(userId), eq(phase, 2))`
-        //   — see actions.ts for the production query.
+          .where(
+            and(
+              eq(tutorWizardState.userId, deps.tutorUserId),
+              eq(tutorWizardState.phase, 2),
+            ),
+          );
       } else {
         await tx.insert(tutorWizardState).values({
           userId: deps.tutorUserId,
@@ -334,7 +394,9 @@ export async function runSaveDraft(
 ): Promise<SaveDraftFlowResult> {
   const log = deps.logger ?? { error: (message, err) => console.error(message, err) };
 
-  const data = serializeDraftForPersistence(raw);
+  // Code-review patch (2026-05-12, patch #11): clamp before serializing.
+  const clamped = clampDraftForPersistence(raw);
+  const data = serializeDraftForPersistence(clamped);
   const savedAt = deps.now();
 
   try {
@@ -346,6 +408,8 @@ export async function runSaveDraft(
       const hasPhase2 = existingRows.some((row) => row.phase === 2);
 
       if (hasPhase2) {
+        // Code-review patch (2026-05-12, patch #9): filter UPDATE by both
+        // userId AND phase=2 — same future-safety reasoning as runSubmitProfile.
         await tx
           .update(tutorWizardState)
           .set({
@@ -354,7 +418,12 @@ export async function runSaveDraft(
             updatedByKind: "user",
             updatedByActor: deps.tutorUserId,
           })
-          .where(eq(tutorWizardState.userId, deps.tutorUserId));
+          .where(
+            and(
+              eq(tutorWizardState.userId, deps.tutorUserId),
+              eq(tutorWizardState.phase, 2),
+            ),
+          );
       } else {
         await tx.insert(tutorWizardState).values({
           userId: deps.tutorUserId,

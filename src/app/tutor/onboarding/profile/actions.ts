@@ -123,5 +123,3 @@ async function submitProfile(formData: FormData): Promise<ProfileActionState> {
   redirect(result.redirectTo);
 }
 
-export { PROFILE_ACTION_INITIAL_STATE };
-export type { ProfileActionState };

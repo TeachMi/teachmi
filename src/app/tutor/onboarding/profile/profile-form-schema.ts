@@ -105,7 +105,13 @@ export function parseSubmitInput(raw: ProfileDraftInput): ProfileSubmitParseResu
     fieldErrors.bio = `ביוגרפיה לא יכולה לעלות על ${PROFILE_FORM_LIMITS.BIO_MAX_CHARS} תווים.`;
   }
 
-  const subjects = (raw.subjects ?? []).filter((slug) => SUBJECT_SLUG_REGEX.test(slug));
+  // Code-review patch (2026-05-12, patch #10): dedupe slugs before the
+  // count check. Without this, ["math","math","math"] passed the min check
+  // and INSERTed three rows into tutor_subjects — either causing a PK
+  // collision (junction-table unique) or polluting the row count.
+  const subjects = Array.from(
+    new Set((raw.subjects ?? []).filter((slug) => SUBJECT_SLUG_REGEX.test(slug))),
+  );
   if (subjects.length < PROFILE_FORM_LIMITS.SUBJECTS_MIN) {
     fieldErrors.subjects = "בחרו לפחות מקצוע אחד.";
   } else if (subjects.length > PROFILE_FORM_LIMITS.SUBJECTS_MAX) {
