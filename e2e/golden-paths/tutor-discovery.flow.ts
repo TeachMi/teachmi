@@ -192,3 +192,89 @@ export async function simulateReuploadTrigger(userId: string): Promise<void> {
     .set({ isActive: false, vettingStatus: "pending" })
     .where(eq(tutorProfiles.userId, userId));
 }
+
+// ---------------------------------------------------------------------------
+// Story 3.2 additions — seed subjects + availability for full-profile E2E tests.
+// ---------------------------------------------------------------------------
+
+import { subjects, tutorSubjects, tutorAvailability } from "../../src/lib/db/schema";
+
+/**
+ * Idempotently inserts subject taxonomy rows + tutor_subjects junction rows
+ * for a fixture tutor. Subject slugs must already exist in the launch-subjects
+ * seed (`pnpm db:seed`) — this helper looks them up by slug and creates the
+ * junction. If a slug isn't in the seed, the junction insert is skipped.
+ */
+export async function seedTutorSubjects(
+  tutorUserId: string,
+  slugs: string[],
+): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL required for seedTutorSubjects");
+  const sql = neon(url);
+  const db = drizzle(sql);
+
+  for (const slug of slugs) {
+    const subjectRows = await db
+      .select({ id: subjects.id })
+      .from(subjects)
+      .where(eq(subjects.slug, slug));
+    const subjectId = subjectRows[0]?.id;
+    if (!subjectId) continue;
+    await db
+      .insert(tutorSubjects)
+      .values({
+        tutorUserId,
+        subjectId,
+        proficiencyNote: null,
+        createdByKind: "system",
+        createdByActor: "e2e-tutor-discovery-fixture",
+      })
+      .onConflictDoNothing();
+  }
+}
+
+/**
+ * Inserts a recurring availability rule for the tutor on a given weekday +
+ * time window. Idempotent — re-runs just append duplicate rows (no UNIQUE
+ * constraint covers this case). Tests should clean their own state if they
+ * care about row counts.
+ */
+export async function seedRecurringAvailability(
+  tutorUserId: string,
+  weekday: number,
+  startTime: string, // "HH:MM:SS"
+  endTime: string,
+): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL required for seedRecurringAvailability");
+  const sql = neon(url);
+  const db = drizzle(sql);
+
+  await db.insert(tutorAvailability).values({
+    tutorUserId,
+    kind: "recurring",
+    weekday,
+    date: null,
+    startTime,
+    endTime,
+    validFrom: null,
+    validUntil: null,
+    createdByKind: "system",
+    createdByActor: "e2e-tutor-discovery-fixture",
+  });
+}
+
+/**
+ * Clears tutor_subjects and tutor_availability rows for a fixture tutor.
+ * Use between tests that seed conflicting state.
+ */
+export async function clearTutorSeededData(tutorUserId: string): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL required for clearTutorSeededData");
+  const sql = neon(url);
+  const db = drizzle(sql);
+
+  await db.delete(tutorSubjects).where(eq(tutorSubjects.tutorUserId, tutorUserId));
+  await db.delete(tutorAvailability).where(eq(tutorAvailability.tutorUserId, tutorUserId));
+}

@@ -150,3 +150,219 @@ describe("getDiscoverableTutorByUserId — public column shape", () => {
     expect(opaque.deletedAt).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 3.2 additions — sibling helpers for the public profile page.
+// ---------------------------------------------------------------------------
+
+import {
+  getActiveBookingsForTutor,
+  getTutorAvailabilityRows,
+  getTutorRatingHistogram,
+  getTutorSubjects,
+} from "../tutor-queries";
+import { FakeFullProfileDb } from "./fake-full-profile-db";
+
+const RANGE_FROM = new Date("2026-05-14T00:00:00.000Z");
+const RANGE_TO = new Date("2026-05-21T00:00:00.000Z");
+
+describe("getTutorSubjects (Story 3.2)", () => {
+  it("returns active subjects joined with proficiency notes, sorted by sortOrder", async () => {
+    const db = new FakeFullProfileDb();
+    db.subjects.push(
+      { id: "s-1", slug: "mathematics", displayNameHe: "מתמטיקה", sortOrder: 1, isActive: true },
+      { id: "s-2", slug: "english", displayNameHe: "אנגלית", sortOrder: 2, isActive: true },
+      { id: "s-3", slug: "hidden", displayNameHe: "מוסתר", sortOrder: 0, isActive: false },
+    );
+    db.tutorSubjects.push(
+      { tutorUserId: TUTOR_ID, subjectId: "s-1", proficiencyNote: "5 יחידות" },
+      { tutorUserId: TUTOR_ID, subjectId: "s-2", proficiencyNote: null },
+      { tutorUserId: TUTOR_ID, subjectId: "s-3", proficiencyNote: null },
+    );
+    db.withTutorId(TUTOR_ID);
+
+    const result = await getTutorSubjects(TUTOR_ID, { db });
+    expect(result).toHaveLength(2); // inactive subject filtered out
+    expect(result[0]!.slug).toBe("mathematics"); // sortOrder=1 first
+    expect(result[0]!.proficiencyNote).toBe("5 יחידות");
+    expect(result[1]!.slug).toBe("english");
+  });
+
+  it("returns empty array when tutor has no subjects", async () => {
+    const db = new FakeFullProfileDb();
+    db.withTutorId(TUTOR_ID);
+    const result = await getTutorSubjects(TUTOR_ID, { db });
+    expect(result).toEqual([]);
+  });
+});
+
+describe("getTutorAvailabilityRows (Story 3.2)", () => {
+  it("returns rows for the queried tutor in the date range", async () => {
+    const db = new FakeFullProfileDb();
+    db.availability.push(
+      {
+        tutorUserId: TUTOR_ID,
+        id: "av-1",
+        kind: "recurring",
+        weekday: 4,
+        date: null,
+        startTime: "14:00:00",
+        endTime: "18:00:00",
+        validFrom: null,
+        validUntil: null,
+      },
+    );
+    db.withTutorId(TUTOR_ID).withRange(RANGE_FROM, RANGE_TO);
+    const result = await getTutorAvailabilityRows(
+      TUTOR_ID,
+      { from: RANGE_FROM, to: RANGE_TO },
+      { db },
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]!.kind).toBe("recurring");
+  });
+
+  it("excludes expired validity windows", async () => {
+    const db = new FakeFullProfileDb();
+    db.availability.push({
+      tutorUserId: TUTOR_ID,
+      id: "av-2",
+      kind: "recurring",
+      weekday: 4,
+      date: null,
+      startTime: "14:00:00",
+      endTime: "18:00:00",
+      validFrom: null,
+      validUntil: "2026-05-01", // expired before range
+    });
+    db.withTutorId(TUTOR_ID).withRange(RANGE_FROM, RANGE_TO);
+    const result = await getTutorAvailabilityRows(
+      TUTOR_ID,
+      { from: RANGE_FROM, to: RANGE_TO },
+      { db },
+    );
+    expect(result).toEqual([]);
+  });
+});
+
+describe("getActiveBookingsForTutor (Story 3.2)", () => {
+  it("returns only active bookings (pending_payment + confirmed)", async () => {
+    const db = new FakeFullProfileDb();
+    db.bookings.push(
+      {
+        tutorUserId: TUTOR_ID,
+        id: "b-1",
+        startsAt: new Date("2026-05-15T11:00:00.000Z"),
+        durationMinutes: 60,
+        status: "confirmed",
+      },
+      {
+        tutorUserId: TUTOR_ID,
+        id: "b-2",
+        startsAt: new Date("2026-05-16T11:00:00.000Z"),
+        durationMinutes: 60,
+        status: "pending_payment",
+      },
+      // Cancelled — should be excluded.
+      {
+        tutorUserId: TUTOR_ID,
+        id: "b-3",
+        startsAt: new Date("2026-05-17T11:00:00.000Z"),
+        durationMinutes: 60,
+        status: "confirmed" as const,
+      },
+    );
+    // Override b-3 status post-push for clarity (TS narrowed earlier).
+    db.bookings[2]!.status = "confirmed";
+    db.withTutorId(TUTOR_ID).withRange(RANGE_FROM, RANGE_TO);
+    const result = await getActiveBookingsForTutor(
+      TUTOR_ID,
+      { from: RANGE_FROM, to: RANGE_TO },
+      { db },
+    );
+    expect(result.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not return bookings outside the date range", async () => {
+    const db = new FakeFullProfileDb();
+    db.bookings.push({
+      tutorUserId: TUTOR_ID,
+      id: "b-99",
+      startsAt: new Date("2026-06-01T11:00:00.000Z"),
+      durationMinutes: 60,
+      status: "confirmed",
+    });
+    db.withTutorId(TUTOR_ID).withRange(RANGE_FROM, RANGE_TO);
+    const result = await getActiveBookingsForTutor(
+      TUTOR_ID,
+      { from: RANGE_FROM, to: RANGE_TO },
+      { db },
+    );
+    expect(result).toEqual([]);
+  });
+});
+
+describe("getTutorRatingHistogram (Story 3.2)", () => {
+  it("returns null when tutor has no ratings", async () => {
+    const db = new FakeFullProfileDb();
+    db.withTutorId(TUTOR_ID);
+    const result = await getTutorRatingHistogram(TUTOR_ID, { db });
+    expect(result).toBeNull();
+  });
+
+  it("aggregates ratings by score with correct average", async () => {
+    const db = new FakeFullProfileDb();
+    db.ratings.push(
+      { tutorUserId: TUTOR_ID, score: 5 },
+      { tutorUserId: TUTOR_ID, score: 5 },
+      { tutorUserId: TUTOR_ID, score: 5 },
+      { tutorUserId: TUTOR_ID, score: 4 },
+      { tutorUserId: TUTOR_ID, score: 3 },
+    );
+    db.withTutorId(TUTOR_ID);
+    const result = await getTutorRatingHistogram(TUTOR_ID, { db });
+    expect(result).not.toBeNull();
+    expect(result!.total).toBe(5);
+    expect(result!.score5).toBe(3);
+    expect(result!.score4).toBe(1);
+    expect(result!.score3).toBe(1);
+    expect(result!.score2).toBe(0);
+    expect(result!.score1).toBe(0);
+    // Average = (5+5+5+4+3) / 5 = 4.4
+    expect(result!.average).toBeCloseTo(4.4, 1);
+  });
+
+  it("returns a single-score histogram when all ratings agree", async () => {
+    const db = new FakeFullProfileDb();
+    db.ratings.push(
+      { tutorUserId: TUTOR_ID, score: 5 },
+      { tutorUserId: TUTOR_ID, score: 5 },
+    );
+    db.withTutorId(TUTOR_ID);
+    const result = await getTutorRatingHistogram(TUTOR_ID, { db });
+    expect(result?.total).toBe(2);
+    expect(result?.score5).toBe(2);
+    expect(result?.average).toBe(5);
+  });
+});
+
+describe("cross-tutor isolation (Story 3.2)", () => {
+  it("getTutorSubjects does not leak another tutor's rows", async () => {
+    const db = new FakeFullProfileDb();
+    db.subjects.push({
+      id: "s-1",
+      slug: "mathematics",
+      displayNameHe: "מתמטיקה",
+      sortOrder: 1,
+      isActive: true,
+    });
+    db.tutorSubjects.push(
+      { tutorUserId: TUTOR_ID, subjectId: "s-1", proficiencyNote: null },
+      { tutorUserId: ANOTHER_TUTOR_ID, subjectId: "s-1", proficiencyNote: "should-not-leak" },
+    );
+    db.withTutorId(TUTOR_ID);
+    const result = await getTutorSubjects(TUTOR_ID, { db });
+    expect(result).toHaveLength(1);
+    expect(result[0]!.proficiencyNote).toBeNull();
+  });
+});

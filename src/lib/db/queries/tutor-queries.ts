@@ -10,8 +10,15 @@
 // `is_active` exists to handle correctly: an invisible-but-approved tutor is
 // the safe failure mode, not visible-with-unvetted-content.
 
-import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
-import { tutorProfiles } from "../schema";
+import { and, asc, between, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import {
+  bookings,
+  ratings,
+  subjects,
+  tutorAvailability,
+  tutorProfiles,
+  tutorSubjects,
+} from "../schema";
 import { getDb } from "../client";
 
 // --- Public surface --------------------------------------------------------
@@ -31,20 +38,43 @@ export interface DiscoverableTutorPublic {
   totalLessonsCompleted: number;
 }
 
-// Minimal Drizzle-compatible surface used by the helpers. Dep-inject for
-// FakeDb tests; the production path receives `getDb()` directly. The shape
-// mirrors `TutorDb` in `profile-flow.ts` but only includes the read chain.
-interface SelectFromWhereLimit {
-  limit(n: number): Promise<unknown[]>;
-}
-interface SelectFromWhere {
-  where(condition: unknown): SelectFromWhereLimit;
-}
-interface SelectFrom {
-  from(table: unknown): SelectFromWhere;
-}
+// Minimal Drizzle-compatible surface used by Story 2.3's
+// `getDiscoverableTutorByUserId` / `isTutorDiscoverable`. Dep-inject for
+// FakeDb tests; the production path receives `getDb()` directly. Kept
+// EXACTLY as Story 2.3 shipped — Story 3.2's new helpers use the wider
+// `DbForExtendedTutorQueries` interface below.
 export interface DbForTutorQueries {
-  select(cols: unknown): SelectFrom;
+  select(cols: unknown): {
+    from(table: unknown): {
+      where(condition: unknown): {
+        limit(n: number): Promise<unknown[]>;
+      };
+    };
+  };
+}
+
+// Story 3.2 extension — wider chain shape covering the join / orderBy /
+// groupBy / where-as-promise patterns the four new helpers need. The
+// production `getDb()` satisfies this naturally; tests use a separate
+// `FakeFullProfileDb` (in `__tests__/fake-full-profile-db.ts`) that
+// implements just this surface — keeping Story 2.3's `FakeDiscoveryDb`
+// untouched per the additive-only contract.
+interface ExtendedWhereTerminal extends Promise<unknown[]> {
+  limit(n: number): Promise<unknown[]>;
+  orderBy(...args: unknown[]): Promise<unknown[]>;
+  groupBy(...args: unknown[]): Promise<unknown[]>;
+}
+interface ExtendedSelectFromInnerJoin {
+  where(condition: unknown): ExtendedWhereTerminal;
+}
+interface ExtendedSelectFrom {
+  where(condition: unknown): ExtendedWhereTerminal;
+  innerJoin(table: unknown, on: unknown): ExtendedSelectFromInnerJoin;
+}
+export interface DbForExtendedTutorQueries {
+  select(cols: unknown): {
+    from(table: unknown): ExtendedSelectFrom;
+  };
 }
 
 // --- Composable predicate --------------------------------------------------
@@ -140,5 +170,188 @@ export const DISCOVERABLE_TUTOR_PUBLIC_KEYS = Object.freeze([
   "totalLessonsCompleted",
 ] as const);
 
-// Silence the unused-`sql` import when no future helper needs raw SQL.
-void sql;
+// ---------------------------------------------------------------------------
+// Story 3.2 extensions — sibling helpers for the public profile page.
+// Read-side only; no audit writes, no state mutations.
+// ---------------------------------------------------------------------------
+
+interface ExtendedTutorQueryDeps {
+  db?: DbForExtendedTutorQueries;
+}
+
+export interface TutorSubjectPublic {
+  id: string;
+  slug: string;
+  displayNameHe: string;
+  sortOrder: number;
+  proficiencyNote: string | null;
+}
+
+/**
+ * Joins `tutor_subjects` ↔ `subjects` to return the active subjects a tutor
+ * teaches. Sorted by `subjects.sort_order ASC` to match the homepage / browse
+ * surface order. Inactive subjects (admin hidden the taxonomy entry) are
+ * filtered out — they should not surface on public pages even if a tutor
+ * still has a junction row.
+ */
+export async function getTutorSubjects(
+  userId: string,
+  deps: ExtendedTutorQueryDeps = {},
+): Promise<TutorSubjectPublic[]> {
+  const db = deps.db ?? (getDb() as unknown as DbForExtendedTutorQueries);
+  const rows = (await db
+    .select({
+      id: subjects.id,
+      slug: subjects.slug,
+      displayNameHe: subjects.displayNameHe,
+      sortOrder: subjects.sortOrder,
+      proficiencyNote: tutorSubjects.proficiencyNote,
+    })
+    .from(tutorSubjects)
+    .innerJoin(subjects, eq(tutorSubjects.subjectId, subjects.id))
+    .where(and(eq(tutorSubjects.tutorUserId, userId), eq(subjects.isActive, true)))
+    .orderBy(asc(subjects.sortOrder))) as TutorSubjectPublic[];
+
+  return rows;
+}
+
+export interface TutorAvailabilityRow {
+  id: string;
+  kind: "recurring" | "exception_blocked" | "exception_available";
+  weekday: number | null;
+  date: string | null; // YYYY-MM-DD (Drizzle `date` -> string)
+  startTime: string; // HH:MM:SS
+  endTime: string; // HH:MM:SS
+  validFrom: string | null;
+  validUntil: string | null;
+}
+
+/**
+ * Returns raw `tutor_availability` rows in a date range. Both `recurring`
+ * (weekly pattern) and `exception_*` (date-specific) rows are returned;
+ * filtering by row kind happens in the slot-state computer. Validity-window
+ * filter: includes rows where `(valid_from IS NULL OR valid_from <= to)`
+ * AND `(valid_until IS NULL OR valid_until >= from)`.
+ */
+export async function getTutorAvailabilityRows(
+  userId: string,
+  dateRange: { from: Date; to: Date },
+  deps: ExtendedTutorQueryDeps = {},
+): Promise<TutorAvailabilityRow[]> {
+  const db = deps.db ?? (getDb() as unknown as DbForExtendedTutorQueries);
+  const fromIso = dateRange.from.toISOString().slice(0, 10);
+  const toIso = dateRange.to.toISOString().slice(0, 10);
+  const rows = (await db
+    .select({
+      id: tutorAvailability.id,
+      kind: tutorAvailability.kind,
+      weekday: tutorAvailability.weekday,
+      date: tutorAvailability.date,
+      startTime: tutorAvailability.startTime,
+      endTime: tutorAvailability.endTime,
+      validFrom: tutorAvailability.validFrom,
+      validUntil: tutorAvailability.validUntil,
+    })
+    .from(tutorAvailability)
+    .where(
+      and(
+        eq(tutorAvailability.tutorUserId, userId),
+        sql`(${tutorAvailability.validFrom} IS NULL OR ${tutorAvailability.validFrom} <= ${toIso})`,
+        sql`(${tutorAvailability.validUntil} IS NULL OR ${tutorAvailability.validUntil} >= ${fromIso})`,
+      ),
+    )) as TutorAvailabilityRow[];
+
+  return rows;
+}
+
+export interface ActiveBookingRow {
+  id: string;
+  startsAt: Date;
+  durationMinutes: number;
+  status: "pending_payment" | "confirmed";
+}
+
+/**
+ * Returns active (`pending_payment` OR `confirmed`) bookings for a tutor in
+ * a date range. Cancelled / completed / no-show bookings are excluded — they
+ * don't block re-booking of the slot. Used to overlay the calendar with
+ * booked markers.
+ */
+export async function getActiveBookingsForTutor(
+  userId: string,
+  dateRange: { from: Date; to: Date },
+  deps: ExtendedTutorQueryDeps = {},
+): Promise<ActiveBookingRow[]> {
+  const db = deps.db ?? (getDb() as unknown as DbForExtendedTutorQueries);
+  const rows = (await db
+    .select({
+      id: bookings.id,
+      startsAt: bookings.startsAt,
+      durationMinutes: bookings.durationMinutes,
+      status: bookings.status,
+    })
+    .from(bookings)
+    .where(
+      and(
+        eq(bookings.tutorUserId, userId),
+        between(bookings.startsAt, dateRange.from, dateRange.to),
+        inArray(bookings.status, ["pending_payment", "confirmed"]),
+      ),
+    )) as ActiveBookingRow[];
+
+  return rows;
+}
+
+export interface RatingHistogram {
+  score1: number;
+  score2: number;
+  score3: number;
+  score4: number;
+  score5: number;
+  total: number;
+  average: number;
+}
+
+/**
+ * Aggregates `ratings.score` GROUP BY score for a single tutor. Returns
+ * `null` when there are no ratings at all (caller hides the rating widget
+ * entirely; see AC7).
+ *
+ * Why null-vs-zeros: at MVP-1 closed-beta every tutor will be at 0 ratings
+ * until Story 5.5 (advisory ratings) ships. Returning a zero-filled object
+ * would force the caller to add the `total === 0` check; returning null
+ * makes the "widget hidden entirely" intent explicit at the type level.
+ */
+export async function getTutorRatingHistogram(
+  userId: string,
+  deps: ExtendedTutorQueryDeps = {},
+): Promise<RatingHistogram | null> {
+  const db = deps.db ?? (getDb() as unknown as DbForExtendedTutorQueries);
+  const rows = (await db
+    .select({
+      score: ratings.score,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(ratings)
+    .where(eq(ratings.tutorUserId, userId))
+    .groupBy(ratings.score)) as Array<{ score: number; count: number }>;
+
+  if (rows.length === 0) return null;
+
+  const buckets = { score1: 0, score2: 0, score3: 0, score4: 0, score5: 0 };
+  let total = 0;
+  let weightedSum = 0;
+  for (const row of rows) {
+    const key = `score${row.score}` as keyof typeof buckets;
+    if (key in buckets) buckets[key] = row.count;
+    total += row.count;
+    weightedSum += row.score * row.count;
+  }
+  if (total === 0) return null;
+
+  return {
+    ...buckets,
+    total,
+    average: weightedSum / total,
+  };
+}
