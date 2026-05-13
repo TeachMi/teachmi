@@ -132,3 +132,56 @@ export const LoginForm: Story = {
     </Card>
   ),
 };
+
+export const WizardPricingPair: Story = {
+  name: "Composition — tutor wizard pricing inputs (45 / 60 min)",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/wizard-phase-2.html` — the תמחור section (lines 124–147). Two numeric inputs side-by-side for 45-min and 60-min lesson prices, both in whole shekels. Inputs are `dir=\"ltr\"` (numbers are LTR even inside the RTL container) and use `surface=\"linen\"` to match the wizard's surface treatment. ₪ prefix lives in the placeholder; sanity-bounded 1–10000 (Wolt #5: no platform price floor — the bounds are typo defenses, not market policy).",
+      },
+    },
+  },
+  render: () => (
+    <Card radius="2xl" padding="md" className="max-w-2xl text-start">
+      <h3 className="mb-2 font-display text-lg font-bold text-primary-container">
+        תמחור — 2 אורכי שיעור
+      </h3>
+      <p className="mb-4 text-xs text-secondary">
+        אתם קובעים את המחיר. הממוצע בתחום שלכם: ₪150-200 לשעה.
+      </p>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Input
+          name="price45Ils"
+          type="number"
+          label="שיעור 45 דק׳"
+          surface="linen"
+          defaultValue={140}
+          min={1}
+          max={10000}
+          step={1}
+          dir="ltr"
+          inputMode="numeric"
+          placeholder="₪"
+        />
+        <Input
+          name="price60Ils"
+          type="number"
+          label="שיעור 60 דק׳"
+          surface="linen"
+          defaultValue={180}
+          min={1}
+          max={10000}
+          step={1}
+          dir="ltr"
+          inputMode="numeric"
+          placeholder="₪"
+        />
+      </div>
+      <p className="mt-3 text-[10px] leading-relaxed text-secondary">
+        המחיר שאתם רואים = המחיר שאתם מקבלים. עמלת TeachMe (15%) משולמת על ידי הסטודנט בנוסף.
+      </p>
+    </Card>
+  ),
+};
