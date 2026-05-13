@@ -275,38 +275,6 @@ export async function runRegister(
           }),
         );
       }
-
-      // FR59: log the privacy-policy acceptance receipt + audit row. Inside the
-      // same inner try/catch so the cleanup-on-error path covers them — a
-      // half-signed-up user with no consent receipt would be exactly the
-      // regulatory failure FR59 + NFR16 are designed to prevent.
-      const acceptedAt = new Date();
-      await db.insert(consentReceipts).values({
-        userId,
-        documentType: "privacy_policy",
-        documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
-        acceptedAt,
-        ipAddress: ip,
-        userAgent: truncateUserAgent(deps.userAgent),
-        signature: null,
-        documentSnapshot: null,
-        createdByKind: "user",
-        createdByActor: userId,
-      });
-
-      await db.insert(auditEvents).values(
-        toAuditEventValues({
-          eventType: "auth.privacy_policy_accepted",
-          actorKind: "user",
-          actorId: userId,
-          targetType: "user",
-          targetId: userId,
-          payload: {
-            documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
-            source: "signup",
-          },
-        }),
-      );
     } catch (innerErr) {
       log.error("[runRegister] post-user write failed; cleaning up user row", innerErr);
       try {
@@ -353,13 +321,70 @@ export async function runRegister(
     );
   }
 
-  track({
-    event: "privacy_policy_accepted",
-    userId,
-    role,
-    documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
-    source: "signup",
-  });
+  // FR59 consent capture — moved OUTSIDE the cleanup-protected inner try
+  // (Story 1.21 review [H1]). The original spec put these inside the inner
+  // try, but the FK from consent_receipts.userId -> users.id (NO ACTION) +
+  // the immutability trigger on consent_receipts means: if the audit insert
+  // failed AFTER the consent insert succeeded, the cleanup DELETE on users
+  // would itself fail, leaving the user permanently orphaned with their
+  // email locked out of re-signup. Strictly worse regulatory outcome than
+  // "user committed, receipt slightly later via the dashboard gate
+  // re-prompt". So we accept the brief window between signup-commit and
+  // first-signin where the user has no receipt — the gate at /dashboard
+  // (AC3) closes that window the moment the user signs in.
+  let privacyConsentLogged = false;
+  try {
+    const acceptedAt = new Date();
+    const ipAddress = ip === "unknown" ? null : ip;
+    await db.insert(consentReceipts).values({
+      userId,
+      documentType: "privacy_policy",
+      documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+      acceptedAt,
+      ipAddress,
+      userAgent: truncateUserAgent(deps.userAgent),
+      signature: null,
+      documentSnapshot: null,
+      createdByKind: "user",
+      createdByActor: userId,
+    });
+
+    await db.insert(auditEvents).values(
+      toAuditEventValues({
+        eventType: "auth.privacy_policy_accepted",
+        actorKind: "user",
+        actorId: userId,
+        actorMeta: ipAddress, // Story 1.21 review [M2]: align shape with accept-flow.
+        targetType: "user",
+        targetId: userId,
+        payload: {
+          documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+          source: "signup",
+        },
+      }),
+    );
+
+    privacyConsentLogged = true;
+  } catch (consentErr) {
+    log.error(
+      `[runRegister] privacy-policy consent capture failed for userId=${userId}; dashboard gate will re-prompt on first signin`,
+      consentErr,
+    );
+    // Intentionally do NOT throw. User is fully registered; the gate at
+    // /dashboard (requirePrivacyConsent) catches the missing receipt and
+    // redirects to /legal/privacy/accept on the user's next authenticated
+    // request, closing the FR59 loop.
+  }
+
+  if (privacyConsentLogged) {
+    track({
+      event: "privacy_policy_accepted",
+      userId,
+      role,
+      documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+      source: "signup",
+    });
+  }
 
   track({ event: "signup_completed", userId, role });
 

@@ -34,7 +34,14 @@ export default async function PrivacyAcceptPage({
   const user = await requireAuth("/legal/privacy/accept");
 
   const params = await searchParams;
-  const safeNext = getSafeCallbackUrl(params.next);
+  const rawNext = getSafeCallbackUrl(params.next);
+  // Story 1.21 review [M5]: reject self-referential `next` to prevent loops.
+  const safeNext =
+    rawNext === "/legal/privacy/accept" ||
+    rawNext.startsWith("/legal/privacy/accept?") ||
+    rawNext.startsWith("/legal/privacy/accept/")
+      ? "/dashboard"
+      : rawNext;
 
   // Idempotency / defensive: if the user already has a receipt at the current
   // version, route them onward without re-rendering the accept UI. Handles:

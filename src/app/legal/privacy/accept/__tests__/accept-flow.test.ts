@@ -194,6 +194,74 @@ describe("runAcceptPrivacyPolicy — next sanitization (open-redirect defense)",
     if (!result.ok) return;
     expect(result.redirectTo).toBe("/dashboard");
   });
+
+  // Story 1.21 review [M5]: reject `next` values that loop back into the
+  // accept flow itself. A stale link / clickjack should not trigger an
+  // infinite redirect chain.
+  it("falls back to /dashboard when next is /legal/privacy/accept (self-loop)", async () => {
+    const { db, deps } = makeDeps();
+    db.queueSelect<{ documentVersion: string }>([]);
+
+    const result = await runAcceptPrivacyPolicy(
+      { ...baseInput(), next: "/legal/privacy/accept" },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe("/dashboard");
+  });
+
+  it("falls back to /dashboard when next is /legal/privacy/accept with a query string", async () => {
+    const { db, deps } = makeDeps();
+    db.queueSelect<{ documentVersion: string }>([]);
+
+    const result = await runAcceptPrivacyPolicy(
+      { ...baseInput(), next: "/legal/privacy/accept?foo=bar" },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe("/dashboard");
+  });
+});
+
+// Story 1.21 review [L1]: "unknown" IP sentinel from `readIp` should land as
+// null in the immutable consent_receipts row, not as a misleading literal.
+describe("runAcceptPrivacyPolicy — IP / metadata sanitization", () => {
+  it("converts ip='unknown' to null in both the receipt and the audit row", async () => {
+    const { db, deps } = makeDeps();
+    db.queueSelect<{ documentVersion: string }>([]);
+
+    const result = await runAcceptPrivacyPolicy(
+      { ...baseInput(), ip: "unknown" },
+      deps,
+    );
+
+    expect(result.ok).toBe(true);
+    const receipt = db.insertedInto(consentReceipts)[0]?.value as Record<
+      string,
+      unknown
+    >;
+    expect(receipt.ipAddress).toBeNull();
+    const audit = db.insertedInto(auditEvents)[0]?.value as Record<
+      string,
+      unknown
+    >;
+    expect(audit.actorMeta).toBeNull();
+  });
+
+  it("preserves a real IP unchanged", async () => {
+    const { db, deps } = makeDeps();
+    db.queueSelect<{ documentVersion: string }>([]);
+
+    await runAcceptPrivacyPolicy({ ...baseInput(), ip: "203.0.113.99" }, deps);
+
+    const receipt = db.insertedInto(consentReceipts)[0]?.value as Record<
+      string,
+      unknown
+    >;
+    expect(receipt.ipAddress).toBe("203.0.113.99");
+  });
 });
 
 describe("runAcceptPrivacyPolicy — write failure", () => {

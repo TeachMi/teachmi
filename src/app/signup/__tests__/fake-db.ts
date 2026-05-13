@@ -79,8 +79,8 @@ export class FakeDb {
               limit: (n: number) => Promise.resolve(next.slice(0, n)),
             };
             return Object.assign(promise, {
-              orderBy: (spec: unknown) => {
-                void spec;
+              orderBy: (...specs: unknown[]) => {
+                void specs;
                 return orderByChain;
               },
               limit: (n: number) => Promise.resolve(next.slice(0, n)),

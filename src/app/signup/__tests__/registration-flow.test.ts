@@ -257,12 +257,18 @@ describe("runRegister — rate-limited", () => {
   });
 });
 
-// Story 1.21: the consent_receipts + auth.privacy_policy_accepted writes are
-// inside the inner try/catch that DELETEs the user row on failure. Without
-// that, a half-signed-up user with no consent receipt is exactly the FR59 /
-// NFR16 regulatory failure we're guarding against.
-describe("runRegister — consent_receipts insert failure triggers user cleanup", () => {
-  it("DELETEs the user row and returns a generic formError when consent_receipts insert fails", async () => {
+// Story 1.21 — Round-1 code-review finding [H1]: the consent_receipts +
+// privacy_policy_accepted audit writes were originally placed INSIDE the
+// cleanup-protected inner try, but the FK from consent_receipts.userId ->
+// users.id (NO ACTION) + the consent_receipts append-only trigger meant a
+// consent insert that succeeded followed by an audit-insert that failed
+// would leave the user permanently orphaned (cleanup DELETE blocked by FK)
+// with their email locked. So the writes were moved OUTSIDE the cleanup
+// block: a consent insert failure leaves the user committed; the dashboard
+// gate (requirePrivacyConsent) re-prompts them on first signin and captures
+// the receipt then. Strictly better regulatory outcome.
+describe("runRegister — consent_receipts insert failure is non-fatal (dashboard gate re-prompts)", () => {
+  it("commits the user even when consent_receipts insert throws; skips privacy_policy_accepted analytics; still sends email + fires signup_completed", async () => {
     const { db, email, recorder, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]); // rate-limit count
     db.queueReturning<{ id: string }>([{ id: "user-pp-fail" }]); // user RETURNING
@@ -270,26 +276,38 @@ describe("runRegister — consent_receipts insert failure triggers user cleanup"
 
     const result = await runRegister(validForm(), deps);
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.state.formError).toBe("אירעה שגיאה. נסו שוב בעוד דקה.");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe(
+      "/signup/verify-email-sent?email=test%40example.com",
+    );
 
-    // User insert succeeded, verificationTokens + user_registered audit also
-    // wrote (they precede the consent_receipts insert inside the inner try).
+    // User insert + verification token + user_registered audit all committed.
     expect(db.insertedInto(users)).toHaveLength(1);
     expect(db.insertedInto(verificationTokens)).toHaveLength(1);
-    // No consent_receipts row reached the fake's `inserts` capture (it threw
-    // before being recorded) — auth.privacy_policy_accepted audit never ran.
-    expect(db.insertedInto(consentReceipts)).toHaveLength(0);
-
-    // Cleanup DELETE on `users` fired with the new userId.
+    // Cleanup DELETE on `users` is NOT triggered — the user is allowed to
+    // proceed; the dashboard gate captures the missing receipt later.
     const userDeletes = db.deletes.filter((d) => d.table === users);
-    expect(userDeletes).toHaveLength(1);
+    expect(userDeletes).toHaveLength(0);
 
-    // No analytics fired (privacy_policy_accepted + signup_completed both gated
-    // on the sequential block succeeding).
-    expect(recorder.events).toEqual([]);
-    expect(email.sends).toHaveLength(0);
+    // No consent_receipts row reached the fake's `inserts` capture (it threw
+    // before being recorded). auth.privacy_policy_accepted audit also did NOT
+    // run, so audit_events only has the rate-limit attempt + user_registered.
+    expect(db.insertedInto(consentReceipts)).toHaveLength(0);
+    expect(db.insertedInto(auditEvents)).toHaveLength(2);
+    const auditTypes = db
+      .insertedInto(auditEvents)
+      .map((e) => (e.value as { eventType: string }).eventType);
+    expect(auditTypes).not.toContain("auth.privacy_policy_accepted");
+
+    // signup_completed analytics still fires (user is committed); the
+    // privacy_policy_accepted event is gated on the consent insert succeeding.
+    expect(recorder.events).toEqual([
+      { event: "signup_completed", userId: "user-pp-fail", role: "student" },
+    ]);
+
+    // Verification email is sent normally.
+    expect(email.sends).toHaveLength(1);
   }, 30_000);
 });
 

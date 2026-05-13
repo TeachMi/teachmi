@@ -47,6 +47,16 @@ export interface AcceptInput {
   next: string;
 }
 
+// Paths that would loop the user back into the accept flow itself. Reject
+// these in `next` sanitization so a stale link / clickjack can't trigger an
+// infinite redirect chain after acceptance. Story 1.21 review [M5].
+function rejectSelfReferential(next: string): string {
+  if (next === "/legal/privacy/accept" || next.startsWith("/legal/privacy/accept?") || next.startsWith("/legal/privacy/accept/")) {
+    return "/dashboard";
+  }
+  return next;
+}
+
 export async function runAcceptPrivacyPolicy(
   input: AcceptInput,
   deps: AcceptDeps,
@@ -54,7 +64,7 @@ export async function runAcceptPrivacyPolicy(
   const log = deps.logger ?? {
     error: (message: string, err?: unknown) => console.error(message, err),
   };
-  const safeNext = getSafeCallbackUrl(input.next);
+  const safeNext = rejectSelfReferential(getSafeCallbackUrl(input.next));
 
   // Idempotency: if the user already has a receipt at the current version,
   // skip the writes (defense against double-submit + stale-tab races). The
@@ -70,12 +80,15 @@ export async function runAcceptPrivacyPolicy(
 
   try {
     const acceptedAt = new Date();
+    // Story 1.21 review [L1]: convert the readIp sentinel "unknown" to null
+    // so the immutable receipt doesn't carry a misleading literal.
+    const ipAddress = input.ip === "unknown" ? null : input.ip;
     await deps.db.insert(consentReceipts).values({
       userId: input.userId,
       documentType: "privacy_policy",
       documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
       acceptedAt,
-      ipAddress: input.ip,
+      ipAddress,
       userAgent: truncateUserAgent(input.userAgent),
       signature: null,
       documentSnapshot: null,
@@ -88,7 +101,7 @@ export async function runAcceptPrivacyPolicy(
         eventType: "auth.privacy_policy_accepted",
         actorKind: "user",
         actorId: input.userId,
-        actorMeta: input.ip,
+        actorMeta: ipAddress,
         targetType: "user",
         targetId: input.userId,
         payload: {
