@@ -7,7 +7,6 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
 import { CheckboxField } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { RoleCardPicker } from "@/components/auth/RoleCardPicker";
-import { PrivacyPolicyBody } from "@/components/legal/PrivacyPolicyBody";
 import { PASSWORD_MIN_LENGTH } from "@/lib/auth/registration";
 import { registerAction } from "./actions";
 import {
@@ -88,40 +87,26 @@ export function SignupForm() {
               surface="linen"
             />
 
-            <section
-              className="space-y-3 rounded-xl border border-linen-border bg-linen/50 p-4"
-              aria-labelledby="privacy-policy-heading"
-            >
-              <h2
-                id="privacy-policy-heading"
-                className="font-display text-lg font-bold text-primary-container"
-              >
-                מדיניות פרטיות
-              </h2>
-              <div className="max-h-72 overflow-y-auto rounded-lg border border-linen-border bg-surface p-4">
-                <PrivacyPolicyBody />
-              </div>
-              <CheckboxField
-                name="privacyPolicy"
-                value="on"
-                required
-                defaultChecked={values.privacyPolicy === true}
-                error={fieldErrors.privacyPolicy}
-                label={
-                  <span>
-                    אני מאשר/ת את{" "}
-                    <Link
-                      className="border-b border-primary-container text-primary-container"
-                      href="/legal/privacy"
-                      target="_blank"
-                      rel="noopener"
-                    >
-                      מדיניות הפרטיות
-                    </Link>
-                  </span>
-                }
-              />
-            </section>
+            <CheckboxField
+              name="privacyPolicy"
+              value="on"
+              required
+              defaultChecked={values.privacyPolicy === true}
+              error={fieldErrors.privacyPolicy}
+              label={
+                <span>
+                  אני מאשר/ת את{" "}
+                  <Link
+                    className="border-b border-primary-container text-primary-container"
+                    href="/legal/privacy"
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    מדיניות הפרטיות
+                  </Link>
+                </span>
+              }
+            />
 
             <CheckboxField
               name="tos"
