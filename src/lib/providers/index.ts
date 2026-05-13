@@ -6,9 +6,10 @@
  *   - never import from `<provider>/stub.ts` or `<provider>/full.ts`
  *   - the env-var (PAYMENTS_PROVIDER, INVOICE_PROVIDER, …) is the cutover knob
  *
- * Five named getters by design — matches the codebase convention (getDb,
+ * Six named getters by design — matches the codebase convention (getDb,
  * getSqlClient) and keeps each return type concrete without TS overload
- * gymnastics.
+ * gymnastics. `getFilesProvider` joined the set in Story 2.1 (tutor profile
+ * submission) for R2 pre-signed-URL uploads (intro video, profile photo).
  */
 
 export { getPaymentProvider } from "./payment";
@@ -16,3 +17,4 @@ export { getInvoiceProvider } from "./invoice";
 export { getGovIlProvider } from "./govil";
 export { getLessonRoomProvider } from "./lesson-room";
 export { getEmailProvider } from "./email";
+export { getFilesProvider } from "./files";
