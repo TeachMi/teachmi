@@ -60,6 +60,14 @@ export interface RegisterDeps {
   origin: string;
   track: (event: AnalyticsEvent) => void;
   logger?: { error: (message: string, err?: unknown) => void };
+  /**
+   * Dev-only override: when true, the new user is created with
+   * `emailVerified: now()`, the verification-email loop is skipped, and the
+   * redirect goes to `/signin?verified=1` instead of the verify-email-sent
+   * screen. The action wrapper sources this from `isEmailVerificationSkipEnabled()`
+   * which hard-refuses in production; tests may override directly.
+   */
+  skipEmailVerification?: boolean;
 }
 
 function fieldErrorMessage(reason: ReturnType<typeof validatePassword>): string {
@@ -125,6 +133,10 @@ export async function runRegister(
   const { db, emailProvider, ip, origin, track } = deps;
   let userId: string;
   let token: string;
+  // Hoisted so the post-tx block (email send + redirect) can branch on it.
+  // Sourced from `deps.skipEmailVerification` which the action wrapper feeds
+  // via `isEmailVerificationSkipEnabled()` (production-guarded).
+  const skipVerification = deps.skipEmailVerification === true;
 
   try {
     const windowStart = rateLimitWindowStart();
@@ -175,6 +187,7 @@ export async function runRegister(
         passwordHash,
         name,
         role,
+        ...(skipVerification ? { emailVerified: new Date() } : {}),
         createdByKind: "user",
         createdByActor: "self-signup",
       })
@@ -199,24 +212,46 @@ export async function runRegister(
     // From here on, the user row exists. If any subsequent write fails, delete
     // the user row so a retry can succeed (orphan rows would block re-signup).
     try {
-      const generated = generateVerificationToken();
-      token = generated.token;
-      await db.insert(verificationTokens).values({
-        identifier: email,
-        token: generated.token,
-        expires: generated.expires,
-      });
+      if (skipVerification) {
+        // Dev-only path: user is already verified at insert-time; no token, no
+        // email. Audit row records the bypass so it shows up in audit-log
+        // forensics ("how did this user get here without a verify event?").
+        token = "";
+        await db.insert(auditEvents).values(
+          toAuditEventValues({
+            eventType: "auth.user_registered",
+            actorKind: "user",
+            actorId: userId,
+            targetType: "user",
+            targetId: userId,
+            payload: {
+              role,
+              hasPassword: true,
+              requiresVerification: false,
+              devEmailVerificationSkipped: true,
+            },
+          }),
+        );
+      } else {
+        const generated = generateVerificationToken();
+        token = generated.token;
+        await db.insert(verificationTokens).values({
+          identifier: email,
+          token: generated.token,
+          expires: generated.expires,
+        });
 
-      await db.insert(auditEvents).values(
-        toAuditEventValues({
-          eventType: "auth.user_registered",
-          actorKind: "user",
-          actorId: userId,
-          targetType: "user",
-          targetId: userId,
-          payload: { role, hasPassword: true, requiresVerification: true },
-        }),
-      );
+        await db.insert(auditEvents).values(
+          toAuditEventValues({
+            eventType: "auth.user_registered",
+            actorKind: "user",
+            actorId: userId,
+            targetType: "user",
+            targetId: userId,
+            payload: { role, hasPassword: true, requiresVerification: true },
+          }),
+        );
+      }
     } catch (innerErr) {
       log.error("[runRegister] post-user write failed; cleaning up user row", innerErr);
       try {
@@ -238,25 +273,37 @@ export async function runRegister(
     };
   }
 
-  try {
-    await emailProvider.sendTransactional({
-      toAddress: email,
-      subject: EMAIL_TEMPLATES.AUTH_VERIFY_EMAIL.subject,
-      templateId: EMAIL_TEMPLATES.AUTH_VERIFY_EMAIL.templateId,
-      payload: {
-        verifyUrl: buildVerificationUrl(token, origin),
-        expiresInMinutes: 15,
-        displayName: name,
-      },
-    });
-  } catch (err) {
-    log.error("[runRegister] verification email send failed", err);
+  if (!skipVerification) {
+    try {
+      await emailProvider.sendTransactional({
+        toAddress: email,
+        subject: EMAIL_TEMPLATES.AUTH_VERIFY_EMAIL.subject,
+        templateId: EMAIL_TEMPLATES.AUTH_VERIFY_EMAIL.templateId,
+        payload: {
+          verifyUrl: buildVerificationUrl(token, origin),
+          expiresInMinutes: 15,
+          displayName: name,
+        },
+      });
+    } catch (err) {
+      log.error("[runRegister] verification email send failed", err);
+    }
+  } else {
+    log.error(
+      "[runRegister] dev-only skip-email-verification path taken (NODE_ENV=" +
+        (process.env.NODE_ENV ?? "undefined") +
+        "); user " +
+        userId +
+        " stamped email_verified at insert — NEVER reach this branch in prod.",
+    );
   }
 
   track({ event: "signup_completed", userId, role });
 
   return {
     ok: true,
-    redirectTo: `/signup/verify-email-sent?email=${encodeURIComponent(email)}`,
+    redirectTo: skipVerification
+      ? "/signin?verified=1"
+      : `/signup/verify-email-sent?email=${encodeURIComponent(email)}`,
   };
 }

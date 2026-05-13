@@ -13,12 +13,19 @@ export const RATE_LIMIT_THRESHOLD_UNKNOWN_IP = 1;
 export const RATE_LIMIT_WINDOW_SECONDS = 60;
 export const UNKNOWN_IP = "unknown";
 
-export type AuthRateLimitAction = "signup" | "signup_resend" | "signin";
+export type AuthRateLimitAction =
+  | "signup"
+  | "signup_resend"
+  | "signin"
+  | "password_reset_request"
+  | "password_reset_confirm";
 
 export const RATE_LIMIT_EVENT_TYPES: Record<AuthRateLimitAction, string> = {
   signup: "auth.signup_attempt",
   signup_resend: "auth.signup_resend_attempt",
   signin: "auth.signin_attempt",
+  password_reset_request: "auth.password_reset_request_attempt",
+  password_reset_confirm: "auth.password_reset_confirm_attempt",
 };
 
 export type RateLimitResult =
