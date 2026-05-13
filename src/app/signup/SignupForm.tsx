@@ -88,6 +88,27 @@ export function SignupForm() {
             />
 
             <CheckboxField
+              name="privacyPolicy"
+              value="on"
+              required
+              defaultChecked={values.privacyPolicy === true}
+              error={fieldErrors.privacyPolicy}
+              label={
+                <span>
+                  אני מאשר/ת את{" "}
+                  <Link
+                    className="border-b border-primary-container text-primary-container"
+                    href="/legal/privacy"
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    מדיניות הפרטיות
+                  </Link>
+                </span>
+              }
+            />
+
+            <CheckboxField
               name="tos"
               value="on"
               required

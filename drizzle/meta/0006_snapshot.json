@@ -1,6 +1,6 @@
 {
-  "id": "47f9f619-8153-4506-b9dd-279b1a7d6c35",
-  "prevId": "4c1bf0b6-67b8-46c3-9c50-964a366570f8",
+  "id": "08082a68-2d72-460b-960f-5e9717b14f48",
+  "prevId": "debd9748-b844-4ce4-8eed-5729775eabdf",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -273,7 +273,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -697,7 +697,17 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "uq_consent_receipts_user_type_version": {
+          "name": "uq_consent_receipts_user_type_version",
+          "nullsNotDistinct": false,
+          "columns": [
+            "user_id",
+            "document_type",
+            "document_version"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1903,6 +1913,45 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.password_reset_tokens": {
+      "name": "password_reset_tokens",
+      "schema": "",
+      "columns": {
+        "identifier": {
+          "name": "identifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token": {
+          "name": "token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires": {
+          "name": "expires",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "password_reset_tokens_identifier_token_pk": {
+          "name": "password_reset_tokens_identifier_token_pk",
+          "columns": [
+            "identifier",
+            "token"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

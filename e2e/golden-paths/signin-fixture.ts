@@ -23,7 +23,13 @@ import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { auditEvents, sessions, users } from "../../src/lib/db/schema";
+import {
+  auditEvents,
+  consentReceipts,
+  sessions,
+  users,
+} from "../../src/lib/db/schema";
+import { CURRENT_PRIVACY_POLICY_VERSION } from "../../src/lib/legal/privacy-consent";
 import { buildStudentEmail } from "./student-loop.flow";
 
 // Short-lived: a single Playwright spec never needs more than a few minutes.
@@ -119,6 +125,28 @@ export async function createVerifiedSession(
     targetType: "user",
     targetId: userId,
     payload: { provider: "e2e-fixture" },
+  });
+
+  // Story 1.21: the fixture's user wasn't created via the real signup flow, so
+  // it lacks a `consent_receipts` row. Future E2Es that navigate to a route
+  // guarded by `requirePrivacyConsent` (today: /dashboard; tomorrow: more)
+  // would trip the gate and redirect to /legal/privacy/accept, breaking the
+  // golden path. Stamp a current-version receipt at fixture-creation time so
+  // these tests can ignore the gate. Idempotent via the rest of the fixture's
+  // re-run semantics — duplicate rows for the same (user, version) are legal
+  // per schema (no unique constraint), but in practice the fixture only runs
+  // once per test.
+  await db.insert(consentReceipts).values({
+    userId,
+    documentType: "privacy_policy",
+    documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+    acceptedAt: now,
+    ipAddress: null,
+    userAgent: "e2e-fixture",
+    signature: null,
+    documentSnapshot: null,
+    createdByKind: "system",
+    createdByActor: "e2e-fixture",
   });
 
   return {

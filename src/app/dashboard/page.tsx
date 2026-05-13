@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { AppShell } from "@/components/layout/AppShell";
@@ -7,6 +8,10 @@ import { signOut } from "@/lib/auth/auth";
 import { requireAuth } from "@/lib/auth/guards";
 import { getDb } from "@/lib/db/client";
 import { tutorProfiles } from "@/lib/db/schema";
+import {
+  requirePrivacyConsent,
+  type DbForPrivacyConsent,
+} from "@/lib/legal/privacy-consent";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +53,14 @@ async function readTutorOnboardingState(userId: string): Promise<TutorOnboarding
 
 export default async function DashboardPage() {
   const user = await requireAuth("/dashboard");
+  // Story 1.21 (FR59): re-prompt users who lack a receipt at the current
+  // privacy-policy version. `redirect` throws and never returns when invoked.
+  await requirePrivacyConsent({
+    userId: user.id,
+    currentPath: "/dashboard",
+    db: getDb() as unknown as DbForPrivacyConsent,
+    redirectFn: redirect,
+  });
   const displayName = user.name ?? user.email ?? "TeachMe";
   const tutorState = user.role === "tutor" ? await readTutorOnboardingState(user.id) : null;
 

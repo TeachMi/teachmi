@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   auditEvents,
+  consentReceipts,
   users,
   verificationTokens,
 } from "../../../lib/db/schema";
+import { CURRENT_PRIVACY_POLICY_VERSION } from "../../../lib/legal/privacy-consent";
 import { runRegister } from "../registration-flow";
 import type { DbForRegister } from "../registration-flow";
 import {
@@ -27,6 +29,7 @@ function makeDeps() {
       emailProvider: email,
       ip: "10.0.0.1",
       origin: "https://teachme.test",
+      userAgent: "Mozilla/5.0 (Vitest TeachMe)",
       track: recorder.capture,
       logger: silentLogger,
     },
@@ -40,6 +43,7 @@ function validForm(): FormData {
     password: "hello12345",
     role: "student",
     tos: "on",
+    privacyPolicy: "on",
   });
 }
 
@@ -48,6 +52,7 @@ describe("runRegister — happy path", () => {
     const { db, email, recorder, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]); // rate-limit count (0 attempts)
     db.queueReturning<{ id: string }>([{ id: "user-1" }]); // user insert ON CONFLICT … RETURNING
+    db.queueReturning<{ id: string }>([{ id: "consent-1" }]); // consent_receipts ON CONFLICT DO NOTHING … RETURNING (Story 1.21 round-2)
 
     const result = await runRegister(validForm(), deps);
 
@@ -57,10 +62,12 @@ describe("runRegister — happy path", () => {
       "/signup/verify-email-sent?email=test%40example.com",
     );
 
-    // 3 inserts into audit_events (attempt + user_registered), 1 into users, 1 into verificationTokens
-    expect(db.insertedInto(auditEvents)).toHaveLength(2);
+    // 3 inserts into audit_events (attempt + user_registered + privacy_policy_accepted),
+    // 1 into users, 1 into verificationTokens, 1 into consent_receipts (Story 1.21).
+    expect(db.insertedInto(auditEvents)).toHaveLength(3);
     expect(db.insertedInto(users)).toHaveLength(1);
     expect(db.insertedInto(verificationTokens)).toHaveLength(1);
+    expect(db.insertedInto(consentReceipts)).toHaveLength(1);
 
     const attempt = db.insertedInto(auditEvents)[0]?.value as Record<string, unknown>;
     expect(attempt.eventType).toBe("auth.signup_attempt");
@@ -83,6 +90,27 @@ describe("runRegister — happy path", () => {
     expect(userRegistered.eventType).toBe("auth.user_registered");
     expect(userRegistered.actorId).toBe("user-1");
 
+    // Story 1.21: consent_receipts row written same-tx as the rest.
+    const receipt = db.insertedInto(consentReceipts)[0]?.value as Record<string, unknown>;
+    expect(receipt.userId).toBe("user-1");
+    expect(receipt.documentType).toBe("privacy_policy");
+    expect(receipt.documentVersion).toBe(CURRENT_PRIVACY_POLICY_VERSION);
+    expect(receipt.ipAddress).toBe("10.0.0.1");
+    expect(receipt.userAgent).toBe("Mozilla/5.0 (Vitest TeachMe)");
+    expect(receipt.signature).toBeNull();
+    expect(receipt.documentSnapshot).toBeNull();
+    expect(receipt.createdByKind).toBe("user");
+    expect(receipt.createdByActor).toBe("user-1");
+    expect(receipt.acceptedAt).toBeInstanceOf(Date);
+
+    // Story 1.21: auth.privacy_policy_accepted audit row immediately after.
+    const ppAudit = db.insertedInto(auditEvents)[2]?.value as Record<string, unknown>;
+    expect(ppAudit.eventType).toBe("auth.privacy_policy_accepted");
+    expect(ppAudit.actorId).toBe("user-1");
+    const ppPayload = ppAudit.payload as Record<string, unknown>;
+    expect(ppPayload.documentVersion).toBe(CURRENT_PRIVACY_POLICY_VERSION);
+    expect(ppPayload.source).toBe("signup");
+
     expect(email.sends).toHaveLength(1);
     expect(email.sends[0]?.toAddress).toBe("test@example.com");
     expect(email.sends[0]?.templateId).toBe("auth-verify-email");
@@ -90,7 +118,15 @@ describe("runRegister — happy path", () => {
       /^https:\/\/teachme\.test\/signup\/verify\?token=/,
     );
 
+    // privacy_policy_accepted fires BEFORE signup_completed — assert order.
     expect(recorder.events).toEqual([
+      {
+        event: "privacy_policy_accepted",
+        userId: "user-1",
+        role: "student",
+        documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+        source: "signup",
+      },
       { event: "signup_completed", userId: "user-1", role: "student" },
     ]);
   }, 30_000);
@@ -117,6 +153,24 @@ describe("runRegister — validation", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.state.fieldErrors?.tos).toBeDefined();
+  });
+
+  // Story 1.21: the privacy-policy checkbox is independently required.
+  it("returns fieldErrors when privacyPolicy is unchecked", async () => {
+    const { db, deps } = makeDeps();
+    const form = validForm();
+    form.delete("privacyPolicy");
+
+    const result = await runRegister(form, deps);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.state.fieldErrors?.privacyPolicy).toBe(
+      "יש לאשר את מדיניות הפרטיות.",
+    );
+    // values is round-tripped so the form can re-render the checkbox state.
+    expect(result.state.values?.privacyPolicy).toBe(false);
+    // No DB writes when validation fails — not even the rate-limit attempt row.
+    expect(db.inserts).toHaveLength(0);
   });
 
   it("returns fieldErrors when email is malformed", async () => {
@@ -165,6 +219,9 @@ describe("runRegister — email collision", () => {
     // Only attempt-audit + the (conflicted) user insert.
     expect(db.insertedInto(auditEvents)).toHaveLength(1);
     expect(db.insertedInto(users)).toHaveLength(1);
+    // No consent_receipts row written on email collision (the inner try where
+    // it'd be inserted never runs).
+    expect(db.insertedInto(consentReceipts)).toHaveLength(0);
     // No email sent and signup_completed NOT fired.
     expect(email.sends).toHaveLength(0);
     expect(recorder.events).toEqual([]);
@@ -184,9 +241,10 @@ describe("runRegister — rate-limited", () => {
 
     // The throttled attempt still writes its own audit row (counted toward future windows).
     expect(db.insertedInto(auditEvents)).toHaveLength(1);
-    // No user created, no token issued, no email sent.
+    // No user created, no token issued, no email sent, no consent receipt.
     expect(db.insertedInto(users)).toHaveLength(0);
     expect(db.insertedInto(verificationTokens)).toHaveLength(0);
+    expect(db.insertedInto(consentReceipts)).toHaveLength(0);
     expect(email.sends).toHaveLength(0);
     // signup_rate_limited fires; signup_completed does NOT.
     expect(recorder.events).toHaveLength(1);
@@ -200,11 +258,105 @@ describe("runRegister — rate-limited", () => {
   });
 });
 
+// Story 1.21 — Round-1 code-review finding [H1]: the consent_receipts +
+// privacy_policy_accepted audit writes were originally placed INSIDE the
+// cleanup-protected inner try, but the FK from consent_receipts.userId ->
+// users.id (NO ACTION) + the consent_receipts append-only trigger meant a
+// consent insert that succeeded followed by an audit-insert that failed
+// would leave the user permanently orphaned (cleanup DELETE blocked by FK)
+// with their email locked. So the writes were moved OUTSIDE the cleanup
+// block: a consent insert failure leaves the user committed; the dashboard
+// gate (requirePrivacyConsent) re-prompts them on first signin and captures
+// the receipt then. Strictly better regulatory outcome.
+describe("runRegister — consent_receipts insert failure is non-fatal (dashboard gate re-prompts)", () => {
+  it("commits the user even when consent_receipts insert throws; skips privacy_policy_accepted analytics; still sends email + fires signup_completed", async () => {
+    const { db, email, recorder, deps } = makeDeps();
+    db.queueSelect<{ id: string }>([]); // rate-limit count
+    db.queueReturning<{ id: string }>([{ id: "user-pp-fail" }]); // user RETURNING
+    // No queueReturning for consent_receipts — `failingTables.add(consentReceipts)`
+    // causes the insert builder itself to reject before .returning() is called.
+    db.failingTables.add(consentReceipts); // force consent_receipts insert to throw
+
+    const result = await runRegister(validForm(), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe(
+      "/signup/verify-email-sent?email=test%40example.com",
+    );
+
+    // User insert + verification token + user_registered audit all committed.
+    expect(db.insertedInto(users)).toHaveLength(1);
+    expect(db.insertedInto(verificationTokens)).toHaveLength(1);
+    // Cleanup DELETE on `users` is NOT triggered — the user is allowed to
+    // proceed; the dashboard gate captures the missing receipt later.
+    const userDeletes = db.deletes.filter((d) => d.table === users);
+    expect(userDeletes).toHaveLength(0);
+
+    // No consent_receipts row reached the fake's `inserts` capture (it threw
+    // before being recorded). auth.privacy_policy_accepted audit also did NOT
+    // run, so audit_events only has the rate-limit attempt + user_registered.
+    expect(db.insertedInto(consentReceipts)).toHaveLength(0);
+    expect(db.insertedInto(auditEvents)).toHaveLength(2);
+    const auditTypes = db
+      .insertedInto(auditEvents)
+      .map((e) => (e.value as { eventType: string }).eventType);
+    expect(auditTypes).not.toContain("auth.privacy_policy_accepted");
+
+    // signup_completed analytics still fires (user is committed); the
+    // privacy_policy_accepted event is gated on the consent insert succeeding.
+    expect(recorder.events).toEqual([
+      { event: "signup_completed", userId: "user-pp-fail", role: "student" },
+    ]);
+
+    // Verification email is sent normally.
+    expect(email.sends).toHaveLength(1);
+  }, 30_000);
+});
+
+// Story 1.21 round-2: consent insert uses ON CONFLICT DO NOTHING on the
+// new unique constraint. On a race-loss (extremely rare for signup since
+// each user is unique-by-email), skip audit + analytics writes but still
+// commit the user — the receipt exists at the target version regardless.
+describe("runRegister — consent_receipts race-loser is non-fatal", () => {
+  it("commits the user without firing privacy_policy_accepted audit/analytics when consent insert returns empty (race-loser)", async () => {
+    const { db, email, recorder, deps } = makeDeps();
+    db.queueSelect<{ id: string }>([]); // rate-limit count
+    db.queueReturning<{ id: string }>([{ id: "user-race-1" }]); // user RETURNING
+    db.queueReturning<{ id: string }>([]); // consent RETURNING empty = race-loser
+
+    const result = await runRegister(validForm(), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe(
+      "/signup/verify-email-sent?email=test%40example.com",
+    );
+
+    // Consent insert was attempted (captured by FakeDb) but didn't return a
+    // row, so audit + analytics are skipped to avoid double-counting.
+    expect(db.insertedInto(consentReceipts)).toHaveLength(1);
+    const auditTypes = db
+      .insertedInto(auditEvents)
+      .map((e) => (e.value as { eventType: string }).eventType);
+    expect(auditTypes).not.toContain("auth.privacy_policy_accepted");
+    expect(auditTypes).toEqual(["auth.signup_attempt", "auth.user_registered"]);
+
+    // signup_completed still fires — the user has a working account; the
+    // receipt (written by the race-winner) covers the regulatory bit.
+    expect(recorder.events).toEqual([
+      { event: "signup_completed", userId: "user-race-1", role: "student" },
+    ]);
+    expect(email.sends).toHaveLength(1);
+  }, 30_000);
+});
+
 describe("runRegister — email-send failure is non-fatal", () => {
   it("still redirects to verify-email-sent when the email provider throws", async () => {
     const { db, email, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]); // rate-limit: 0
     db.queueReturning<{ id: string }>([{ id: "user-2" }]); // user RETURNING (no conflict)
+    db.queueReturning<{ id: string }>([{ id: "consent-2" }]); // consent RETURNING
     email.failNext = new Error("SMTP down");
 
     const result = await runRegister(validForm(), deps);
@@ -214,9 +366,10 @@ describe("runRegister — email-send failure is non-fatal", () => {
     expect(result.redirectTo).toBe(
       "/signup/verify-email-sent?email=test%40example.com",
     );
-    // User row + token + audit rows are still committed
+    // User row + token + audit rows + consent receipt are still committed
     expect(db.insertedInto(users)).toHaveLength(1);
     expect(db.insertedInto(verificationTokens)).toHaveLength(1);
+    expect(db.insertedInto(consentReceipts)).toHaveLength(1);
   }, 30_000);
 });
 
@@ -225,6 +378,7 @@ describe("runRegister — dev-only skip-email-verification", () => {
     const { db, email, recorder, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]); // rate-limit count
     db.queueReturning<{ id: string }>([{ id: "user-dev-1" }]);
+    db.queueReturning<{ id: string }>([{ id: "consent-dev-1" }]); // consent RETURNING
 
     const result = await runRegister(validForm(), {
       ...deps,
@@ -250,9 +404,23 @@ describe("runRegister — dev-only skip-email-verification", () => {
     expect(payload.requiresVerification).toBe(false);
     expect(payload.devEmailVerificationSkipped).toBe(true);
 
-    // signup_completed analytics still fires on this path — the user is fully
-    // registered, just verification-skipped. Loop-gate counts this run.
+    // Story 1.21: consent receipt + privacy_policy_accepted audit STILL fire
+    // on the skip-verification path — the dev flag only bypasses email
+    // verification, not consent capture.
+    expect(db.insertedInto(consentReceipts)).toHaveLength(1);
+    expect(db.insertedInto(auditEvents)).toHaveLength(3);
+    const ppAudit = db.insertedInto(auditEvents)[2]?.value as Record<string, unknown>;
+    expect(ppAudit.eventType).toBe("auth.privacy_policy_accepted");
+
+    // signup_completed analytics still fires; privacy_policy_accepted precedes.
     expect(recorder.events).toEqual([
+      {
+        event: "privacy_policy_accepted",
+        userId: "user-dev-1",
+        role: "student",
+        documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+        source: "signup",
+      },
       { event: "signup_completed", userId: "user-dev-1", role: "student" },
     ]);
   }, 30_000);
@@ -261,6 +429,7 @@ describe("runRegister — dev-only skip-email-verification", () => {
     const { db, email, recorder, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]);
     db.queueReturning<{ id: string }>([{ id: "user-default-1" }]);
+    db.queueReturning<{ id: string }>([{ id: "consent-default-1" }]); // consent RETURNING
 
     const result = await runRegister(validForm(), deps);
 
@@ -272,6 +441,7 @@ describe("runRegister — dev-only skip-email-verification", () => {
     // Email loop intact: token + email send both happen.
     expect(db.insertedInto(verificationTokens)).toHaveLength(1);
     expect(email.sends).toHaveLength(1);
-    expect(recorder.events).toHaveLength(1);
+    // Story 1.21: two analytics events now — privacy_policy_accepted + signup_completed.
+    expect(recorder.events).toHaveLength(2);
   }, 30_000);
 });
