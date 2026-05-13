@@ -36,6 +36,20 @@
       "when": 1778602666174,
       "tag": "0004_flat_lady_ursula",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778623308793,
+      "tag": "0005_consent_receipts_immutable",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778662554088,
+      "tag": "0006_colorful_manta",
+      "breakpoints": true
     }
   ]
 }

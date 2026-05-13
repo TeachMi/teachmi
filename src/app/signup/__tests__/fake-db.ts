@@ -35,6 +35,13 @@ export class FakeDb {
 
   /** When set, the next select / insert / update / delete throws. */
   failNext: Error | null = null;
+  /**
+   * When non-empty, ANY `insert(table)` whose `table` reference is in the set
+   * throws synchronously from `.values(...)`. Useful for testing the
+   * cleanup-on-error path for a specific table (e.g., Story 1.21's
+   * `consent_receipts` insert) without having to manually count prior inserts.
+   */
+  readonly failingTables: Set<unknown> = new Set();
 
   queueSelect<T>(rows: T[]): this {
     this.selectResponses.push(rows as unknown[]);
@@ -62,7 +69,22 @@ export class FakeDb {
               return Promise.reject(err);
             }
             const next = this.selectResponses.shift() ?? [];
-            return Promise.resolve(next);
+            // The result of `.where(...)` is BOTH awaitable (existing callers
+            // skip orderBy/limit) AND chainable to .orderBy().limit() — this
+            // mirrors Drizzle's PgSelectBase which is similarly thenable +
+            // chainable. Story 1.21's privacy-consent gate needs the longer
+            // chain to read the user's most-recent consent receipt.
+            const promise: Promise<unknown[]> = Promise.resolve(next);
+            const orderByChain = {
+              limit: (n: number) => Promise.resolve(next.slice(0, n)),
+            };
+            return Object.assign(promise, {
+              orderBy: (...specs: unknown[]) => {
+                void specs;
+                return orderByChain;
+              },
+              limit: (n: number) => Promise.resolve(next.slice(0, n)),
+            });
           },
         };
       },
@@ -78,6 +100,28 @@ export class FakeDb {
   };
 
   private makeInsertBuilder(table: unknown, value: unknown): InsertBuilder {
+    if (this.failingTables.has(table)) {
+      const err = new Error(
+        `FakeDb.failingTables: rejected insert into table ${String(table)}`,
+      );
+      const rejected = Promise.reject(err);
+      // Swallow the unhandled-rejection telemetry warning that Promise.reject
+      // would otherwise emit before the awaiting caller reaches its catch.
+      rejected.catch(() => undefined);
+      const builder: InsertBuilder = Object.assign(rejected, {
+        returning: (cols: unknown) => {
+          void cols;
+          const r = Promise.reject(err) as Promise<unknown[]>;
+          r.catch(() => undefined);
+          return r;
+        },
+        onConflictDoNothing: (opts?: unknown) => {
+          void opts;
+          return this.makeInsertBuilder(table, value);
+        },
+      });
+      return builder;
+    }
     if (this.failNext) {
       const err = this.failNext;
       this.failNext = null;

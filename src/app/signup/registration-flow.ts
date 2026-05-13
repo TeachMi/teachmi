@@ -4,7 +4,12 @@
 // dependencies and converts the outcome into a redirect / state return.
 
 import { and, eq, gte } from "drizzle-orm";
-import { auditEvents, users, verificationTokens } from "../../lib/db/schema";
+import {
+  auditEvents,
+  consentReceipts,
+  users,
+  verificationTokens,
+} from "../../lib/db/schema";
 import { toAuditEventValues } from "../../lib/db/audit";
 import { PASSWORD_MIN_LENGTH, validatePassword } from "../../lib/auth/registration";
 import { hashPassword } from "../../lib/auth/password-hashing";
@@ -25,6 +30,10 @@ import type { EmailProvider } from "../../lib/providers/email";
 import { EMAIL_TEMPLATES } from "../../lib/email-templates";
 import { isAppRole, type AppRole } from "../../lib/auth/roles";
 import type { AnalyticsEvent } from "../../lib/analytics";
+import {
+  CURRENT_PRIVACY_POLICY_VERSION,
+  truncateUserAgent,
+} from "../../lib/legal/privacy-consent";
 import type { RegisterActionState } from "./register-state";
 
 export type RegisterFlowResult =
@@ -58,6 +67,13 @@ export interface RegisterDeps {
   emailProvider: EmailProvider;
   ip: string;
   origin: string;
+  /**
+   * Raw `User-Agent` header value, captured by the action wrapper from
+   * `headers().get("user-agent")`. May be null in non-browser test contexts.
+   * Stored on the `consent_receipts` row alongside `ipAddress` for audit
+   * traceability under NFR16 / FR59. Truncated to 512 chars at insert.
+   */
+  userAgent: string | null;
   track: (event: AnalyticsEvent) => void;
   logger?: { error: (message: string, err?: unknown) => void };
   /**
@@ -103,6 +119,10 @@ export async function runRegister(
     formData.get("tos") === "on" ||
     formData.get("tos") === "true" ||
     formData.get("tos") === "1";
+  const privacyPolicy =
+    formData.get("privacyPolicy") === "on" ||
+    formData.get("privacyPolicy") === "true" ||
+    formData.get("privacyPolicy") === "1";
 
   const fieldErrors: RegisterActionState["fieldErrors"] = {};
   if (name.length < 2) {
@@ -115,6 +135,9 @@ export async function runRegister(
   if (!pw.ok) {
     fieldErrors.password = fieldErrorMessage(pw);
   }
+  if (!privacyPolicy) {
+    fieldErrors.privacyPolicy = "יש לאשר את מדיניות הפרטיות.";
+  }
   if (!tos) {
     fieldErrors.tos = "יש לאשר את תנאי השימוש.";
   }
@@ -125,7 +148,7 @@ export async function runRegister(
       state: {
         ok: false,
         fieldErrors,
-        values: { name, email: emailRaw, role, tos },
+        values: { name, email: emailRaw, role, tos, privacyPolicy },
       },
     };
   }
@@ -171,7 +194,7 @@ export async function runRegister(
         state: {
           ok: false,
           formError: "יותר מדי ניסיונות. נסו שוב בעוד דקה.",
-          values: { name, email: emailRaw, role, tos },
+          values: { name, email: emailRaw, role, tos, privacyPolicy },
         },
       };
     }
@@ -203,7 +226,7 @@ export async function runRegister(
         state: {
           ok: false,
           formError: "אימייל זה כבר רשום במערכת. נסו להיכנס.",
-          values: { name, email: emailRaw, role, tos },
+          values: { name, email: emailRaw, role, tos, privacyPolicy },
         },
       };
     }
@@ -296,6 +319,96 @@ export async function runRegister(
         userId +
         " stamped email_verified at insert — NEVER reach this branch in prod.",
     );
+  }
+
+  // FR59 consent capture — moved OUTSIDE the cleanup-protected inner try
+  // (Story 1.21 review [H1]). The original spec put these inside the inner
+  // try, but the FK from consent_receipts.userId -> users.id (NO ACTION) +
+  // the immutability trigger on consent_receipts means: if the audit insert
+  // failed AFTER the consent insert succeeded, the cleanup DELETE on users
+  // would itself fail, leaving the user permanently orphaned with their
+  // email locked out of re-signup. Strictly worse regulatory outcome than
+  // "user committed, receipt slightly later via the dashboard gate
+  // re-prompt". So we accept the brief window between signup-commit and
+  // first-signin where the user has no receipt — the gate at /dashboard
+  // (AC3) closes that window the moment the user signs in.
+  let privacyConsentLogged = false;
+  try {
+    const acceptedAt = new Date();
+    const ipAddress = ip === "unknown" ? null : ip;
+    // ON CONFLICT DO NOTHING against the new unique constraint
+    // (userId, documentType, documentVersion) — Story 1.21 round-2 fix.
+    // The constraint enforces "one row per (user, type, version)" from the
+    // schema comment; under concurrent signup retries (extremely rare —
+    // signup uses ON CONFLICT on email earlier in the flow so this would
+    // require a parallel sub-millisecond retry) the loser silently no-ops
+    // instead of erroring out.
+    const consentInsert = (await db
+      .insert(consentReceipts)
+      .values({
+        userId,
+        documentType: "privacy_policy",
+        documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+        acceptedAt,
+        ipAddress,
+        userAgent: truncateUserAgent(deps.userAgent),
+        signature: null,
+        documentSnapshot: null,
+        createdByKind: "user",
+        createdByActor: userId,
+      })
+      .onConflictDoNothing({
+        target: [
+          consentReceipts.userId,
+          consentReceipts.documentType,
+          consentReceipts.documentVersion,
+        ],
+      })
+      .returning({ id: consentReceipts.id })) as { id: string }[];
+
+    // If a concurrent process wrote the same (user, type, version) row
+    // first, our insert returns empty. The receipt still exists at the
+    // target version, so the regulatory invariant holds — but skip the
+    // audit + analytics writes for this attempt so we don't double-count.
+    if (consentInsert.length === 0) {
+      privacyConsentLogged = false;
+    } else {
+      await db.insert(auditEvents).values(
+        toAuditEventValues({
+          eventType: "auth.privacy_policy_accepted",
+          actorKind: "user",
+          actorId: userId,
+          actorMeta: ipAddress, // Story 1.21 review [M2]: align shape with accept-flow.
+          targetType: "user",
+          targetId: userId,
+          payload: {
+            documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+            source: "signup",
+          },
+        }),
+      );
+
+      privacyConsentLogged = true;
+    }
+  } catch (consentErr) {
+    log.error(
+      `[runRegister] privacy-policy consent capture failed for userId=${userId}; dashboard gate will re-prompt on first signin`,
+      consentErr,
+    );
+    // Intentionally do NOT throw. User is fully registered; the gate at
+    // /dashboard (requirePrivacyConsent) catches the missing receipt and
+    // redirects to /legal/privacy/accept on the user's next authenticated
+    // request, closing the FR59 loop.
+  }
+
+  if (privacyConsentLogged) {
+    track({
+      event: "privacy_policy_accepted",
+      userId,
+      role,
+      documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+      source: "signup",
+    });
   }
 
   track({ event: "signup_completed", userId, role });

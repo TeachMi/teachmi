@@ -4,13 +4,25 @@
 
 import type { AppRole } from "@/lib/auth/roles";
 
-export type SignupFieldKey = "name" | "email" | "password" | "role" | "tos";
+export type SignupFieldKey =
+  | "name"
+  | "email"
+  | "password"
+  | "role"
+  | "tos"
+  | "privacyPolicy";
 
 export interface RegisterActionState {
   ok: boolean;
   fieldErrors?: Partial<Record<SignupFieldKey, string>>;
   formError?: string;
-  values?: { name?: string; email?: string; role?: AppRole; tos?: boolean };
+  values?: {
+    name?: string;
+    email?: string;
+    role?: AppRole;
+    tos?: boolean;
+    privacyPolicy?: boolean;
+  };
 }
 
 export const REGISTER_INITIAL_STATE: RegisterActionState = { ok: false };

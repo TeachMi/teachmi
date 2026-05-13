@@ -173,7 +173,7 @@ export const auditEvents = pgTable(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     eventType: text("event_type").notNull(),                                    // e.g., 'booking.created', 'tutor.approved'
     actorKind: text("actor_kind").notNull(),                                    // 'user'|'admin'|'system'|'webhook'|'inngest'
-    actorId: uuid("actor_id").references(() => users.id),                       // NULL when actor is system/webhook
+    actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }), // NULL when actor is system/webhook; SET NULL on user delete so cleanup-on-error in auth flows isn't blocked by FK while audit trail still records "actor since deleted" (Story 1.21 round-1 fix)
     actorMeta: text("actor_meta"),                                              // optional descriptor (webhook source, fn name)
     targetType: text("target_type").notNull(),                                  // 'booking', 'tutor_profile', etc.
     targetId: uuid("target_id"),
@@ -754,6 +754,15 @@ export const consentReceipts = pgTable(
   (t) => ({
     userTypeIdx: index("idx_consent_receipts_user_type").on(t.userId, t.documentType, t.acceptedAt.desc()),
     typeIdx: index("idx_consent_receipts_type").on(t.documentType, t.acceptedAt.desc()),
+    // One row per (user, document_type, document_version) acceptance event,
+    // matching the schema comment above. Race-tolerant: concurrent submits to
+    // `runAcceptPrivacyPolicy` lose at INSERT via ON CONFLICT DO NOTHING
+    // instead of duplicating the receipt. (Story 1.21 round-1 fix.)
+    userTypeVersionUnique: unique("uq_consent_receipts_user_type_version").on(
+      t.userId,
+      t.documentType,
+      t.documentVersion,
+    ),
   }),
 );
 
