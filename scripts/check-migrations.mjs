@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /* Story 1.23 CI guard: if src/lib/db/schema.ts is modified in a PR, a new
  * matching drizzle/<num>_<slug>.sql file MUST be added in the same diff.
  *
