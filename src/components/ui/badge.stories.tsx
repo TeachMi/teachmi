@@ -176,3 +176,31 @@ export const InsideCard: Story = {
     </Card>
   ),
 };
+
+export const TutorSubjectChip: Story = {
+  name: "Composition — tutor subject chip",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/tutor.html` (lines 65–71) — the subject chip row that appears in the hero and the standalone subjects section of the public tutor profile page (Story 3.2, FR18). The chip uses the `subject` variant; proficiency notes are appended inline (e.g., 'מתמטיקה — 5 יחידות').",
+      },
+    },
+  },
+  render: () => (
+    <div className="flex flex-row-reverse flex-wrap gap-2 max-w-2xl">
+      <Badge variant="subject" size="md" className="rounded-full">
+        מתמטיקה — 5 יחידות
+      </Badge>
+      <Badge variant="subject" size="md" className="rounded-full">
+        פסיכומטרי
+      </Badge>
+      <Badge variant="subject" size="md" className="rounded-full">
+        אנגלית
+      </Badge>
+      <Badge variant="subject" size="md" className="rounded-full">
+        פיזיקה — 5 יחידות
+      </Badge>
+    </div>
+  ),
+};

@@ -235,3 +235,98 @@ export const English: Story = {
     </Card>
   ),
 };
+
+export const TutorProfileHero: Story = {
+  name: "Composition — tutor profile hero",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/tutor.html` (lines 59–135) — the two-column hero with profile photo, displayName, verified badge, headline subject, rating summary, lessons-completed pill, and the 45/60-min two-price card. Used on `/tutor/[slug]` (Story 3.2, FR18).",
+      },
+    },
+  },
+  render: () => (
+    <Card className="max-w-5xl" padding="lg">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
+        <div className="lg:col-span-3 text-start">
+          <div className="flex flex-row-reverse items-start gap-5 mb-5">
+            <div className="w-20 h-20 rounded-full bg-primary-fixed/30 flex items-center justify-center text-2xl font-extrabold text-primary-container border-4 border-white shadow-md">
+              מ
+            </div>
+            <div className="flex-1">
+              <div className="flex flex-row-reverse items-center gap-2 mb-1">
+                <h1 className="font-display font-extrabold text-3xl text-primary-container">
+                  ד״ר מיכל לוי
+                </h1>
+                <span className="bg-primary-fixed text-primary-container text-xs px-2 py-0.5 rounded-full font-bold">
+                  ✓ מורה מאומתת
+                </span>
+              </div>
+              <p className="text-on-surface-variant mb-3">
+                מומחית למתמטיקה — 5 יחידות
+              </p>
+              <div className="flex flex-row-reverse items-center gap-4 text-sm">
+                <span className="font-bold">★ 4.9</span>
+                <span className="text-secondary">(124 ביקורות)</span>
+                <span className="text-secondary">·</span>
+                <span className="text-secondary">1,240 שיעורים</span>
+              </div>
+            </div>
+          </div>
+          <div className="bg-linen border border-linen-border rounded-xl p-4 flex flex-row-reverse gap-6">
+            <div className="text-start">
+              <div className="text-xs text-secondary mb-1">שיעור 45 דק׳</div>
+              <div className="font-display font-bold text-2xl text-primary-container">
+                ₪140
+              </div>
+            </div>
+            <div className="w-px bg-linen-border" />
+            <div className="text-start">
+              <div className="text-xs text-secondary mb-1">שיעור 60 דק׳</div>
+              <div className="font-display font-bold text-2xl text-primary-container">
+                ₪180
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="lg:col-span-2">
+          <div className="aspect-video rounded-2xl bg-on-surface/10 flex items-center justify-center">
+            <span className="text-sm text-secondary">סרטון היכרות</span>
+          </div>
+        </div>
+      </div>
+    </Card>
+  ),
+};
+
+export const TutorPriceBlock: Story = {
+  name: "Composition — tutor price block (45/60)",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/tutor.html` (lines 94–109) — the two-price tile (45 דק׳ / 60 דק׳) used on the public tutor profile page (Story 3.2, FR18). The mock includes a third 'package of 10' tile which is explicitly omitted — packages are Phase-2+ per locked product constraints.",
+      },
+    },
+  },
+  render: () => (
+    <Card padding="md" className="max-w-md">
+      <div className="bg-linen border border-linen-border rounded-xl p-4 flex flex-row-reverse gap-6">
+        <div className="text-start">
+          <div className="text-xs text-secondary mb-1">שיעור 45 דק׳</div>
+          <div className="font-display font-bold text-2xl text-primary-container">
+            ₪140
+          </div>
+        </div>
+        <div className="w-px bg-linen-border" />
+        <div className="text-start">
+          <div className="text-xs text-secondary mb-1">שיעור 60 דק׳</div>
+          <div className="font-display font-bold text-2xl text-primary-container">
+            ₪180
+          </div>
+        </div>
+      </div>
+    </Card>
+  ),
+};

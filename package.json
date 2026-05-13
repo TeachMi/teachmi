@@ -21,6 +21,7 @@
     "db:push": "drizzle-kit push",
     "db:seed": "tsx scripts/seed.ts",
     "seed:dogfood": "tsx scripts/seed-dogfood.ts",
+    "og:generate": "node scripts/generate-og-default.mjs",
     "check:stories": "node scripts/check-stories.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
     "ci": "pnpm typecheck && pnpm lint && pnpm check:stories && pnpm check:migrations && pnpm test && pnpm build",
