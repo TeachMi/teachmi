@@ -1,6 +1,6 @@
 {
-  "id": "36baefdf-c5a7-4fe1-b64f-08cbe2303ae5",
-  "prevId": "e4d5523a-2db7-49c3-aca1-cc27a4f6d261",
+  "id": "debd9748-b844-4ce4-8eed-5729775eabdf",
+  "prevId": "47f9f619-8153-4506-b9dd-279b1a7d6c35",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -273,7 +273,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -697,17 +697,7 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "uq_consent_receipts_user_type_version": {
-          "name": "uq_consent_receipts_user_type_version",
-          "nullsNotDistinct": false,
-          "columns": [
-            "user_id",
-            "document_type",
-            "document_version"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1913,45 +1903,6 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.password_reset_tokens": {
-      "name": "password_reset_tokens",
-      "schema": "",
-      "columns": {
-        "identifier": {
-          "name": "identifier",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "token": {
-          "name": "token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "expires": {
-          "name": "expires",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "password_reset_tokens_identifier_token_pk": {
-          "name": "password_reset_tokens_identifier_token_pk",
-          "columns": [
-            "identifier",
-            "token"
-          ]
-        }
-      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -3555,6 +3506,12 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
+        },
+        "lesson_45_price_ils": {
+          "name": "lesson_45_price_ils",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         },
         "lesson_length_minutes": {
           "name": "lesson_length_minutes",
