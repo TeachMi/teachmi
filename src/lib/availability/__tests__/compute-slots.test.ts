@@ -47,6 +47,10 @@ function baseInput(overrides: Partial<SlotStateInput> = {}): SlotStateInput {
     from: TEST_FROM,
     daysAhead: 1,
     durationMinutes: 60,
+    // Unix epoch so every slot in the test 2026 window counts as "future"
+    // unless a test explicitly overrides `now`. Avoids wall-clock drift
+    // between test runs.
+    now: new Date(0),
     ...overrides,
   };
 }
@@ -191,18 +195,35 @@ describe("computeSlotStates — exception_available without recurring", () => {
 });
 
 describe("computeSlotStates — active bookings overlay", () => {
-  it("active booking at a slot → booked (overrides available)", () => {
+  it("60-min booking at 14:00 blocks BOTH 14:00 AND 14:30 half-hour cells", () => {
+    // AC8: 'a booking with duration_minutes=60 starting at 14:00 blocks
+    // slots 14:00 AND 14:30 (covers two half-hour cells)'.
     const result = computeSlotStates(
       baseInput({
         availability: [buildAvailability()],
-        bookings: [buildBooking()],
+        bookings: [buildBooking()], // 60-min default
       }),
     );
     const slots = result.get("2026-05-14")!;
     expect(slots.find((s) => s.localTime === "14:00")?.status).toBe("booked");
-    // 14:30 is still available — only the 14:00 slot is matched (booked-starts
-    // is a Set of UTC ISOs; we don't expand by duration in this minimal version).
-    expect(slots.find((s) => s.localTime === "14:30")?.status).toBe("available");
+    expect(slots.find((s) => s.localTime === "14:30")?.status).toBe("booked");
+    // 15:00 is past the 60-min window (14:00+60 = 15:00 exclusive) → available.
+    expect(slots.find((s) => s.localTime === "15:00")?.status).toBe("available");
+  });
+
+  it("45-min booking at 14:00 blocks both 14:00 AND 14:30 (overlap crosses the 14:30 boundary)", () => {
+    // AC8: '45-min booking starting at 14:00 blocks 14:00 AND 14:30 (45min
+    // crosses two half-hour cells too — 14:00-14:45)'.
+    const result = computeSlotStates(
+      baseInput({
+        availability: [buildAvailability()],
+        bookings: [buildBooking({ durationMinutes: 45 })],
+      }),
+    );
+    const slots = result.get("2026-05-14")!;
+    expect(slots.find((s) => s.localTime === "14:00")?.status).toBe("booked");
+    expect(slots.find((s) => s.localTime === "14:30")?.status).toBe("booked");
+    expect(slots.find((s) => s.localTime === "15:00")?.status).toBe("available");
   });
 
   it("pending_payment AND confirmed bookings both block", () => {
@@ -281,6 +302,62 @@ describe("computeSlotStates — empty inputs", () => {
     expect(result.size).toBe(7);
     expect(result.has("2026-05-14")).toBe(true);
     expect(result.has("2026-05-20")).toBe(true);
+  });
+
+  it("cancelled bookings are never seen by compute-slots (query layer filters them) → slot remains available", () => {
+    // compute-slots only ever receives `ActiveBookingRow[]` which is
+    // type-narrowed to status='pending_payment'|'confirmed' by
+    // getActiveBookingsForTutor. This test documents that contract by
+    // passing an empty bookings array (the state after a cancellation
+    // filters it out at the query layer) — the slot must remain available.
+    const result = computeSlotStates(
+      baseInput({
+        availability: [buildAvailability()],
+        bookings: [], // cancelled bookings filtered at query layer
+      }),
+    );
+    const slots = result.get("2026-05-14")!;
+    expect(slots.find((s) => s.localTime === "14:00")?.status).toBe("available");
+  });
+});
+
+describe("computeSlotStates — past-slot guard", () => {
+  it("slots whose start instant is before `now` are unavailable, even when covered by a recurring rule", () => {
+    // `now` set to 15:30 IL on 2026-05-14 → 14:00, 14:30, 15:00 are past,
+    // 15:30 onwards are future.
+    const now = jerusalemWallTimeToUtc(2026, 5, 14, 15, 30);
+    const result = computeSlotStates(
+      baseInput({
+        availability: [buildAvailability()],
+        now,
+      }),
+    );
+    const slots = result.get("2026-05-14")!;
+    expect(slots.find((s) => s.localTime === "14:00")?.status).toBe("unavailable");
+    expect(slots.find((s) => s.localTime === "14:30")?.status).toBe("unavailable");
+    expect(slots.find((s) => s.localTime === "15:00")?.status).toBe("unavailable");
+    expect(slots.find((s) => s.localTime === "15:30")?.status).toBe("available");
+  });
+
+  it("past-slot guard wins over booked status (don't render past-but-booked as clickable)", () => {
+    const now = jerusalemWallTimeToUtc(2026, 5, 14, 16, 0);
+    const result = computeSlotStates(
+      baseInput({
+        availability: [buildAvailability()],
+        bookings: [buildBooking()], // 14:00 60-min
+        now,
+      }),
+    );
+    const slots = result.get("2026-05-14")!;
+    expect(slots.find((s) => s.localTime === "14:00")?.status).toBe("unavailable");
+  });
+
+  it("with default `now = new Date(0)` (epoch), test slots in 2026 are treated as future", () => {
+    const result = computeSlotStates(
+      baseInput({ availability: [buildAvailability()] }),
+    );
+    const slots = result.get("2026-05-14")!;
+    expect(slots.find((s) => s.localTime === "14:00")?.status).toBe("available");
   });
 });
 

@@ -36,8 +36,21 @@ export interface FakeAvailability extends TutorAvailabilityRow {
   tutorUserId: string;
 }
 
-export interface FakeBooking extends ActiveBookingRow {
+// Fake bookings carry the FULL `bookings.status` enum (not just the active
+// subset) so tests can exercise the query helper's filter — production code
+// excludes cancelled/completed/no_show rows in SQL; we mirror that by JS
+// filter inside `bookingsChain` below.
+export interface FakeBooking {
   tutorUserId: string;
+  id: string;
+  startsAt: Date;
+  durationMinutes: number;
+  status:
+    | "pending_payment"
+    | "confirmed"
+    | "cancelled"
+    | "completed"
+    | "no_show";
 }
 
 export interface FakeRating {
@@ -171,7 +184,8 @@ export class FakeFullProfileDb implements DbForExtendedTutorQueries {
             .filter((b) => b.tutorUserId === tutorId)
             .filter((b) => b.startsAt >= from && b.startsAt <= to)
             .filter(
-              (b) => b.status === "pending_payment" || b.status === "confirmed",
+              (b): b is FakeBooking & { status: "pending_payment" | "confirmed" } =>
+                b.status === "pending_payment" || b.status === "confirmed",
             )
             .map(({ tutorUserId: _tu, ...rest }): ActiveBookingRow => rest);
         }),

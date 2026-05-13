@@ -379,7 +379,7 @@ describe("/tutor/[slug] page — generateMetadata (Story 3.2 extensions)", () =>
     expect(og?.images).toBeDefined();
   });
 
-  it("uses the og-default-tutor.svg fallback when tutor has no photo", async () => {
+  it("uses the og-default-tutor.png fallback when tutor has no photo", async () => {
     mockGetDiscoverable.mockResolvedValue({
       ...FULL_TUTOR,
       profilePhotoR2Key: null,
@@ -391,7 +391,34 @@ describe("/tutor/[slug] page — generateMetadata (Story 3.2 extensions)", () =>
     });
 
     const images = meta.openGraph?.images as Array<{ url: string }> | undefined;
-    expect(images?.[0]?.url).toBe("/og-default-tutor.svg");
+    expect(images?.[0]?.url).toBe("/og-default-tutor.png");
+  });
+
+  it("uses the /api/og/tutor/[id]/photo proxy URL when tutor HAS a photo (no signed-URL leak in OG meta)", async () => {
+    mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
+
+    const meta = await generateMetadata({
+      params: Promise.resolve({ slug: TUTOR_UUID }),
+      searchParams: Promise.resolve({}),
+    });
+
+    const images = meta.openGraph?.images as Array<{ url: string }> | undefined;
+    expect(images?.[0]?.url).toBe(`/api/og/tutor/${TUTOR_UUID}/photo`);
+    // Specifically MUST NOT contain a signed presigned URL.
+    expect(images?.[0]?.url).not.toContain("stub.r2.local");
+    expect(images?.[0]?.url).not.toContain("sig=");
+  });
+
+  it("emits noindex by default — only indexes in production with ALLOW_PUBLIC_INDEX=true", async () => {
+    mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
+
+    const meta = await generateMetadata({
+      params: Promise.resolve({ slug: TUTOR_UUID }),
+      searchParams: Promise.resolve({}),
+    });
+
+    // Test env has NODE_ENV !== "production" → indexing is disabled.
+    expect(meta.robots).toEqual({ index: false, follow: false });
   });
 
   it("returns a generic title when tutor is not discoverable (no name leak)", async () => {

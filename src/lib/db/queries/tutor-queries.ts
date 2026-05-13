@@ -10,7 +10,7 @@
 // `is_active` exists to handle correctly: an invisible-but-approved tutor is
 // the safe failure mode, not visible-with-unvetted-content.
 
-import { and, asc, between, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, sql, type SQL } from "drizzle-orm";
 import {
   bookings,
   ratings,
@@ -20,6 +20,29 @@ import {
   tutorSubjects,
 } from "../schema";
 import { getDb } from "../client";
+
+// `Asia/Jerusalem` date-string for a UTC instant. Used by the availability
+// helper to derive the IL calendar day that `dateRange.from`/`to` represents
+// — `from.toISOString().slice(0, 10)` would produce a UTC date string and
+// shift the validity-window comparison by 1 day for IL-midnight inputs.
+const DATE_FORMATTER_HE = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Jerusalem",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+function jerusalemDateString(instant: Date): string {
+  // en-CA formats as YYYY-MM-DD natively.
+  return DATE_FORMATTER_HE.format(instant);
+}
+
+// Maximum booking duration in milliseconds. Used to expand the lower bound
+// of `getActiveBookingsForTutor`'s range so that a booking starting BEFORE
+// `from` but extending INTO the window is still returned. Today's lesson
+// lengths are 45 or 60 minutes (per Story 2.1's profile fields); 120 minutes
+// is a safe ceiling that covers any near-term extension without inflating
+// the query result set.
+const MAX_BOOKING_DURATION_MS = 120 * 60 * 1000;
 
 // --- Public surface --------------------------------------------------------
 
@@ -229,9 +252,18 @@ export interface TutorAvailabilityRow {
 /**
  * Returns raw `tutor_availability` rows in a date range. Both `recurring`
  * (weekly pattern) and `exception_*` (date-specific) rows are returned;
- * filtering by row kind happens in the slot-state computer. Validity-window
- * filter: includes rows where `(valid_from IS NULL OR valid_from <= to)`
- * AND `(valid_until IS NULL OR valid_until >= from)`.
+ * filtering by row kind happens in the slot-state computer.
+ *
+ * Two filters:
+ *   1. Validity window — `(valid_from IS NULL OR valid_from <= to)` AND
+ *      `(valid_until IS NULL OR valid_until >= from)`. Comparisons use the
+ *      Asia/Jerusalem date of `dateRange.from`/`to`, NOT the UTC date —
+ *      callers typically pass IL-midnight-as-UTC instants and the raw ISO
+ *      date string would shift the comparison by 1 day.
+ *   2. Date column filter — `exception_*` rows have a non-null `date`
+ *      column; recurring rows have `date = NULL`. Without this filter every
+ *      past `exception_*` row ever created would be returned for every page
+ *      render, scaling poorly as tutors accumulate exceptions.
  */
 export async function getTutorAvailabilityRows(
   userId: string,
@@ -239,8 +271,8 @@ export async function getTutorAvailabilityRows(
   deps: ExtendedTutorQueryDeps = {},
 ): Promise<TutorAvailabilityRow[]> {
   const db = deps.db ?? (getDb() as unknown as DbForExtendedTutorQueries);
-  const fromIso = dateRange.from.toISOString().slice(0, 10);
-  const toIso = dateRange.to.toISOString().slice(0, 10);
+  const fromDateIl = jerusalemDateString(dateRange.from);
+  const toDateIl = jerusalemDateString(dateRange.to);
   const rows = (await db
     .select({
       id: tutorAvailability.id,
@@ -256,8 +288,11 @@ export async function getTutorAvailabilityRows(
     .where(
       and(
         eq(tutorAvailability.tutorUserId, userId),
-        sql`(${tutorAvailability.validFrom} IS NULL OR ${tutorAvailability.validFrom} <= ${toIso})`,
-        sql`(${tutorAvailability.validUntil} IS NULL OR ${tutorAvailability.validUntil} >= ${fromIso})`,
+        sql`(${tutorAvailability.validFrom} IS NULL OR ${tutorAvailability.validFrom} <= ${toDateIl})`,
+        sql`(${tutorAvailability.validUntil} IS NULL OR ${tutorAvailability.validUntil} >= ${fromDateIl})`,
+        // `exception_*` rows must fall within the visible date range;
+        // recurring rows have date=NULL and pass through.
+        sql`(${tutorAvailability.date} IS NULL OR ${tutorAvailability.date} BETWEEN ${fromDateIl} AND ${toDateIl})`,
       ),
     )) as TutorAvailabilityRow[];
 
@@ -276,6 +311,17 @@ export interface ActiveBookingRow {
  * a date range. Cancelled / completed / no-show bookings are excluded — they
  * don't block re-booking of the slot. Used to overlay the calendar with
  * booked markers.
+ *
+ * Range semantics:
+ *   - Upper bound is EXCLUSIVE (`startsAt < to`). `to` is intended as the
+ *     start of the day AFTER the visible window; a booking starting exactly
+ *     at `to` is in the NEXT period and would never be rendered, so we
+ *     exclude it to avoid an off-by-one in downstream slot rendering.
+ *   - Lower bound is expanded by `MAX_BOOKING_DURATION_MS` so a booking
+ *     whose `startsAt` is BEFORE `from` but whose duration extends INTO
+ *     the window is still returned. Without this, a 60-min booking
+ *     starting at 13:30 (before a window starting at 14:00) would not be
+ *     overlaid on the 14:00 slot — the slot would render as available.
  */
 export async function getActiveBookingsForTutor(
   userId: string,
@@ -283,6 +329,7 @@ export async function getActiveBookingsForTutor(
   deps: ExtendedTutorQueryDeps = {},
 ): Promise<ActiveBookingRow[]> {
   const db = deps.db ?? (getDb() as unknown as DbForExtendedTutorQueries);
+  const fromExpanded = new Date(dateRange.from.getTime() - MAX_BOOKING_DURATION_MS);
   const rows = (await db
     .select({
       id: bookings.id,
@@ -294,7 +341,8 @@ export async function getActiveBookingsForTutor(
     .where(
       and(
         eq(bookings.tutorUserId, userId),
-        between(bookings.startsAt, dateRange.from, dateRange.to),
+        gte(bookings.startsAt, fromExpanded),
+        lt(bookings.startsAt, dateRange.to),
         inArray(bookings.status, ["pending_payment", "confirmed"]),
       ),
     )) as ActiveBookingRow[];
@@ -342,8 +390,15 @@ export async function getTutorRatingHistogram(
   let total = 0;
   let weightedSum = 0;
   for (const row of rows) {
+    // Defense-in-depth: the DB CHECK constraint `ck_ratings_score BETWEEN 1
+    // AND 5` should make out-of-range scores impossible. If a corrupt row
+    // ever slips through (manual DB edit, future migration relaxation), we
+    // skip it entirely so `total` and `weightedSum` aren't polluted with
+    // values that won't appear in the histogram — guarantees the displayed
+    // average matches the sum of the rendered bars.
+    if (row.score < 1 || row.score > 5) continue;
     const key = `score${row.score}` as keyof typeof buckets;
-    if (key in buckets) buckets[key] = row.count;
+    buckets[key] = row.count;
     total += row.count;
     weightedSum += row.score * row.count;
   }

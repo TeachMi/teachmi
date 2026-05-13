@@ -8,8 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import type { DiscoverableTutorPublic } from "@/lib/db/queries/tutor-queries";
 import type { TutorSubjectPublic } from "@/lib/db/queries/tutor-queries";
 import type { RatingHistogram } from "@/lib/db/queries/tutor-queries";
-import { formatIlsCurrency } from "@/lib/hebrew/format";
 import { IntroVideoPlayer } from "./IntroVideoPlayer";
+import { PriceBlock } from "./PriceBlock";
 
 interface HeroProps {
   tutor: DiscoverableTutorPublic;
@@ -106,26 +106,14 @@ export function Hero({
           </div>
         </div>
 
-        {/* Two-price summary (mirrors PriceBlock standalone — keeps hero
-            visually rich without nesting another card primitive) */}
-        <div className="bg-linen border border-linen-border rounded-xl p-4 flex flex-row-reverse gap-6 mb-5">
-          {tutor.lesson45PriceIls !== null && (
-            <>
-              <div className="text-start">
-                <div className="text-xs text-secondary mb-1">שיעור 45 דק׳</div>
-                <div className="font-display font-bold text-2xl text-primary-container">
-                  {formatIlsCurrency(tutor.lesson45PriceIls)}
-                </div>
-              </div>
-              <div className="w-px bg-linen-border" aria-hidden="true" />
-            </>
-          )}
-          <div className="text-start">
-            <div className="text-xs text-secondary mb-1">שיעור 60 דק׳</div>
-            <div className="font-display font-bold text-2xl text-primary-container">
-              {formatIlsCurrency(tutor.hourlyPriceIls)}
-            </div>
-          </div>
+        {/* Two-price summary — delegated to the standalone PriceBlock
+            component so the same JSX powers the hero, future browse cards,
+            and Storybook's "Composition — tutor price block" story. */}
+        <div className="mb-5">
+          <PriceBlock
+            hourlyPriceIls={tutor.hourlyPriceIls}
+            lesson45PriceIls={tutor.lesson45PriceIls}
+          />
         </div>
       </div>
 

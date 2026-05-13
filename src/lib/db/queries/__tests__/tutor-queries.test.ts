@@ -246,7 +246,7 @@ describe("getTutorAvailabilityRows (Story 3.2)", () => {
 });
 
 describe("getActiveBookingsForTutor (Story 3.2)", () => {
-  it("returns only active bookings (pending_payment + confirmed)", async () => {
+  it("returns only active bookings (pending_payment + confirmed), excludes cancelled/completed/no_show", async () => {
     const db = new FakeFullProfileDb();
     db.bookings.push(
       {
@@ -263,24 +263,38 @@ describe("getActiveBookingsForTutor (Story 3.2)", () => {
         durationMinutes: 60,
         status: "pending_payment",
       },
-      // Cancelled — should be excluded.
       {
         tutorUserId: TUTOR_ID,
-        id: "b-3",
+        id: "b-3-cancelled",
         startsAt: new Date("2026-05-17T11:00:00.000Z"),
         durationMinutes: 60,
-        status: "confirmed" as const,
+        status: "cancelled",
+      },
+      {
+        tutorUserId: TUTOR_ID,
+        id: "b-4-completed",
+        startsAt: new Date("2026-05-18T11:00:00.000Z"),
+        durationMinutes: 60,
+        status: "completed",
+      },
+      {
+        tutorUserId: TUTOR_ID,
+        id: "b-5-no-show",
+        startsAt: new Date("2026-05-19T11:00:00.000Z"),
+        durationMinutes: 60,
+        status: "no_show",
       },
     );
-    // Override b-3 status post-push for clarity (TS narrowed earlier).
-    db.bookings[2]!.status = "confirmed";
     db.withTutorId(TUTOR_ID).withRange(RANGE_FROM, RANGE_TO);
     const result = await getActiveBookingsForTutor(
       TUTOR_ID,
       { from: RANGE_FROM, to: RANGE_TO },
       { db },
     );
-    expect(result.length).toBeGreaterThanOrEqual(2);
+    // Exactly the 2 active bookings, no more.
+    expect(result).toHaveLength(2);
+    const ids = result.map((b) => b.id).sort();
+    expect(ids).toEqual(["b-1", "b-2"]);
   });
 
   it("does not return bookings outside the date range", async () => {

@@ -74,32 +74,29 @@ const resolveTutorSubjects = cache(
   },
 );
 
-const resolveAvailability = cache(
+// Calendar data must be fetched atomically — if EITHER availability or
+// bookings fails independently, the calendar would render real bookings
+// as clickable (advertising taken slots) or block all slots erroneously.
+// Returning `null` here signals "treat as empty-state" so the calendar
+// renders the "no availability yet" card instead of partial data.
+const resolveCalendarData = cache(
   async (
     userId: string,
     from: Date,
     to: Date,
-  ): Promise<TutorAvailabilityRow[]> => {
+  ): Promise<{
+    availability: TutorAvailabilityRow[];
+    bookings: ActiveBookingRow[];
+  } | null> => {
     try {
-      return await getTutorAvailabilityRows(userId, { from, to });
+      const [availability, bookings] = await Promise.all([
+        getTutorAvailabilityRows(userId, { from, to }),
+        getActiveBookingsForTutor(userId, { from, to }),
+      ]);
+      return { availability, bookings };
     } catch (err) {
-      console.error("[tutor/[slug]/page] availability lookup failed", err);
-      return [];
-    }
-  },
-);
-
-const resolveBookings = cache(
-  async (
-    userId: string,
-    from: Date,
-    to: Date,
-  ): Promise<ActiveBookingRow[]> => {
-    try {
-      return await getActiveBookingsForTutor(userId, { from, to });
-    } catch (err) {
-      console.error("[tutor/[slug]/page] bookings lookup failed", err);
-      return [];
+      console.error("[tutor/[slug]/page] calendar lookup failed", err);
+      return null;
     }
   },
 );
@@ -142,6 +139,41 @@ function truncateForDescription(text: string, maxLen = 160): string {
   return `${trimmed.slice(0, maxLen - 1).trimEnd()}…`;
 }
 
+// Strip Unicode bidirectional override characters (LRE/RLE/PDF/LRO/RLO and
+// isolates LRI/RLI/FSI/PDI) from tutor-controlled text. React escapes HTML
+// but does NOT strip these control codes — without this guard, a malicious
+// or accidental code in a tutor's bio could visually flip surrounding UI
+// in this RTL/Hebrew marketplace.
+const BIDI_OVERRIDE_RE = /[‪-‮⁦-⁩]/g;
+function stripBidiOverrides(text: string): string {
+  return text.replace(BIDI_OVERRIDE_RE, "");
+}
+
+// `auth()` is not in a try/catch elsewhere because Story 2.3's gate page
+// never called it. With Story 3.2's signed-in calendar-link branch, an
+// uncaught NextAuth decode failure (rotated AUTH_SECRET, malformed
+// cookie) would 500 the public profile page. Public routes must degrade
+// to "anon visitor" rather than crash.
+async function safeAuth(): Promise<{ user?: { id?: string } | null } | null> {
+  try {
+    return (await auth()) as { user?: { id?: string } | null } | null;
+  } catch (err) {
+    console.error("[tutor/[slug]/page] auth() lookup failed; degrading to anon", err);
+    return null;
+  }
+}
+
+// Closed-beta indexing guard. The page is publicly viewable to anyone
+// (FR18) but we only want search engines to index when (a) running in
+// production AND (b) the founder has explicitly opted in via env var.
+// Until then, preview/dev/closed-beta deployments are noindex.
+function buildRobotsDirective(): { index: boolean; follow: boolean } {
+  const allowed =
+    process.env.NODE_ENV === "production" &&
+    process.env.ALLOW_PUBLIC_INDEX === "true";
+  return { index: allowed, follow: allowed };
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
   const tutor = await resolveDiscoverableTutor(slug);
@@ -150,16 +182,21 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 
   const description = tutor.bio
-    ? truncateForDescription(tutor.bio)
+    ? stripBidiOverrides(truncateForDescription(tutor.bio))
     : `${tutor.displayName} — מורה ב-TeachMe`;
-  const photoUrl =
-    (await presignFromR2("tutor-profile-photos", tutor.profilePhotoR2Key)) ??
-    "/og-default-tutor.svg";
+  // OG image is served via a stable proxy route that re-signs the R2 URL
+  // per request. Social-media scrapers (Slack/FB/Twitter) cache the
+  // STABLE proxy URL; the signed R2 URL never escapes server-side. When
+  // the tutor has no profile photo, we serve the PNG placeholder
+  // directly. Story 3.2 review decision D2.
+  const photoUrl = tutor.profilePhotoR2Key
+    ? `/api/og/tutor/${tutor.userId}/photo`
+    : "/og-default-tutor.png";
 
   return {
     title: `${tutor.displayName} · TeachMe`,
     description,
-    robots: { index: true, follow: true },
+    robots: buildRobotsDirective(),
     openGraph: {
       title: `${tutor.displayName} · TeachMe`,
       description,
@@ -206,20 +243,22 @@ export default async function PublicTutorProfilePage({
   );
 
   // Fetch everything in parallel (each is cache()-wrapped + dep-injected).
-  const [session, subjects, availability, bookings, rating, introVideoUrl, profilePhotoUrl] =
+  // `safeAuth` and `resolveCalendarData` swallow errors and return null
+  // sentinels — public profile must not 500 on auth/DB blips. If
+  // calendar data is null, downstream renders the empty-state card.
+  const [session, subjects, calendarData, rating, introVideoUrl, profilePhotoUrl] =
     await Promise.all([
-      auth(),
+      safeAuth(),
       resolveTutorSubjects(tutor.userId),
-      resolveAvailability(tutor.userId, weekStart, weekEnd),
-      resolveBookings(tutor.userId, weekStart, weekEnd),
+      resolveCalendarData(tutor.userId, weekStart, weekEnd),
       resolveRatingHistogram(tutor.userId),
       presignFromR2("tutor-intro-videos", tutor.introVideoR2Key),
       presignFromR2("tutor-profile-photos", tutor.profilePhotoR2Key),
     ]);
 
   const slotStates = computeSlotStates({
-    availability,
-    bookings,
+    availability: calendarData?.availability ?? [],
+    bookings: calendarData?.bookings ?? [],
     from: weekStart,
     daysAhead: CALENDAR_DAYS_AHEAD,
     durationMinutes: selectedDuration,
@@ -259,9 +298,11 @@ export default async function PublicTutorProfilePage({
                 id="about-heading"
                 className="font-display font-bold text-xl text-primary-container mb-4"
               >
-                אודות {tutor.displayName.split(" ")[0]}
+                {tutor.displayName.includes(" ")
+                  ? `אודות ${tutor.displayName.split(" ")[0]}`
+                  : "אודות המורה"}
               </h2>
-              {tutor.bio
+              {stripBidiOverrides(tutor.bio)
                 .split(/\n\n+|\n/)
                 .map((para) => para.trim())
                 .filter((para) => para.length > 0)

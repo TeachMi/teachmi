@@ -18,7 +18,12 @@ interface IntroVideoPlayerProps {
 }
 
 export function IntroVideoPlayer({ src, poster, tutorName }: IntroVideoPlayerProps) {
-  const [hasPlayed, setHasPlayed] = useState(false);
+  // Tri-state: idle (play overlay shown), playing (overlay hidden), or
+  // errored (overlay swapped for a non-clickable error indicator). The
+  // errored state catches presigned-URL expiry, R2 403s, or network
+  // failures — without it the play overlay sticks forever and the user
+  // gets no signal that the video can't load.
+  const [playState, setPlayState] = useState<"idle" | "playing" | "errored">("idle");
 
   return (
     <div className="relative rounded-2xl overflow-hidden border border-linen-border shadow-md aspect-video bg-on-surface/5">
@@ -29,7 +34,8 @@ export function IntroVideoPlayer({ src, poster, tutorName }: IntroVideoPlayerPro
         controls
         preload="metadata"
         playsInline
-        onPlay={() => setHasPlayed(true)}
+        onPlay={() => setPlayState("playing")}
+        onError={() => setPlayState("errored")}
         aria-label={`סרטון היכרות של ${tutorName}`}
       >
         {/* Browsers without <video> support get a textual fallback. */}
@@ -40,7 +46,7 @@ export function IntroVideoPlayer({ src, poster, tutorName }: IntroVideoPlayerPro
         .
       </video>
 
-      {!hasPlayed && (
+      {playState === "idle" && (
         <div
           className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30"
           aria-hidden="true"
@@ -53,6 +59,22 @@ export function IntroVideoPlayer({ src, poster, tutorName }: IntroVideoPlayerPro
               play_arrow
             </span>
           </div>
+        </div>
+      )}
+
+      {playState === "errored" && (
+        <div
+          className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 text-white"
+          role="status"
+        >
+          <span
+            className="material-symbols-outlined text-3xl"
+            style={{ fontVariationSettings: "'FILL' 1" }}
+            aria-hidden="true"
+          >
+            error
+          </span>
+          <p className="text-sm">לא ניתן לטעון את הסרטון כעת.</p>
         </div>
       )}
 

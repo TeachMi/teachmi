@@ -98,8 +98,9 @@ test("approved tutor profile renders hero + subjects + bio + availability empty-
     page.getByRole("heading", { name: /ד״ר מיכל לוי/, level: 1 }),
   ).toBeVisible();
 
-  // Subject chips — at least one of the seeded subjects' Hebrew name
+  // Subject chips — both seeded subjects' Hebrew names visible
   await expect(page.getByText(/מתמטיקה/).first()).toBeVisible();
+  await expect(page.getByText(/אנגלית/).first()).toBeVisible();
 
   // Bio paragraph
   await expect(
@@ -158,4 +159,7 @@ test("anon click on available slot redirects to signup with intent params (Story
   expect(url.searchParams.get("tutorUserId")).toBe(tutor.userId);
   expect(url.searchParams.get("duration")).toBe("60");
   expect(url.searchParams.get("slotIso")).toBeTruthy();
+  // HMAC signature on (tutorUserId, slotIso, duration) — Story 3.3 verifies
+  // it server-side before issuing a DB lookup. See review decision D1.
+  expect(url.searchParams.get("sig")).toBeTruthy();
 });

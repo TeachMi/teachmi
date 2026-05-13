@@ -236,9 +236,11 @@ export async function seedTutorSubjects(
 
 /**
  * Inserts a recurring availability rule for the tutor on a given weekday +
- * time window. Idempotent — re-runs just append duplicate rows (no UNIQUE
- * constraint covers this case). Tests should clean their own state if they
- * care about row counts.
+ * time window. **Non-idempotent** — each call appends a new row regardless
+ * of whether an identical row already exists (no UNIQUE constraint covers
+ * the (tutor, kind, weekday, startTime, endTime) tuple). Tests MUST call
+ * `clearTutorSeededData` first if they care about exact row counts or if
+ * they run repeatedly against a shared dev/e2e DB.
  */
 export async function seedRecurringAvailability(
   tutorUserId: string,
@@ -268,6 +270,11 @@ export async function seedRecurringAvailability(
 /**
  * Clears tutor_subjects and tutor_availability rows for a fixture tutor.
  * Use between tests that seed conflicting state.
+ *
+ * Scoped to `createdByActor = "e2e-tutor-discovery-fixture"` so this helper
+ * does NOT nuke any developer's own seeded rows that might exist in a
+ * shared dev DB. The seed helpers above stamp this actor on every row they
+ * insert.
  */
 export async function clearTutorSeededData(tutorUserId: string): Promise<void> {
   const url = process.env.DATABASE_URL;
@@ -275,6 +282,21 @@ export async function clearTutorSeededData(tutorUserId: string): Promise<void> {
   const sql = neon(url);
   const db = drizzle(sql);
 
-  await db.delete(tutorSubjects).where(eq(tutorSubjects.tutorUserId, tutorUserId));
-  await db.delete(tutorAvailability).where(eq(tutorAvailability.tutorUserId, tutorUserId));
+  const FIXTURE_ACTOR = "e2e-tutor-discovery-fixture";
+  await db
+    .delete(tutorSubjects)
+    .where(
+      and(
+        eq(tutorSubjects.tutorUserId, tutorUserId),
+        eq(tutorSubjects.createdByActor, FIXTURE_ACTOR),
+      ),
+    );
+  await db
+    .delete(tutorAvailability)
+    .where(
+      and(
+        eq(tutorAvailability.tutorUserId, tutorUserId),
+        eq(tutorAvailability.createdByActor, FIXTURE_ACTOR),
+      ),
+    );
 }
