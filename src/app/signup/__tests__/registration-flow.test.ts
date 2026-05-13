@@ -52,6 +52,7 @@ describe("runRegister — happy path", () => {
     const { db, email, recorder, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]); // rate-limit count (0 attempts)
     db.queueReturning<{ id: string }>([{ id: "user-1" }]); // user insert ON CONFLICT … RETURNING
+    db.queueReturning<{ id: string }>([{ id: "consent-1" }]); // consent_receipts ON CONFLICT DO NOTHING … RETURNING (Story 1.21 round-2)
 
     const result = await runRegister(validForm(), deps);
 
@@ -272,6 +273,8 @@ describe("runRegister — consent_receipts insert failure is non-fatal (dashboar
     const { db, email, recorder, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]); // rate-limit count
     db.queueReturning<{ id: string }>([{ id: "user-pp-fail" }]); // user RETURNING
+    // No queueReturning for consent_receipts — `failingTables.add(consentReceipts)`
+    // causes the insert builder itself to reject before .returning() is called.
     db.failingTables.add(consentReceipts); // force consent_receipts insert to throw
 
     const result = await runRegister(validForm(), deps);
@@ -311,11 +314,49 @@ describe("runRegister — consent_receipts insert failure is non-fatal (dashboar
   }, 30_000);
 });
 
+// Story 1.21 round-2: consent insert uses ON CONFLICT DO NOTHING on the
+// new unique constraint. On a race-loss (extremely rare for signup since
+// each user is unique-by-email), skip audit + analytics writes but still
+// commit the user — the receipt exists at the target version regardless.
+describe("runRegister — consent_receipts race-loser is non-fatal", () => {
+  it("commits the user without firing privacy_policy_accepted audit/analytics when consent insert returns empty (race-loser)", async () => {
+    const { db, email, recorder, deps } = makeDeps();
+    db.queueSelect<{ id: string }>([]); // rate-limit count
+    db.queueReturning<{ id: string }>([{ id: "user-race-1" }]); // user RETURNING
+    db.queueReturning<{ id: string }>([]); // consent RETURNING empty = race-loser
+
+    const result = await runRegister(validForm(), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe(
+      "/signup/verify-email-sent?email=test%40example.com",
+    );
+
+    // Consent insert was attempted (captured by FakeDb) but didn't return a
+    // row, so audit + analytics are skipped to avoid double-counting.
+    expect(db.insertedInto(consentReceipts)).toHaveLength(1);
+    const auditTypes = db
+      .insertedInto(auditEvents)
+      .map((e) => (e.value as { eventType: string }).eventType);
+    expect(auditTypes).not.toContain("auth.privacy_policy_accepted");
+    expect(auditTypes).toEqual(["auth.signup_attempt", "auth.user_registered"]);
+
+    // signup_completed still fires — the user has a working account; the
+    // receipt (written by the race-winner) covers the regulatory bit.
+    expect(recorder.events).toEqual([
+      { event: "signup_completed", userId: "user-race-1", role: "student" },
+    ]);
+    expect(email.sends).toHaveLength(1);
+  }, 30_000);
+});
+
 describe("runRegister — email-send failure is non-fatal", () => {
   it("still redirects to verify-email-sent when the email provider throws", async () => {
     const { db, email, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]); // rate-limit: 0
     db.queueReturning<{ id: string }>([{ id: "user-2" }]); // user RETURNING (no conflict)
+    db.queueReturning<{ id: string }>([{ id: "consent-2" }]); // consent RETURNING
     email.failNext = new Error("SMTP down");
 
     const result = await runRegister(validForm(), deps);
@@ -337,6 +378,7 @@ describe("runRegister — dev-only skip-email-verification", () => {
     const { db, email, recorder, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]); // rate-limit count
     db.queueReturning<{ id: string }>([{ id: "user-dev-1" }]);
+    db.queueReturning<{ id: string }>([{ id: "consent-dev-1" }]); // consent RETURNING
 
     const result = await runRegister(validForm(), {
       ...deps,
@@ -387,6 +429,7 @@ describe("runRegister — dev-only skip-email-verification", () => {
     const { db, email, recorder, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]);
     db.queueReturning<{ id: string }>([{ id: "user-default-1" }]);
+    db.queueReturning<{ id: string }>([{ id: "consent-default-1" }]); // consent RETURNING
 
     const result = await runRegister(validForm(), deps);
 

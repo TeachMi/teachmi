@@ -40,6 +40,11 @@ describe("runAcceptPrivacyPolicy — happy path", () => {
     const { db, recorder, deps } = makeDeps();
     // SELECT for existing receipt returns [] (no prior consent).
     db.queueSelect<{ documentVersion: string }>([]);
+    // Story 1.21 round-2: consent insert now uses ON CONFLICT DO NOTHING +
+    // RETURNING. A non-empty returning array = "this request wrote the row"
+    // and the audit + analytics writes proceed. An empty returning array =
+    // "race-loser; another concurrent request already wrote the row".
+    db.queueReturning<{ id: string }>([{ id: "receipt-1" }]);
 
     const result = await runAcceptPrivacyPolicy(baseInput(), deps);
 
@@ -106,6 +111,7 @@ describe("runAcceptPrivacyPolicy — idempotency", () => {
     db.queueSelect<{ documentVersion: string }>([
       { documentVersion: "older-version" },
     ]);
+    db.queueReturning<{ id: string }>([{ id: "receipt-2" }]);
 
     const result = await runAcceptPrivacyPolicy(baseInput(), deps);
 
@@ -113,6 +119,34 @@ describe("runAcceptPrivacyPolicy — idempotency", () => {
     if (!result.ok) return;
     expect(db.insertedInto(consentReceipts)).toHaveLength(1);
     expect(db.insertedInto(auditEvents)).toHaveLength(1);
+  });
+});
+
+// Story 1.21 round-2: the unique constraint on (userId, documentType,
+// documentVersion) makes concurrent submits race-tolerant via ON CONFLICT
+// DO NOTHING + RETURNING. The race-loser sees an empty returning() result
+// and should skip the audit + analytics writes (avoiding double-counting)
+// while still redirecting the user onward (the receipt exists at the
+// target version — invariant holds).
+describe("runAcceptPrivacyPolicy — race-loser on unique constraint", () => {
+  it("redirects without audit/analytics writes when a concurrent request already wrote the receipt", async () => {
+    const { db, recorder, deps } = makeDeps();
+    db.queueSelect<{ documentVersion: string }>([]);
+    // Empty returning = ON CONFLICT DO NOTHING swallowed our insert.
+    db.queueReturning<{ id: string }>([]);
+
+    const result = await runAcceptPrivacyPolicy(baseInput(), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe("/dashboard");
+
+    // The insert WAS attempted (FakeDb captures the call regardless of
+    // ON CONFLICT behavior) but the audit + analytics writes were gated on
+    // the returning array being non-empty, so they're skipped.
+    expect(db.insertedInto(consentReceipts)).toHaveLength(1);
+    expect(db.insertedInto(auditEvents)).toHaveLength(0);
+    expect(recorder.events).toEqual([]);
   });
 });
 
@@ -231,6 +265,7 @@ describe("runAcceptPrivacyPolicy — IP / metadata sanitization", () => {
   it("converts ip='unknown' to null in both the receipt and the audit row", async () => {
     const { db, deps } = makeDeps();
     db.queueSelect<{ documentVersion: string }>([]);
+    db.queueReturning<{ id: string }>([{ id: "receipt-ip-1" }]);
 
     const result = await runAcceptPrivacyPolicy(
       { ...baseInput(), ip: "unknown" },
@@ -253,6 +288,7 @@ describe("runAcceptPrivacyPolicy — IP / metadata sanitization", () => {
   it("preserves a real IP unchanged", async () => {
     const { db, deps } = makeDeps();
     db.queueSelect<{ documentVersion: string }>([]);
+    db.queueReturning<{ id: string }>([{ id: "receipt-ip-2" }]);
 
     await runAcceptPrivacyPolicy({ ...baseInput(), ip: "203.0.113.99" }, deps);
 

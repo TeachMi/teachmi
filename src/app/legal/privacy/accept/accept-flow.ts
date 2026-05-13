@@ -25,6 +25,7 @@ export type AcceptFlowResult =
 
 interface InsertWithReturning<TReturning = unknown> extends Promise<unknown> {
   returning(columns: unknown): Promise<TReturning[]>;
+  onConflictDoNothing(opts?: unknown): InsertWithReturning<TReturning>;
 }
 interface InsertChain {
   values(value: unknown): InsertWithReturning;
@@ -78,41 +79,69 @@ export async function runAcceptPrivacyPolicy(
     return { ok: true, redirectTo: safeNext };
   }
 
+  let raceWonByThisRequest = true;
   try {
     const acceptedAt = new Date();
     // Story 1.21 review [L1]: convert the readIp sentinel "unknown" to null
     // so the immutable receipt doesn't carry a misleading literal.
     const ipAddress = input.ip === "unknown" ? null : input.ip;
-    await deps.db.insert(consentReceipts).values({
-      userId: input.userId,
-      documentType: "privacy_policy",
-      documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
-      acceptedAt,
-      ipAddress,
-      userAgent: truncateUserAgent(input.userAgent),
-      signature: null,
-      documentSnapshot: null,
-      createdByKind: "user",
-      createdByActor: input.userId,
-    });
+    // Story 1.21 round-2 fix: rely on the new unique constraint
+    // (userId, documentType, documentVersion) to make concurrent submits
+    // race-tolerant. The loser of a race gets an empty returning() and we
+    // skip the audit + analytics writes for it — the receipt still exists
+    // at the target version (the winner wrote it), so the regulatory
+    // invariant holds and the user can proceed.
+    const consentInsert = (await deps.db
+      .insert(consentReceipts)
+      .values({
+        userId: input.userId,
+        documentType: "privacy_policy",
+        documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+        acceptedAt,
+        ipAddress,
+        userAgent: truncateUserAgent(input.userAgent),
+        signature: null,
+        documentSnapshot: null,
+        createdByKind: "user",
+        createdByActor: input.userId,
+      })
+      .onConflictDoNothing({
+        target: [
+          consentReceipts.userId,
+          consentReceipts.documentType,
+          consentReceipts.documentVersion,
+        ],
+      })
+      .returning({ id: consentReceipts.id })) as { id: string }[];
 
-    await deps.db.insert(auditEvents).values(
-      toAuditEventValues({
-        eventType: "auth.privacy_policy_accepted",
-        actorKind: "user",
-        actorId: input.userId,
-        actorMeta: ipAddress,
-        targetType: "user",
-        targetId: input.userId,
-        payload: {
-          documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
-          source: "re_acceptance",
-        },
-      }),
-    );
+    if (consentInsert.length === 0) {
+      raceWonByThisRequest = false;
+    } else {
+      await deps.db.insert(auditEvents).values(
+        toAuditEventValues({
+          eventType: "auth.privacy_policy_accepted",
+          actorKind: "user",
+          actorId: input.userId,
+          actorMeta: ipAddress,
+          targetType: "user",
+          targetId: input.userId,
+          payload: {
+            documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+            source: "re_acceptance",
+          },
+        }),
+      );
+    }
   } catch (err) {
     log.error("[runAcceptPrivacyPolicy] consent write failed", err);
     return { ok: false, formError: "אירעה שגיאה. נסו שוב." };
+  }
+
+  if (!raceWonByThisRequest) {
+    // Another concurrent request wrote the same (user, version) receipt
+    // first. Skip the analytics event so we don't double-count, but
+    // redirect the user onward — the regulatory state is satisfied.
+    return { ok: true, redirectTo: safeNext };
   }
 
   deps.track({

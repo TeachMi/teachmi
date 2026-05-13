@@ -36,6 +36,13 @@
       "when": 1778623308793,
       "tag": "0004_consent_receipts_immutable",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778660647595,
+      "tag": "0005_green_mac_gargan",
+      "breakpoints": true
     }
   ]
 }

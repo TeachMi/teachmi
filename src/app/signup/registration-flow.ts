@@ -336,35 +336,60 @@ export async function runRegister(
   try {
     const acceptedAt = new Date();
     const ipAddress = ip === "unknown" ? null : ip;
-    await db.insert(consentReceipts).values({
-      userId,
-      documentType: "privacy_policy",
-      documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
-      acceptedAt,
-      ipAddress,
-      userAgent: truncateUserAgent(deps.userAgent),
-      signature: null,
-      documentSnapshot: null,
-      createdByKind: "user",
-      createdByActor: userId,
-    });
+    // ON CONFLICT DO NOTHING against the new unique constraint
+    // (userId, documentType, documentVersion) — Story 1.21 round-2 fix.
+    // The constraint enforces "one row per (user, type, version)" from the
+    // schema comment; under concurrent signup retries (extremely rare —
+    // signup uses ON CONFLICT on email earlier in the flow so this would
+    // require a parallel sub-millisecond retry) the loser silently no-ops
+    // instead of erroring out.
+    const consentInsert = (await db
+      .insert(consentReceipts)
+      .values({
+        userId,
+        documentType: "privacy_policy",
+        documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+        acceptedAt,
+        ipAddress,
+        userAgent: truncateUserAgent(deps.userAgent),
+        signature: null,
+        documentSnapshot: null,
+        createdByKind: "user",
+        createdByActor: userId,
+      })
+      .onConflictDoNothing({
+        target: [
+          consentReceipts.userId,
+          consentReceipts.documentType,
+          consentReceipts.documentVersion,
+        ],
+      })
+      .returning({ id: consentReceipts.id })) as { id: string }[];
 
-    await db.insert(auditEvents).values(
-      toAuditEventValues({
-        eventType: "auth.privacy_policy_accepted",
-        actorKind: "user",
-        actorId: userId,
-        actorMeta: ipAddress, // Story 1.21 review [M2]: align shape with accept-flow.
-        targetType: "user",
-        targetId: userId,
-        payload: {
-          documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
-          source: "signup",
-        },
-      }),
-    );
+    // If a concurrent process wrote the same (user, type, version) row
+    // first, our insert returns empty. The receipt still exists at the
+    // target version, so the regulatory invariant holds — but skip the
+    // audit + analytics writes for this attempt so we don't double-count.
+    if (consentInsert.length === 0) {
+      privacyConsentLogged = false;
+    } else {
+      await db.insert(auditEvents).values(
+        toAuditEventValues({
+          eventType: "auth.privacy_policy_accepted",
+          actorKind: "user",
+          actorId: userId,
+          actorMeta: ipAddress, // Story 1.21 review [M2]: align shape with accept-flow.
+          targetType: "user",
+          targetId: userId,
+          payload: {
+            documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+            source: "signup",
+          },
+        }),
+      );
 
-    privacyConsentLogged = true;
+      privacyConsentLogged = true;
+    }
   } catch (consentErr) {
     log.error(
       `[runRegister] privacy-policy consent capture failed for userId=${userId}; dashboard gate will re-prompt on first signin`,
