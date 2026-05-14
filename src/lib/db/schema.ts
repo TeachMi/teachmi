@@ -55,7 +55,7 @@ export const users = pgTable(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     // Auth.js v5 standard fields
     name: text("name"),
-    email: text("email").notNull(),
+    email: text("email"),
     emailVerified: timestamp("email_verified", { withTimezone: true }),
     image: text("image"),
     // TeachMe extensions
@@ -66,6 +66,7 @@ export const users = pgTable(
     // Parent-account model (FR8 / Story 1.19) - under-18 dependents have parentUserId set;
     // dependents have NULL email/passwordHash (no separate sign-in path).
     parentUserId: uuid("parent_user_id").references((): AnyPgColumn => users.id),
+    dateOfBirth: date("date_of_birth"),
     // Locale (Hebrew RTL is foundational - concern #6)
     locale: text("locale").notNull().default("he-IL"),
     timezone: text("timezone").notNull().default("Asia/Jerusalem"),
@@ -160,6 +161,35 @@ export const passwordResetTokens = pgTable(
   },
   (t) => ({
     pk: primaryKey({ columns: [t.identifier, t.token] }),
+  }),
+);
+
+// ------------------------------------------------------------------------------
+// account_deletion_snapshots - Story 1.17 FR6
+// Short-lived restore snapshots for 30-day account recovery. Physical
+// hard-delete/anonymized-stub strategy is deferred until the FK surface is
+// explicitly designed.
+// ------------------------------------------------------------------------------
+export const accountDeletionSnapshots = pgTable(
+  "account_deletion_snapshots",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    restoreToken: text("restore_token").notNull(),
+    restoreTokenExpiresAt: timestamp("restore_token_expires_at", { withTimezone: true }).notNull(),
+    email: text("email"),
+    name: text("name"),
+    image: text("image"),
+    dateOfBirth: date("date_of_birth"),
+    tutorProfileDeletedAt: timestamp("tutor_profile_deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdByKind: text("created_by_kind").notNull(),
+    createdByActor: text("created_by_actor").notNull(),
+  },
+  (t) => ({
+    userIdUnique: unique("uq_account_deletion_snapshots_user").on(t.userId),
+    restoreTokenUnique: unique("uq_account_deletion_snapshots_restore_token").on(t.restoreToken),
+    expiresIdx: index("idx_account_deletion_snapshots_expires").on(t.restoreTokenExpiresAt),
   }),
 );
 
@@ -379,6 +409,7 @@ export const bookings = pgTable(
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     studentUserId: uuid("student_user_id").notNull().references(() => users.id),
+    payerUserId: uuid("payer_user_id").references(() => users.id),
     tutorUserId: uuid("tutor_user_id").notNull().references(() => users.id),
     subjectId: uuid("subject_id").references(() => subjects.id),               // which subject was booked
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),        // canonical UTC; display in IL TZ
@@ -399,6 +430,7 @@ export const bookings = pgTable(
   (t) => ({
     tutorCalendarIdx: index("idx_bookings_tutor_calendar").on(t.tutorUserId, t.startsAt),
     studentHistoryIdx: index("idx_bookings_student_history").on(t.studentUserId, t.startsAt.desc()),
+    payerIdx: index("idx_bookings_payer").on(t.payerUserId, t.startsAt.desc()),
     statusIdx: index("idx_bookings_status_starts_at").on(t.status, t.startsAt),
     // Partial UNIQUE: prevents two ACTIVE bookings on the same tutor + slot.
     // Cancelled bookings don't block re-booking.
@@ -929,6 +961,13 @@ export const consentReceiptsRelations = relations(consentReceipts, ({ one }) => 
   user: one(users, { fields: [consentReceipts.userId], references: [users.id] }),
 }));
 
+export const accountDeletionSnapshotsRelations = relations(
+  accountDeletionSnapshots,
+  ({ one }) => ({
+    user: one(users, { fields: [accountDeletionSnapshots.userId], references: [users.id] }),
+  }),
+);
+
 export const paymentsRelations = relations(payments, ({ one, many }) => ({
   booking: one(bookings, { fields: [payments.bookingId], references: [bookings.id] }),
   invoices: many(invoices),
@@ -953,6 +992,9 @@ export type NewAuthSession = typeof sessions.$inferInsert;
 
 export type VerificationToken = typeof verificationTokens.$inferSelect;
 export type NewVerificationToken = typeof verificationTokens.$inferInsert;
+
+export type AccountDeletionSnapshot = typeof accountDeletionSnapshots.$inferSelect;
+export type NewAccountDeletionSnapshot = typeof accountDeletionSnapshots.$inferInsert;
 
 export type TutorProfile = typeof tutorProfiles.$inferSelect;
 export type NewTutorProfile = typeof tutorProfiles.$inferInsert;

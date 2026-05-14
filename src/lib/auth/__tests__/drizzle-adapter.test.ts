@@ -13,6 +13,69 @@ function createRecordingDb(calls: SqlCall[]) {
   const client = async (sql: string, params: unknown[]) => {
     calls.push({ sql, params });
 
+    if (sql.includes('insert into "users"')) {
+      return {
+        rows: [
+          [
+            "user-1",
+            "Ada",
+            "ada@teachme.local",
+            null,
+            null,
+            null,
+            "student",
+            null,
+            null,
+            null,
+            null,
+            "he-IL",
+            "Asia/Jerusalem",
+            null,
+            new Date("2026-05-14T00:00:00.000Z"),
+            null,
+            "system",
+            "authjs",
+            null,
+            null,
+          ],
+        ],
+      };
+    }
+
+    if (sql.includes('insert into "accounts"')) {
+      return {
+        rows: [
+          [
+            "account-1",
+            "user-1",
+            "oauth",
+            "google",
+            "google-1",
+            null,
+            "token",
+            123,
+            "bearer",
+            "openid email profile",
+            "id-token",
+            null,
+          ],
+        ],
+      };
+    }
+
+    if (sql.includes('insert into "sessions"')) {
+      return {
+        rows: [
+          [
+            "session-1",
+            "session-token",
+            "user-1",
+            new Date("2099-01-01T00:00:00.000Z"),
+          ],
+        ],
+      };
+    }
+
     return {
       rows: [[]],
     };

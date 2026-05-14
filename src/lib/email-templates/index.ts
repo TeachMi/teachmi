@@ -18,6 +18,14 @@ export const EMAIL_TEMPLATES = {
     templateId: "auth-password-reset",
     subject: "איפוס סיסמה ב-TeachMe",
   },
+  DATA_EXPORT_READY: {
+    templateId: "data-export-ready",
+    subject: "קישור להורדת המידע האישי שלך ב-TeachMe",
+  },
+  ACCOUNT_RESTORE: {
+    templateId: "account-restore",
+    subject: "שחזור חשבון TeachMe",
+  },
 } as const;
 
 export type EmailTemplateKey = keyof typeof EMAIL_TEMPLATES;
