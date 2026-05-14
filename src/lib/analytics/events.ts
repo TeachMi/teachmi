@@ -131,6 +131,19 @@ export interface TutorRateLimitedEvent {
   action: "submit_profile" | "save_draft" | "request_upload";
 }
 
+// Story 1.20: route-level admin gate. Payload intentionally avoids user id or
+// email; the route probe itself is enough for aggregate abuse visibility.
+export interface AdminRouteUnauthorizedEvent {
+  event: "admin_route_unauthorized";
+  role: AppRole | "anonymous";
+  path: string;
+}
+
+export interface DataExportDownloadedEvent {
+  event: "data_export_downloaded";
+  userId: string;
+}
+
 export type AnalyticsEvent =
   | SignupCompletedEvent
   | EmailVerifiedEvent
@@ -143,6 +156,8 @@ export type AnalyticsEvent =
   | PasswordResetCompletedEvent
   | PrivacyPolicyAcceptedEvent
   | TutorProfileCreatedEvent
-  | TutorRateLimitedEvent;
+  | TutorRateLimitedEvent
+  | AdminRouteUnauthorizedEvent
+  | DataExportDownloadedEvent;
 
 export type AnalyticsEventName = AnalyticsEvent["event"];
