@@ -125,11 +125,11 @@ describe("computeSlotStates — recurring rule only", () => {
     );
     const dayKey = "2026-05-14";
     const slots = result.get(dayKey)!;
-    // 14:00 → 18:00 covers slots 14:00, 14:30, 15:00, 15:30, 16:00, 16:30, 17:00, 17:30
+    // 14:00 → 18:00 covers 60-minute starts from 14:00 through 17:00.
     const available = slots.filter((s) => s.status === "available");
-    expect(available.length).toBe(8);
+    expect(available.length).toBe(7);
     expect(available[0]!.localTime).toBe("14:00");
-    expect(available[7]!.localTime).toBe("17:30");
+    expect(available[6]!.localTime).toBe("17:00");
   });
 
   it("slots outside the rule's range are unavailable", () => {
@@ -141,6 +141,39 @@ describe("computeSlotStates — recurring rule only", () => {
     expect(at1300?.status).toBe("unavailable");
     const at2100 = slots.find((s) => s.localTime === "21:00");
     expect(at2100?.status).toBe("unavailable");
+  });
+
+  it("requires the full requested duration to fit inside the recurring rule", () => {
+    const result = computeSlotStates(
+      baseInput({
+        availability: [buildAvailability({ endTime: "18:00:00" })],
+        durationMinutes: 60,
+      }),
+    );
+    const slots = result.get("2026-05-14")!;
+    expect(slots.find((s) => s.localTime === "17:00")?.status).toBe("available");
+    expect(slots.find((s) => s.localTime === "17:30")?.status).toBe("unavailable");
+  });
+
+  it("requires the full requested duration to fit inside exception_available rows", () => {
+    const result = computeSlotStates(
+      baseInput({
+        durationMinutes: 60,
+        availability: [
+          buildAvailability({
+            id: "av-exception",
+            kind: "exception_available",
+            weekday: null,
+            date: "2026-05-14",
+            startTime: "20:00:00",
+            endTime: "21:00:00",
+          }),
+        ],
+      }),
+    );
+    const slots = result.get("2026-05-14")!;
+    expect(slots.find((s) => s.localTime === "20:00")?.status).toBe("available");
+    expect(slots.find((s) => s.localTime === "20:30")?.status).toBe("unavailable");
   });
 });
 
@@ -163,7 +196,8 @@ describe("computeSlotStates — exception_blocked overrides recurring", () => {
       }),
     );
     const slots = result.get("2026-05-14")!;
-    expect(slots.find((s) => s.localTime === "14:30")?.status).toBe("available");
+    expect(slots.find((s) => s.localTime === "14:00")?.status).toBe("available");
+    expect(slots.find((s) => s.localTime === "14:30")?.status).toBe("unavailable");
     expect(slots.find((s) => s.localTime === "15:00")?.status).toBe("unavailable");
     expect(slots.find((s) => s.localTime === "15:30")?.status).toBe("unavailable");
     expect(slots.find((s) => s.localTime === "16:00")?.status).toBe("available");
@@ -189,7 +223,7 @@ describe("computeSlotStates — exception_available without recurring", () => {
     );
     const slots = result.get("2026-05-14")!;
     expect(slots.find((s) => s.localTime === "20:00")?.status).toBe("available");
-    expect(slots.find((s) => s.localTime === "20:30")?.status).toBe("available");
+    expect(slots.find((s) => s.localTime === "20:30")?.status).toBe("unavailable");
     expect(slots.find((s) => s.localTime === "19:30")?.status).toBe("unavailable");
   });
 });
@@ -249,6 +283,44 @@ describe("computeSlotStates — active bookings overlay", () => {
     const slots = result.get("2026-05-14")!;
     expect(slots.find((s) => s.localTime === "15:00")?.status).toBe("booked");
     expect(slots.find((s) => s.localTime === "16:00")?.status).toBe("booked");
+  });
+
+  it("blocks a requested slot when a later booking overlaps its full duration", () => {
+    const result = computeSlotStates(
+      baseInput({
+        availability: [buildAvailability()],
+        durationMinutes: 60,
+        bookings: [
+          buildBooking({
+            startsAt: jerusalemWallTimeToUtc(2026, 5, 14, 14, 30),
+            durationMinutes: 60,
+          }),
+        ],
+      }),
+    );
+    const slots = result.get("2026-05-14")!;
+    expect(slots.find((s) => s.localTime === "14:00")?.status).toBe("booked");
+    expect(slots.find((s) => s.localTime === "14:30")?.status).toBe("booked");
+    expect(slots.find((s) => s.localTime === "15:00")?.status).toBe("booked");
+    expect(slots.find((s) => s.localTime === "15:30")?.status).toBe("available");
+  });
+
+  it("does not block adjacent non-overlapping requested slots", () => {
+    const result = computeSlotStates(
+      baseInput({
+        availability: [buildAvailability()],
+        durationMinutes: 45,
+        bookings: [
+          buildBooking({
+            startsAt: jerusalemWallTimeToUtc(2026, 5, 14, 15, 0),
+            durationMinutes: 60,
+          }),
+        ],
+      }),
+    );
+    const slots = result.get("2026-05-14")!;
+    expect(slots.find((s) => s.localTime === "14:00")?.status).toBe("available");
+    expect(slots.find((s) => s.localTime === "14:30")?.status).toBe("booked");
   });
 });
 

@@ -56,6 +56,7 @@ export interface DiscoverableTutorPublic {
   hourlyPriceIls: number;
   lesson45PriceIls: number | null;
   lessonLengthMinutes: number;
+  vettingStatus: "pending" | "approved" | "rejected" | "paused";
   averageRating: string | null;
   ratingCount: number;
   totalLessonsCompleted: number;
@@ -135,6 +136,7 @@ const PUBLIC_COLUMNS = {
   hourlyPriceIls: tutorProfiles.hourlyPriceIls,
   lesson45PriceIls: tutorProfiles.lesson45PriceIls,
   lessonLengthMinutes: tutorProfiles.lessonLengthMinutes,
+  vettingStatus: tutorProfiles.vettingStatus,
   averageRating: tutorProfiles.averageRating,
   ratingCount: tutorProfiles.ratingCount,
   totalLessonsCompleted: tutorProfiles.totalLessonsCompleted,
@@ -188,6 +190,7 @@ export const DISCOVERABLE_TUTOR_PUBLIC_KEYS = Object.freeze([
   "hourlyPriceIls",
   "lesson45PriceIls",
   "lessonLengthMinutes",
+  "vettingStatus",
   "averageRating",
   "ratingCount",
   "totalLessonsCompleted",
