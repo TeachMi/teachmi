@@ -21,6 +21,7 @@ export interface CapturedDelete {
 type InsertBuilder = Promise<unknown> & {
   returning(cols: unknown): Promise<unknown[]>;
   onConflictDoNothing(opts?: unknown): InsertBuilder;
+  onConflictDoUpdate(opts: unknown): InsertBuilder;
 };
 
 export class FakeDb {
@@ -43,6 +44,16 @@ export class FakeDb {
    */
   readonly failingTables: Set<unknown> = new Set();
 
+  /**
+   * Per-table running count of `.insert(table).values(...)` invocations.
+   * Combined with `failOnNthByTable` lets tests target a specific Nth write
+   * into a table — e.g., for Story 1.22 we want the SECOND insert into
+   * `consent_receipts` (the marketing receipt) to fail while the FIRST
+   * (the privacy receipt) succeeds.
+   */
+  private readonly insertCountByTable: Map<unknown, number> = new Map();
+  private readonly failOnNthByTable: Map<unknown, Set<number>> = new Map();
+
   queueSelect<T>(rows: T[]): this {
     this.selectResponses.push(rows as unknown[]);
     return this;
@@ -50,6 +61,19 @@ export class FakeDb {
 
   queueReturning<T>(rows: T[]): this {
     this.returningResponses.push(rows as unknown[]);
+    return this;
+  }
+
+  /**
+   * Stage a synchronous rejection on the Nth (1-indexed) `.insert(table).values(...)`
+   * call against the given table reference. Multiple Ns can be staged per table.
+   * Story 1.22: used to fail only the marketing-receipt insert while letting
+   * the prior privacy-receipt insert succeed.
+   */
+  failOnNthInsertInto(table: unknown, n: number): this {
+    const set = this.failOnNthByTable.get(table) ?? new Set<number>();
+    set.add(n);
+    this.failOnNthByTable.set(table, set);
     return this;
   }
 
@@ -99,44 +123,59 @@ export class FakeDb {
     };
   };
 
+  private makeRejectedBuilder(err: Error): InsertBuilder {
+    const rejected = Promise.reject(err);
+    // Swallow the unhandled-rejection telemetry warning that Promise.reject
+    // would otherwise emit before the awaiting caller reaches its catch.
+    rejected.catch(() => undefined);
+    const builder: InsertBuilder = Object.assign(rejected, {
+      returning: (cols: unknown) => {
+        void cols;
+        const r = Promise.reject(err) as Promise<unknown[]>;
+        r.catch(() => undefined);
+        return r;
+      },
+      // Both conflict-chain methods MUST return the same rejecting builder so
+      // a `.values().onConflictDoNothing().returning()` chain stays rejected
+      // and does NOT accidentally record the write in `inserts` via a
+      // recursive makeInsertBuilder() call.
+      onConflictDoNothing: (opts?: unknown) => {
+        void opts;
+        return builder;
+      },
+      onConflictDoUpdate: (opts: unknown) => {
+        void opts;
+        return builder;
+      },
+    });
+    return builder;
+  }
+
   private makeInsertBuilder(table: unknown, value: unknown): InsertBuilder {
-    if (this.failingTables.has(table)) {
-      const err = new Error(
-        `FakeDb.failingTables: rejected insert into table ${String(table)}`,
+    // Per-table call counting + targeted-N failure. Story 1.22 introduces this
+    // so a test can fail the SECOND insert into `consent_receipts` (the
+    // marketing receipt) while letting the FIRST (the privacy receipt) succeed.
+    const count = (this.insertCountByTable.get(table) ?? 0) + 1;
+    this.insertCountByTable.set(table, count);
+    const failSet = this.failOnNthByTable.get(table);
+    if (failSet?.has(count)) {
+      return this.makeRejectedBuilder(
+        new Error(
+          `FakeDb.failOnNthInsertInto: rejected insert #${count} into table ${String(table)}`,
+        ),
       );
-      const rejected = Promise.reject(err);
-      // Swallow the unhandled-rejection telemetry warning that Promise.reject
-      // would otherwise emit before the awaiting caller reaches its catch.
-      rejected.catch(() => undefined);
-      const builder: InsertBuilder = Object.assign(rejected, {
-        returning: (cols: unknown) => {
-          void cols;
-          const r = Promise.reject(err) as Promise<unknown[]>;
-          r.catch(() => undefined);
-          return r;
-        },
-        onConflictDoNothing: (opts?: unknown) => {
-          void opts;
-          return this.makeInsertBuilder(table, value);
-        },
-      });
-      return builder;
+    }
+    if (this.failingTables.has(table)) {
+      return this.makeRejectedBuilder(
+        new Error(
+          `FakeDb.failingTables: rejected insert into table ${String(table)}`,
+        ),
+      );
     }
     if (this.failNext) {
       const err = this.failNext;
       this.failNext = null;
-      const rejected = Promise.reject(err);
-      const builder: InsertBuilder = Object.assign(rejected, {
-        returning: (cols: unknown) => {
-          void cols;
-          return Promise.reject(err) as Promise<unknown[]>;
-        },
-        onConflictDoNothing: (opts?: unknown) => {
-          void opts;
-          return this.makeInsertBuilder(table, value);
-        },
-      });
-      return builder;
+      return this.makeRejectedBuilder(err);
     }
     this.inserts.push({ table, value });
     const base: Promise<unknown> = Promise.resolve(undefined);
@@ -149,6 +188,13 @@ export class FakeDb {
         void opts;
         // Conflict path: the test's queued `returningResponses` drives the
         // resulting row return. Stage an empty array to simulate a conflict.
+        return builder;
+      },
+      onConflictDoUpdate: (opts: unknown) => {
+        void opts;
+        // UPSERT path: the captured write already landed in `inserts`. The
+        // SET shape is opaque to the FakeDb — tests assert on what was
+        // attempted, not on the post-update row state.
         return builder;
       },
     });
