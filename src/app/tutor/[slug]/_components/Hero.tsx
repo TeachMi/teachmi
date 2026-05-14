@@ -56,16 +56,18 @@ export function Hero({
               <h1 className="font-display font-extrabold text-3xl text-primary-container">
                 {tutor.displayName}
               </h1>
-              <Badge variant="approved" size="md" className="rounded-full">
-                <span
-                  className="material-symbols-outlined text-sm"
-                  style={{ fontVariationSettings: "'FILL' 1" }}
-                  aria-hidden="true"
-                >
-                  verified
-                </span>
-                מורה מאומתת
-              </Badge>
+              {tutor.vettingStatus === "approved" && (
+                <Badge variant="approved" size="md" className="rounded-full">
+                  <span
+                    className="material-symbols-outlined text-sm"
+                    style={{ fontVariationSettings: "'FILL' 1" }}
+                    aria-hidden="true"
+                  >
+                    verified
+                  </span>
+                  מורה מאומתת
+                </Badge>
+              )}
             </div>
             <p className="text-on-surface-variant mb-3">{headline}</p>
 
