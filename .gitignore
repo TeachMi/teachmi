@@ -36,6 +36,25 @@ yarn-error.log*
 .env*
 !.env.example
 
+# Local tooling — Claude Code session/worktree state, not for sharing.
+.claude/
+
+# Playwright run output — regenerated on every test run.
+playwright-report/
+test-results/
+
+# Local one-off diff/patch scratch files generated during code review.
+.review-diff-tmp.diff
+*.patch
+
+# Local debug/inspection scripts — created ad-hoc during incident triage.
+# Kept locally so they're available next time without re-typing, but not
+# shared (they hard-code dev-db URLs or contain throwaway diagnostics).
+/scripts/count-user-data.ts
+/scripts/list-tables.ts
+/scripts/peek-verify-email.ts
+/scripts/reset-users.ts
+
 # vercel
 .vercel
 

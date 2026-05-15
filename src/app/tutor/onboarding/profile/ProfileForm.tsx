@@ -20,7 +20,9 @@ import {
   type ProfileValues,
 } from "../../[slug]/edit/categorize-changes";
 import { profileFormAction } from "./actions";
-import { PhotoCropModal } from "./PhotoCropModal";
+// PhotoCropModal moved to a shared location so the student /account/profile
+// surface can reuse the same crop UX without a cross-feature import.
+import { PhotoCropModal } from "@/components/photo/PhotoCropModal";
 import { PROFILE_ACTION_INITIAL_STATE } from "./state";
 import {
   confirmIntroVideoUploadAction,
