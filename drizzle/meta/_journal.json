@@ -64,6 +64,13 @@
       "when": 1778755641989,
       "tag": "0008_tense_namorita",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778856900445,
+      "tag": "0009_gray_fenris",
+      "breakpoints": true
     }
   ]
 }

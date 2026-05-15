@@ -67,6 +67,14 @@ export const users = pgTable(
     // dependents have NULL email/passwordHash (no separate sign-in path).
     parentUserId: uuid("parent_user_id").references((): AnyPgColumn => users.id),
     dateOfBirth: date("date_of_birth"),
+    // Account-level profile photo (account-management surface; separate from
+    // tutor_profiles.profile_photo_r2_key which is the public-tutor-profile
+    // photo). Stored as the R2 object KEY (`photos/<userId>/<uuid>.<ext>`);
+    // the SiteHeader + /account/profile resolve to a presigned GET URL on
+    // each request via getFilesProvider. Bucket: "student-profile-photos"
+    // (logical name; physical bucket carries an `-e2e` suffix in non-prod
+    // environments — wired at the R2 provider impl in MVP 2).
+    profilePhotoR2Key: text("profile_photo_r2_key"),
     // Locale (Hebrew RTL is foundational - concern #6)
     locale: text("locale").notNull().default("he-IL"),
     timezone: text("timezone").notNull().default("Asia/Jerusalem"),

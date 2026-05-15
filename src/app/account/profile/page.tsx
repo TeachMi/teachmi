@@ -16,6 +16,7 @@ import {
   type DbForPrivacyConsent,
 } from "@/lib/legal/privacy-consent";
 import { ProfileForm } from "./ProfileForm";
+import { resolveProfilePhotoUrl } from "./upload-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,7 @@ interface UserProfile {
   name: string;
   email: string;
   dateOfBirth: string;
+  profilePhotoR2Key: string | null;
 }
 
 async function readUserProfile(userId: string): Promise<UserProfile> {
@@ -58,6 +60,7 @@ async function readUserProfile(userId: string): Promise<UserProfile> {
         name: users.name,
         email: users.email,
         dateOfBirth: users.dateOfBirth,
+        profilePhotoR2Key: users.profilePhotoR2Key,
       })
       .from(users)
       .where(eq(users.id, userId));
@@ -69,10 +72,11 @@ async function readUserProfile(userId: string): Promise<UserProfile> {
       // and as `string` in others (Drizzle's `date()` returns string by
       // default). Normalize to YYYY-MM-DD or "".
       dateOfBirth: normalizeDateOfBirth(row?.dateOfBirth),
+      profilePhotoR2Key: row?.profilePhotoR2Key ?? null,
     };
   } catch (err) {
     console.error("[profile] user lookup failed", err);
-    return { name: "", email: "", dateOfBirth: "" };
+    return { name: "", email: "", dateOfBirth: "", profilePhotoR2Key: null };
   }
 }
 
@@ -98,6 +102,7 @@ export default async function AccountProfilePage() {
   });
 
   const profile = await readUserProfile(user.id);
+  const photoUrl = await resolveProfilePhotoUrl(profile.profilePhotoR2Key);
 
   // Story 5.0: hide the StudentSubNav for non-students. The sub-nav surfaces
   // schedule/history which are student-only concepts; a tutor on /account/
@@ -126,6 +131,8 @@ export default async function AccountProfilePage() {
               initialName={profile.name}
               initialEmail={profile.email}
               initialDateOfBirth={profile.dateOfBirth}
+              initialPhotoR2Key={profile.profilePhotoR2Key}
+              initialPhotoUrl={photoUrl}
             />
           </Card>
 

@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { auth } from "@/lib/auth/auth";
 import { Avatar } from "@/components/ui/avatar";
+import { resolveProfilePhotoUrl } from "@/app/account/profile/upload-actions";
 import { primaryNavItems } from "./navigation";
 
 interface SiteHeaderProps {
@@ -39,6 +40,17 @@ export async function SiteHeader({ activeHref = "/", action }: SiteHeaderProps) 
   const session = await tryReadSession();
   const user = session?.user;
 
+  // Resolve the avatar's image source. Priority:
+  //   1. Our `profile_photo_r2_key` → fresh presigned GET URL (via stub or
+  //      real R2 provider). Null in stub mode (browser can't fetch
+  //      `stub.r2.local`).
+  //   2. Auth.js `user.image` (OAuth provider URL — Google profile picture).
+  //   3. Avatar falls back to initials.
+  const profilePhotoUrl = user
+    ? await resolveProfilePhotoUrl(user.profilePhotoR2Key ?? null)
+    : null;
+  const avatarSrc = profilePhotoUrl ?? user?.image ?? undefined;
+
   const defaultAction = user ? (
     <Link
       href="/account/profile"
@@ -48,7 +60,7 @@ export async function SiteHeader({ activeHref = "/", action }: SiteHeaderProps) 
       <Avatar
         size="md"
         name={deriveAvatarName(user)}
-        src={user.image ?? undefined}
+        src={avatarSrc}
         className="bg-primary-container text-on-primary"
       />
     </Link>

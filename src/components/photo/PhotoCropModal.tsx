@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Cropper, { type Area } from "react-easy-crop";
 import { Button } from "@/components/ui/button";
 
@@ -13,14 +13,19 @@ interface PhotoCropModalProps {
 }
 
 /**
- * Circular crop + zoom UI for the tutor profile photo. Uses `react-easy-crop`
- * (5.5.7, ~12KB) for the gesture handling; we render the final crop to a
- * canvas to produce a square JPEG that fits the circular avatar.
+ * Circular crop + zoom UI for profile photos. Shared by tutor onboarding +
+ * student account-profile surfaces. Uses `react-easy-crop` (5.5.7, ~12KB);
+ * we render the final crop to a canvas to produce a square JPEG that fits
+ * the circular avatar.
  *
- * Why crop client-side rather than server-side? (a) gives the tutor a
- * live preview of what students will actually see in the marketplace browse
- * cards, (b) reduces the R2 byte cost by uploading a 400×400 instead of a
- * 12MP iPhone shot, (c) avoids needing image-processing libs on the server.
+ * Why crop client-side rather than server-side? (a) gives the user a live
+ * preview of what others will see, (b) reduces the R2 byte cost by
+ * uploading a 400×400 instead of a 12MP iPhone shot, (c) avoids needing
+ * image-processing libs on the server.
+ *
+ * Originally lived under `src/app/tutor/onboarding/profile/`; moved to
+ * `src/components/photo/` so the student `/account/profile` photo upload
+ * can share the same UX without a cross-feature import.
  */
 export function PhotoCropModal({ file, onConfirm, onCancel }: PhotoCropModalProps) {
   const [crop, setCrop] = useState({ x: 0, y: 0 });
@@ -34,14 +39,29 @@ export function PhotoCropModal({ file, onConfirm, onCancel }: PhotoCropModalProp
   // feedback.
   const [cropReady, setCropReady] = useState(false);
 
-  // Patch M7 (2026-05-13): derive the blob URL with `useMemo` (per-file
-  // identity) and revoke from a cleanup-only effect. The previous shape
-  // (`useState` + `setState(url)` inside `useEffect`) tripped the
-  // `react-hooks/set-state-in-effect` ESLint rule.
-  const imageSrc = useMemo(() => URL.createObjectURL(file), [file]);
+  // Blob URL lifecycle paired with the effect (NOT useMemo).
+  //
+  // The previous `useMemo` + cleanup-only-effect shape (Patch M7, 2026-05-13)
+  // appeared correct on paper but breaks under React 18+ strict mode (default
+  // in dev): strict mode runs effects mount → cleanup → mount, and `useMemo`
+  // doesn't re-run on the second mount, leaving the component with a
+  // reference to the already-revoked blob URL. The image then loads as
+  // `naturalWidth: 0` with `complete: true` — the cropper stage renders
+  // black. Reproduced 2026-05-15 in /account/profile's ProfilePhotoEditor.
+  //
+  // Correct pattern: create the URL inside the effect so cleanup pairs with
+  // the same lifecycle. Strict-mode double-invocation: mount (create + set
+  // state), cleanup (revoke), mount (create + set state again with a fresh
+  // URL). React 18+'s `set-state-in-effect` rule disabled inline; the rule
+  // exists to discourage unnecessary state syncs, but blob-URL ownership
+  // genuinely requires the create + revoke pair to live in the effect.
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
   useEffect(() => {
-    return () => URL.revokeObjectURL(imageSrc);
-  }, [imageSrc]);
+    const url = URL.createObjectURL(file);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setImageSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
 
   // ESC to cancel.
   useEffect(() => {
@@ -62,7 +82,7 @@ export function PhotoCropModal({ file, onConfirm, onCancel }: PhotoCropModalProp
   // mattered if the parent re-rendered the modal post-confirm (e.g., a
   // second crop attempt while the previous blob upload was still in flight).
   async function handleConfirm() {
-    if (!croppedAreaPixelsRef.current) return;
+    if (!croppedAreaPixelsRef.current || !imageSrc) return;
     setBusy(true);
     try {
       const blob = await cropImageToBlob(imageSrc, croppedAreaPixelsRef.current);
@@ -91,17 +111,19 @@ export function PhotoCropModal({ file, onConfirm, onCancel }: PhotoCropModalProp
           </p>
         </div>
         <div className="relative h-[360px] w-full bg-black">
-          <Cropper
-            image={imageSrc}
-            crop={crop}
-            zoom={zoom}
-            aspect={1}
-            cropShape="round"
-            showGrid={false}
-            onCropChange={setCrop}
-            onZoomChange={setZoom}
-            onCropComplete={onCropComplete}
-          />
+          {imageSrc && (
+            <Cropper
+              image={imageSrc}
+              crop={crop}
+              zoom={zoom}
+              aspect={1}
+              cropShape="round"
+              showGrid={false}
+              onCropChange={setCrop}
+              onZoomChange={setZoom}
+              onCropComplete={onCropComplete}
+            />
+          )}
         </div>
         <div className="space-y-3 px-6 py-4">
           <label className="block text-start">
