@@ -10,7 +10,10 @@
 // after approval", etc.), and a queue would obscure that intent.
 
 import { tutorProfiles as tutorProfilesTable } from "../../schema";
-import type { DiscoverableTutorPublic } from "../tutor-queries";
+import type {
+  DiscoverableTutorPublic,
+  TutorProfileForOwner,
+} from "../tutor-queries";
 
 export interface FakeTutorRow {
   userId: string;
@@ -88,23 +91,32 @@ export class FakeDiscoveryDb {
             // Use the captured condition object as a sentinel for "the helper
             // composed something" (a non-null SQL clause).
             void condition;
+            const ownerMode = this.ownerOnlyMode;
+            const includeRow = (row: FakeTutorRow): boolean =>
+              ownerMode
+                ? row.deletedAt === null
+                : row.isActive && row.deletedAt === null;
             return {
               limit: (n: number) => {
                 void n;
                 // Apply the actual filter logic in JS.
-                const filtered: DiscoverableTutorPublic[] = [];
+                const filtered: Array<DiscoverableTutorPublic | TutorProfileForOwner> = [];
                 const queriedUserId = this.queriedUserId;
                 if (queriedUserId === null) {
                   // No userId set on the fake → return all matching rows.
                   for (const row of this.rows.values()) {
-                    if (row.isActive && row.deletedAt === null) {
-                      filtered.push(projectPublic(row));
+                    if (includeRow(row)) {
+                      filtered.push(
+                        ownerMode ? projectOwner(row) : projectPublic(row),
+                      );
                     }
                   }
                 } else {
                   const row = this.rows.get(queriedUserId);
-                  if (row && row.isActive && row.deletedAt === null) {
-                    filtered.push(projectPublic(row));
+                  if (row && includeRow(row)) {
+                    filtered.push(
+                      ownerMode ? projectOwner(row) : projectPublic(row),
+                    );
                   }
                 }
                 return Promise.resolve(filtered.slice(0, n));
@@ -122,6 +134,17 @@ export class FakeDiscoveryDb {
     this.queriedUserId = userId;
     return this;
   }
+
+  /**
+   * Toggle Story 2.5's owner-mode lookup: when true, the select chain drops
+   * the `is_active=true` filter (still respects `deletedAt IS NULL`) and
+   * projects to the wider `TutorProfileForOwner` shape.
+   */
+  ownerOnlyMode = false;
+  withOwnerOnlyMode(enabled: boolean): this {
+    this.ownerOnlyMode = enabled;
+    return this;
+  }
 }
 
 function projectPublic(row: FakeTutorRow): DiscoverableTutorPublic {
@@ -130,6 +153,28 @@ function projectPublic(row: FakeTutorRow): DiscoverableTutorPublic {
     out[key] = row[key];
   }
   return out as unknown as DiscoverableTutorPublic;
+}
+
+const OWNER_KEYS: Array<keyof TutorProfileForOwner> = [
+  "userId",
+  "displayName",
+  "bio",
+  "city",
+  "introVideoR2Key",
+  "profilePhotoR2Key",
+  "hourlyPriceIls",
+  "lesson45PriceIls",
+  "lessonLengthMinutes",
+  "vettingStatus",
+  "isActive",
+];
+
+function projectOwner(row: FakeTutorRow): TutorProfileForOwner {
+  const out: Record<string, unknown> = {};
+  for (const key of OWNER_KEYS) {
+    out[key] = row[key];
+  }
+  return out as unknown as TutorProfileForOwner;
 }
 
 export function buildFakeRow(overrides: Partial<FakeTutorRow> = {}): FakeTutorRow {

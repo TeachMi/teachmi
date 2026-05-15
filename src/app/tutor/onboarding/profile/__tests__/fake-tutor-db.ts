@@ -17,10 +17,22 @@ export interface CapturedDelete {
   whereCondition: unknown;
 }
 
+export type CapturedOperation =
+  | { kind: "insert"; table: unknown; value: unknown }
+  | { kind: "update"; table: unknown; set: unknown; whereCondition: unknown }
+  | { kind: "delete"; table: unknown; whereCondition: unknown };
+
 export class FakeTutorDb {
   readonly inserts: CapturedInsert[] = [];
   readonly updates: CapturedUpdate[] = [];
   readonly deletes: CapturedDelete[] = [];
+  /**
+   * Unified, ordered log of every write across all tables. Story 2.5 uses
+   * this to assert write order (e.g., `is_active=false` lands before
+   * `vetting_status='pending'`). Existing Story 2.1 tests still use the
+   * per-table arrays above and ignore this log.
+   */
+  readonly operations: CapturedOperation[] = [];
 
   /** Pre-queue rows for the next `db.select(...).from(...).where(...)` call. */
   selectQueue: unknown[][] = [];
@@ -76,6 +88,7 @@ export class FakeTutorDb {
           });
         }
         this.inserts.push({ table, value });
+        this.operations.push({ kind: "insert", table, value });
         const base: Promise<unknown> = Promise.resolve(undefined);
         return Object.assign(base, {
           returning: (cols: unknown) => {
@@ -99,6 +112,7 @@ export class FakeTutorDb {
             });
           }
           this.updates.push({ table, set, whereCondition });
+          this.operations.push({ kind: "update", table, set, whereCondition });
           const base: Promise<unknown> = Promise.resolve(undefined);
           return Object.assign(base, {
             returning: (cols: unknown) => {
@@ -117,6 +131,7 @@ export class FakeTutorDb {
         const err = this.takeFailNext();
         if (err) return Promise.reject(err);
         this.deletes.push({ table, whereCondition });
+        this.operations.push({ kind: "delete", table, whereCondition });
         return Promise.resolve(undefined);
       },
     };

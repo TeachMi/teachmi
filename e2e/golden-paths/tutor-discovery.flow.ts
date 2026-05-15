@@ -109,12 +109,19 @@ export async function provisionInactiveTutor(
     })
     .onConflictDoNothing({ target: tutorProfiles.userId });
 
+  // Reset to canonical "fresh submit" state. Story 2.5's test mutates bio +
+  // hourlyPriceIls; without restoring those here, the next test that calls
+  // `provisionInactiveTutor` would see stale fields and any spec asserting
+  // on the canonical copy would fail.
   await db
     .update(tutorProfiles)
     .set({
       vettingStatus: "pending",
       isActive: false,
       deletedAt: null,
+      bio: "מורה למתמטיקה — שיעורים פרטיים לבגרות.",
+      hourlyPriceIls: 180,
+      lesson45PriceIls: 140,
     })
     .where(eq(tutorProfiles.userId, userId));
 
@@ -265,6 +272,65 @@ export async function seedRecurringAvailability(
     createdByKind: "system",
     createdByActor: "e2e-tutor-discovery-fixture",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Story 2.5 — direct-DB simulators for the profile-edit flow. These bypass
+// the Server Action (which depends on a signed-in session) and write the
+// equivalent end states so the E2E spec can verify the discoverability gate
+// flips correctly across non-trigger and trigger edits.
+// ---------------------------------------------------------------------------
+
+/**
+ * Simulate a non-trigger profile edit (bio only). Writes the new bio in place
+ * WITHOUT touching `is_active` or `vetting_status` — matches what the
+ * `runEditProfile` orchestrator does when only non-trigger fields changed.
+ */
+export async function simulateProfileEditOfBio(
+  tutorUserId: string,
+  newBio: string,
+): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL required for simulateProfileEditOfBio");
+  const sql = neon(url);
+  const db = drizzle(sql);
+
+  await db
+    .update(tutorProfiles)
+    .set({ bio: newBio })
+    .where(eq(tutorProfiles.userId, tutorUserId));
+}
+
+/**
+ * Simulate a trigger profile edit (hourly price). Matches the orchestrator's
+ * write order:
+ *   1. is_active = false (FIRST)
+ *   2. vetting_status = 'pending'
+ *   3. price UPDATE
+ * Stops short of writing the audit row — the spec asserts the gate, not the
+ * audit table.
+ */
+export async function simulateProfileEditOfPrice(
+  tutorUserId: string,
+  newHourlyPriceIls: number,
+): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL required for simulateProfileEditOfPrice");
+  const sql = neon(url);
+  const db = drizzle(sql);
+
+  await db
+    .update(tutorProfiles)
+    .set({ isActive: false })
+    .where(eq(tutorProfiles.userId, tutorUserId));
+  await db
+    .update(tutorProfiles)
+    .set({ vettingStatus: "pending" })
+    .where(eq(tutorProfiles.userId, tutorUserId));
+  await db
+    .update(tutorProfiles)
+    .set({ hourlyPriceIls: newHourlyPriceIls })
+    .where(eq(tutorProfiles.userId, tutorUserId));
 }
 
 /**

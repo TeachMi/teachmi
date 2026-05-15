@@ -122,6 +122,52 @@ test("approved tutor profile renders hero + subjects + bio + availability empty-
   expect(videoSrc).toBeTruthy();
 });
 
+test("approved tutor: bio edit preserves discoverability; price edit pauses it (Story 2.5 FR14)", async ({
+  page,
+}, testInfo) => {
+  const {
+    provisionInactiveTutor,
+    simulateAdminApproval,
+    simulateProfileEditOfBio,
+    simulateProfileEditOfPrice,
+  } = await import("./tutor-discovery.flow");
+
+  const tutor = await provisionInactiveTutor(testInfo);
+  if (!tutor) {
+    test.skip(true, "DATABASE_URL not set — tutor-discovery fixture cannot run.");
+    return;
+  }
+
+  await simulateAdminApproval(tutor.userId);
+
+  // 1. Baseline: tutor is discoverable (200) after admin approval.
+  const profileUrl = `/tutor/${tutor.userId}`;
+  const baseline = await page.goto(profileUrl);
+  expect(baseline?.status()).toBe(200);
+
+  // 2. Non-trigger bio edit. Should leave the tutor discoverable AND surface
+  //    the new bio on the public profile.
+  const newBio = `ביוגרפיה חדשה (Story 2.5 E2E ${Date.now()}) — מורה למתמטיקה.`;
+  await simulateProfileEditOfBio(tutor.userId, newBio);
+
+  const afterBioEdit = await page.goto(profileUrl);
+  expect(
+    afterBioEdit?.status(),
+    "non-trigger bio edit should NOT remove the tutor from discoverability",
+  ).toBe(200);
+  await expect(page.getByText(newBio)).toBeVisible();
+
+  // 3. Trigger price edit. Should flip the discoverability gate so the
+  //    public profile 404s.
+  await simulateProfileEditOfPrice(tutor.userId, 220);
+
+  const afterPriceEdit = await page.goto(profileUrl);
+  expect(
+    afterPriceEdit?.status(),
+    "trigger price edit should flip is_active=false → public profile 404",
+  ).toBe(404);
+});
+
 test("anon click on available slot redirects to signup with intent params (Story 3.2)", async ({
   page,
 }, testInfo) => {

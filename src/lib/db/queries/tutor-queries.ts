@@ -194,6 +194,87 @@ export const DISCOVERABLE_TUTOR_PUBLIC_KEYS = Object.freeze([
 ] as const);
 
 // ---------------------------------------------------------------------------
+// Story 2.5 — owner-only profile lookup for the edit page.
+//
+// The discoverable helper above filters by `is_active=true AND deletedAt IS
+// NULL`. The edit page (`/tutor/<userId>/edit`) must work for a tutor whose
+// previous edit triggered re-vetting and is now `is_active=false`. This
+// sibling helper bypasses the `is_active` filter but STILL respects
+// `deletedAt` (soft-deleted profiles are gone — matches Story 1.17 contract).
+//
+// SECURITY: this helper is OWNER-ONLY. Call sites MUST verify the caller is
+// the tutor whose row is being read (typically `slug === session.user.id`)
+// before invoking. The helper itself does not enforce authorization — it's
+// a thin DB read.
+// ---------------------------------------------------------------------------
+
+export interface TutorProfileForOwner {
+  userId: string;
+  displayName: string;
+  bio: string | null;
+  city: string | null;
+  introVideoR2Key: string | null;
+  profilePhotoR2Key: string | null;
+  hourlyPriceIls: number;
+  lesson45PriceIls: number | null;
+  lessonLengthMinutes: number;
+  vettingStatus: "pending" | "approved" | "rejected" | "paused";
+  isActive: boolean;
+}
+
+const OWNER_PROFILE_COLUMNS = {
+  userId: tutorProfiles.userId,
+  displayName: tutorProfiles.displayName,
+  bio: tutorProfiles.bio,
+  city: tutorProfiles.city,
+  introVideoR2Key: tutorProfiles.introVideoR2Key,
+  profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
+  hourlyPriceIls: tutorProfiles.hourlyPriceIls,
+  lesson45PriceIls: tutorProfiles.lesson45PriceIls,
+  lessonLengthMinutes: tutorProfiles.lessonLengthMinutes,
+  vettingStatus: tutorProfiles.vettingStatus,
+  isActive: tutorProfiles.isActive,
+} as const;
+
+export const OWNER_PROFILE_KEYS = Object.freeze([
+  "userId",
+  "displayName",
+  "bio",
+  "city",
+  "introVideoR2Key",
+  "profilePhotoR2Key",
+  "hourlyPriceIls",
+  "lesson45PriceIls",
+  "lessonLengthMinutes",
+  "vettingStatus",
+  "isActive",
+] as const);
+
+/**
+ * Owner-only lookup for the profile-edit page. Returns the tutor's row even
+ * when `is_active=false` (e.g., a previous edit triggered re-vetting), but
+ * returns `null` for soft-deleted rows (`deletedAt IS NOT NULL`) — soft-delete
+ * is still hard hide.
+ *
+ * **MUST be authorized at the call site.** Passing in another tutor's user_id
+ * would return that tutor's row; this helper is meant to be invoked AFTER the
+ * caller has verified `userId === session.user.id`.
+ */
+export async function getTutorProfileForOwner(
+  userId: string,
+  deps: TutorQueryDeps = {},
+): Promise<TutorProfileForOwner | null> {
+  const db = deps.db ?? getDb();
+  const rows = (await db
+    .select(OWNER_PROFILE_COLUMNS)
+    .from(tutorProfiles)
+    .where(and(eq(tutorProfiles.userId, userId), isNull(tutorProfiles.deletedAt)))
+    .limit(1)) as TutorProfileForOwner[];
+
+  return rows[0] ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Story 3.2 extensions — sibling helpers for the public profile page.
 // Read-side only; no audit writes, no state mutations.
 // ---------------------------------------------------------------------------
