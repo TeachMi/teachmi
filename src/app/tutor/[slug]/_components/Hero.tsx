@@ -2,6 +2,12 @@
 // Two-column on lg breakpoint (info right of video in RTL); single-column on
 // mobile. RSC — zero client JS. The IntroVideoPlayer is the only client
 // component inside this hero region (handles play-state overlay swap).
+//
+// RTL FLEX NOTE: every inner row uses default `flex` (NOT `flex-row-reverse`).
+// In RTL writing mode, flex-row already flows right-to-left, so the first DOM
+// child lands on the RIGHT (leading) edge. Adding `flex-row-reverse` flips
+// back to left-to-right — undoing the RTL flow. Avoid it unless you
+// intentionally want LTR-within-RTL (rare). Per AR-21 logical-properties guidance.
 
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +50,7 @@ export function Hero({
     >
       {/* Info column — rightmost in RTL via DOM order */}
       <div className="lg:col-span-3 text-start">
-        <div className="flex flex-row-reverse items-start gap-5 mb-5">
+        <div className="flex items-start gap-5 mb-5">
           <Avatar
             src={profilePhotoUrl ?? undefined}
             name={tutor.displayName}
@@ -52,29 +58,27 @@ export function Hero({
             className="border-4 border-white shadow-md"
           />
           <div className="flex-1">
-            <div className="flex flex-row-reverse items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1">
               <h1 className="font-display font-extrabold text-3xl text-primary-container">
                 {tutor.displayName}
               </h1>
-              {tutor.vettingStatus === "approved" && (
-                <Badge variant="approved" size="md" className="rounded-full">
-                  <span
-                    className="material-symbols-outlined text-sm"
-                    style={{ fontVariationSettings: "'FILL' 1" }}
-                    aria-hidden="true"
-                  >
-                    verified
-                  </span>
-                  מורה מאומתת
-                </Badge>
-              )}
+              <Badge variant="approved" size="md" className="rounded-full">
+                <span
+                  className="material-symbols-outlined text-sm"
+                  style={{ fontVariationSettings: "'FILL' 1" }}
+                  aria-hidden="true"
+                >
+                  verified
+                </span>
+                מורה מאומתת
+              </Badge>
             </div>
             <p className="text-on-surface-variant mb-3">{headline}</p>
 
             {(rating !== null || tutor.totalLessonsCompleted > 0) && (
-              <div className="flex flex-row-reverse flex-wrap items-center gap-4 text-sm">
+              <div className="flex flex-wrap items-center gap-4 text-sm">
                 {rating !== null && (
-                  <span className="flex flex-row-reverse items-center gap-1">
+                  <span className="flex items-center gap-1">
                     <span
                       className="material-symbols-outlined text-tertiary-accent text-base"
                       style={{ fontVariationSettings: "'FILL' 1" }}
@@ -91,7 +95,7 @@ export function Hero({
                 {tutor.totalLessonsCompleted > 0 && (
                   <>
                     {rating !== null && <span className="text-secondary">·</span>}
-                    <span className="text-secondary flex flex-row-reverse items-center gap-1">
+                    <span className="text-secondary flex items-center gap-1">
                       <span
                         className="material-symbols-outlined text-base"
                         aria-hidden="true"

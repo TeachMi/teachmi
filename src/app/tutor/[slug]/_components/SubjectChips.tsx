@@ -13,7 +13,7 @@ export function SubjectChips({ subjects, withSectionHeader = false }: SubjectChi
   if (subjects.length === 0) return null;
 
   const chips = (
-    <div className="flex flex-row-reverse flex-wrap gap-2">
+    <div className="flex flex-wrap gap-2">
       {subjects.map((s) => (
         <Badge
           key={s.id}
