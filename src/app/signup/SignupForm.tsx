@@ -8,6 +8,7 @@ import { CheckboxField } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { RoleCardPicker } from "@/components/auth/RoleCardPicker";
 import { PASSWORD_MIN_LENGTH } from "@/lib/auth/registration";
+import { MARKETING_OPTIN_LABEL_HE } from "@/lib/legal/marketing-consent";
 import { registerAction } from "./actions";
 import {
   REGISTER_INITIAL_STATE,
@@ -127,6 +128,13 @@ export function SignupForm() {
                   </Link>
                 </span>
               }
+            />
+
+            <CheckboxField
+              name="marketingOptIn"
+              value="on"
+              defaultChecked={values.marketingOptIn === true}
+              label={MARKETING_OPTIN_LABEL_HE}
             />
 
             {state.formError && (

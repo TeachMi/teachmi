@@ -7,6 +7,7 @@ import { and, eq, gte } from "drizzle-orm";
 import {
   auditEvents,
   consentReceipts,
+  notificationPreferences,
   users,
   verificationTokens,
 } from "../../lib/db/schema";
@@ -34,6 +35,7 @@ import {
   CURRENT_PRIVACY_POLICY_VERSION,
   truncateUserAgent,
 } from "../../lib/legal/privacy-consent";
+import { CURRENT_MARKETING_OPTIN_VERSION } from "../../lib/legal/marketing-consent";
 import type { RegisterActionState } from "./register-state";
 
 export type RegisterFlowResult =
@@ -49,6 +51,7 @@ interface SelectChain {
 interface InsertWithReturning<TReturning = unknown> extends Promise<unknown> {
   returning(columns: unknown): Promise<TReturning[]>;
   onConflictDoNothing(opts?: unknown): InsertWithReturning<TReturning>;
+  onConflictDoUpdate(opts: unknown): InsertWithReturning<TReturning>;
 }
 interface InsertChain {
   values(value: unknown): InsertWithReturning;
@@ -123,6 +126,12 @@ export async function runRegister(
     formData.get("privacyPolicy") === "on" ||
     formData.get("privacyPolicy") === "true" ||
     formData.get("privacyPolicy") === "1";
+  // Story 1.22: marketing-comm opt-in. OPTIONAL — no field-level validation,
+  // no fieldErrors entry. Absence simply means "do not send marketing".
+  const marketingOptIn =
+    formData.get("marketingOptIn") === "on" ||
+    formData.get("marketingOptIn") === "true" ||
+    formData.get("marketingOptIn") === "1";
 
   const fieldErrors: RegisterActionState["fieldErrors"] = {};
   if (name.length < 2) {
@@ -148,7 +157,7 @@ export async function runRegister(
       state: {
         ok: false,
         fieldErrors,
-        values: { name, email: emailRaw, role, tos, privacyPolicy },
+        values: { name, email: emailRaw, role, tos, privacyPolicy, marketingOptIn },
       },
     };
   }
@@ -194,7 +203,7 @@ export async function runRegister(
         state: {
           ok: false,
           formError: "יותר מדי ניסיונות. נסו שוב בעוד דקה.",
-          values: { name, email: emailRaw, role, tos, privacyPolicy },
+          values: { name, email: emailRaw, role, tos, privacyPolicy, marketingOptIn },
         },
       };
     }
@@ -226,7 +235,7 @@ export async function runRegister(
         state: {
           ok: false,
           formError: "אימייל זה כבר רשום במערכת. נסו להיכנס.",
-          values: { name, email: emailRaw, role, tos, privacyPolicy },
+          values: { name, email: emailRaw, role, tos, privacyPolicy, marketingOptIn },
         },
       };
     }
@@ -291,7 +300,7 @@ export async function runRegister(
       state: {
         ok: false,
         formError: "אירעה שגיאה. נסו שוב בעוד דקה.",
-        values: { name, email: emailRaw, role, tos },
+        values: { name, email: emailRaw, role, tos, privacyPolicy, marketingOptIn },
       },
     };
   }
@@ -407,6 +416,125 @@ export async function runRegister(
       userId,
       role,
       documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
+      source: "signup",
+    });
+  }
+
+  // FR60 marketing-opt-in capture. Out here alongside the privacy block,
+  // OUTSIDE the cleanup-protected inner try — same reasoning as the privacy
+  // block (Story 1.21 review [H1] comment above). Three writes in sequence
+  // form an atomicity unit at the analytics layer: consent receipt → audit
+  // event → notification_preferences upsert. Any failure → log, swallow, do
+  // NOT roll back the user, do NOT fire the analytics event. Marketing
+  // opt-in is OPTIONAL — absence is the default state and a write failure
+  // is non-blocking.
+  let marketingOptInLogged = false;
+  if (marketingOptIn) {
+    try {
+      const acceptedAt = new Date();
+      const ipAddress = ip === "unknown" ? null : ip;
+
+      const marketingConsentInsert = (await db
+        .insert(consentReceipts)
+        .values({
+          userId,
+          documentType: "marketing_opt_in",
+          documentVersion: CURRENT_MARKETING_OPTIN_VERSION,
+          acceptedAt,
+          ipAddress,
+          userAgent: truncateUserAgent(deps.userAgent),
+          signature: null,
+          documentSnapshot: null,
+          createdByKind: "user",
+          createdByActor: userId,
+        })
+        .onConflictDoNothing({
+          target: [
+            consentReceipts.userId,
+            consentReceipts.documentType,
+            consentReceipts.documentVersion,
+          ],
+        })
+        .returning({ id: consentReceipts.id })) as { id: string }[];
+
+      if (marketingConsentInsert.length > 0) {
+        await db.insert(auditEvents).values(
+          toAuditEventValues({
+            eventType: "auth.marketing_optin_accepted",
+            actorKind: "user",
+            actorId: userId,
+            actorMeta: ipAddress,
+            targetType: "user",
+            targetId: userId,
+            payload: {
+              documentVersion: CURRENT_MARKETING_OPTIN_VERSION,
+              source: "signup",
+            },
+          }),
+        );
+
+        // UPSERT notification_preferences. On INSERT, let the table defaults
+        // populate the other 6 booleans (marketingSms/whatsapp default false;
+        // transactionalEmail default true per FR42). On UPDATE — defense
+        // against a stale row from a future Epic 6 settings UI write (a user
+        // who previously toggled marketingSms=true in settings and then signs
+        // in again via a re-registration path). Only flip marketingEmail; do
+        // NOT clobber other channel booleans the settings UI may have set.
+        // (Story 1.17 hard-delete is NOT a relevant scenario here because
+        // notification_preferences.userId has ON DELETE CASCADE in the schema,
+        // so a user hard-delete removes this row entirely — there is no stale
+        // row left over from that path.) See the story Dev Notes "Why a
+        // partial update on the UPDATE branch". [Code review round 1, P-1.]
+        await db
+          .insert(notificationPreferences)
+          .values({
+            userId,
+            marketingEmail: true,
+            createdByKind: "user",
+            createdByActor: userId,
+          })
+          .onConflictDoUpdate({
+            target: notificationPreferences.userId,
+            set: {
+              marketingEmail: true,
+              updatedAt: new Date(),
+              updatedByKind: "user",
+              updatedByActor: userId,
+            },
+          });
+
+        marketingOptInLogged = true;
+      }
+    } catch (marketingErr) {
+      log.error(
+        `[runRegister] marketing-opt-in capture failed for userId=${userId}; user remains registered, marketing analytics skipped`,
+        marketingErr,
+      );
+      // Intentionally do NOT throw. Marketing opt-in is OPTIONAL — a write
+      // failure is non-blocking. The user can re-opt-in via the future
+      // Epic 6 settings UI.
+      //
+      // Known partial-failure mode (code review round 1, DN-1): if the
+      // consent_receipts insert succeeds but the auditEvents insert OR the
+      // notification_preferences UPSERT fails, the user ends up with a
+      // marketing_opt_in receipt at CURRENT_MARKETING_OPTIN_VERSION but
+      // `marketing_email = false`. Subsequent submits hit ON CONFLICT DO
+      // NOTHING on the receipt and skip this entire block, so the preference
+      // flip is never retried inside `runRegister`. Accepted for MVP1
+      // because (a) the failure rate is very low on Neon HTTP, (b) the
+      // user-INSERT's ON CONFLICT on email already gates true concurrency
+      // here, (c) Epic 6 / Story 6.3's settings UI will self-heal by
+      // re-running the UPSERT on any visit (idempotent). Logged for ops
+      // visibility; tracked in deferred-work.md.
+    }
+  }
+
+  if (marketingOptInLogged) {
+    track({
+      event: "marketing_optin_accepted",
+      userId,
+      role,
+      documentVersion: CURRENT_MARKETING_OPTIN_VERSION,
       source: "signup",
     });
   }
