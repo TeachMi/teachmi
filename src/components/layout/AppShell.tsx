@@ -17,6 +17,9 @@ export function AppShell({
   mainClassName = "flex-1",
   showFooter = true,
 }: AppShellProps) {
+  // SiteHeader is async (reads auth to decide between the כניסה link vs the
+  // signed-in avatar) — React server components handle async children
+  // transparently; no caller changes needed.
   return (
     <div className="flex min-h-dvh flex-col bg-surface text-on-surface">
       <SiteHeader activeHref={activeHref} action={headerAction} />

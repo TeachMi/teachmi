@@ -15,7 +15,20 @@ import {
   type RegisterActionState,
 } from "./register-state";
 
-export function SignupForm() {
+export interface SignupFormProps {
+  /**
+   * Story 3.3 — booking-funnel intent target. When non-empty, threaded into:
+   *   1. A hidden `<input name="next">` so `registerAction` redirects post-
+   *      verify to the booking-stub instead of /dashboard.
+   *   2. The "התחברות" cross-link as `?callbackUrl=<encoded next>` so a
+   *      visitor with an existing account can sign in without losing intent.
+   * Page-level (`signup/page.tsx`) is responsible for parsing + sanitizing
+   * the intent params; the form just plumbs the resolved `next` through.
+   */
+  next?: string;
+}
+
+export function SignupForm({ next }: SignupFormProps = {}) {
   const [state, formAction, pending] = useActionState<RegisterActionState, FormData>(
     registerAction,
     REGISTER_INITIAL_STATE,
@@ -45,6 +58,11 @@ export function SignupForm() {
         </CardHeader>
         <CardBody>
           <form action={formAction} className="space-y-5" noValidate>
+            {/* Story 3.3 — booking-funnel intent target. Always rendered so the
+                DOM is uniform regardless of intent state; empty value flows
+                through registerAction as `null` (no intent). */}
+            <input type="hidden" name="next" value={next ?? ""} />
+
             <Input
               name="name"
               type="text"
@@ -154,7 +172,15 @@ export function SignupForm() {
               יש לכם חשבון?{" "}
               <Link
                 className="font-bold text-primary-container hover:underline"
-                href="/signin"
+                href={
+                  // Story 3.3: preserve booking intent across the cross-link.
+                  // `/signin` page-level handler calls decomposeNextToGateParams
+                  // on its `callbackUrl` query param to reconstruct the gate
+                  // payload + render the same banner.
+                  next
+                    ? `/signin?callbackUrl=${encodeURIComponent(next)}`
+                    : "/signin"
+                }
               >
                 התחברות
               </Link>

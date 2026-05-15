@@ -46,6 +46,15 @@ export interface ResendDeps {
   db: DbForResend;
   emailProvider: EmailProvider;
   ip: string;
+  /**
+   * Story 3.3 — booking-funnel intent target. When non-null, threaded into
+   * the regenerated verification URL as `&next=<encoded>` AND into the
+   * post-resend redirect (`/signup/verify-email-sent?email=...&next=...`) so
+   * a second resend retains intent. Sourced by `resend-actions.ts` from
+   * `formData.get("next")` and pre-sanitized via
+   * `getSafeCallbackUrl(raw, "")`.
+   */
+  next: string | null;
   origin: string;
   track: (event: AnalyticsEvent) => void;
   logger?: { error: (message: string, err?: unknown) => void };
@@ -144,7 +153,7 @@ export async function runResend(
         subject: EMAIL_TEMPLATES.AUTH_VERIFY_EMAIL.subject,
         templateId: EMAIL_TEMPLATES.AUTH_VERIFY_EMAIL.templateId,
         payload: {
-          verifyUrl: buildVerificationUrl(token, origin),
+          verifyUrl: buildVerificationUrl(token, origin, { next: deps.next }),
           expiresInMinutes: 15,
         },
       });
@@ -153,8 +162,12 @@ export async function runResend(
     }
   }
 
-  return {
-    kind: "redirect",
-    url: `/signup/verify-email-sent?email=${encodeURIComponent(email)}`,
-  };
+  // Story 3.3: thread `next` back into the verify-email-sent redirect so a
+  // SECOND resend retains intent. Empty `next` → unchanged URL.
+  const base = `/signup/verify-email-sent?email=${encodeURIComponent(email)}`;
+  const url =
+    deps.next && deps.next.length > 0
+      ? `${base}&next=${encodeURIComponent(deps.next)}`
+      : base;
+  return { kind: "redirect", url };
 }

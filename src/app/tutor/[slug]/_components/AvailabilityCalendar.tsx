@@ -12,7 +12,16 @@ import Link from "next/link";
 import { Card, CardBody } from "@/components/ui/card";
 import { formatHebrewWeekday, formatIlsCurrency } from "@/lib/hebrew/format";
 import type { SlotState, SlotStatesByDay } from "@/lib/availability/compute-slots";
-import { signSlotPayload } from "@/lib/auth/slot-signing";
+// Story 3.3 extracted these into a shared module so /signup + /signin can
+// consume the SAME URL shape this component emits — preventing producer/
+// consumer drift. Producer side stays identical: `buildGateSignupUrl` mints
+// the sig internally; `buildSignedBookingStubUrl` does the same for the
+// signed-in branch. The URLs are byte-equivalent to the inline helpers this
+// component previously defined.
+import {
+  buildGateSignupUrl,
+  buildSignedBookingStubUrl,
+} from "@/lib/booking/urls";
 
 interface AvailabilityCalendarProps {
   tutorUserId: string;
@@ -36,47 +45,6 @@ const HOURS_RANGE = Array.from(
     return `${String(hour).padStart(2, "0")}:${minute}`;
   },
 );
-
-function buildSignupCallbackUrl(
-  tutorUserId: string,
-  slotIso: string,
-  duration: 45 | 60,
-): string {
-  const callbackUrl = `/tutor/${tutorUserId}?duration=${duration}`;
-  // Sign the (tutorUserId, slotIso, duration) tuple so Story 3.3 can
-  // detect tampered URLs cheaply before issuing any DB lookup. The
-  // signature is not a secrecy primitive — Story 3.3 must still validate
-  // the slot exists + is available — but it raises the floor for the
-  // anon-spoofing attack surface during the signup → booking handoff.
-  const sig = signSlotPayload({ tutorUserId, slotIso, duration });
-  const params = new URLSearchParams({
-    callbackUrl,
-    intent: "book",
-    tutorUserId,
-    slotIso,
-    duration: String(duration),
-    sig,
-  });
-  return `/signup?${params.toString()}`;
-}
-
-function buildBookingStubUrl(
-  tutorUserId: string,
-  slotIso: string,
-  duration: 45 | 60,
-): string {
-  // Same signature applied to the signed-in path. Story 4.3 will replace
-  // /booking-stub with the real booking action; until then, the param
-  // is just a forward-compat placeholder.
-  const sig = signSlotPayload({ tutorUserId, slotIso, duration });
-  const params = new URLSearchParams({
-    tutor: tutorUserId,
-    slot: slotIso,
-    duration: String(duration),
-    sig,
-  });
-  return `/booking-stub?${params.toString()}`;
-}
 
 export function AvailabilityCalendar({
   tutorUserId,
@@ -331,8 +299,16 @@ function SlotCell({
   }
   // available
   const href = isSignedIn
-    ? buildBookingStubUrl(tutorUserId, slot.startIsoUtc, selectedDuration)
-    : buildSignupCallbackUrl(tutorUserId, slot.startIsoUtc, selectedDuration);
+    ? buildSignedBookingStubUrl({
+        tutorUserId,
+        slotIso: slot.startIsoUtc,
+        duration: selectedDuration,
+      })
+    : buildGateSignupUrl({
+        tutorUserId,
+        slotIso: slot.startIsoUtc,
+        duration: selectedDuration,
+      });
   return (
     <Link
       href={href}

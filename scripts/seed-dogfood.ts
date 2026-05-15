@@ -32,22 +32,22 @@ const DOGFOOD_PASSWORD = "go";
 const ACCOUNTS = [
   {
     email: "ofer-student@teachme.co.il",
-    name: "Ofer (Student)",
+    name: "עפר התלמיד",
     role: "student" as const,
   },
   {
     email: "ofer-tutor@teachme.co.il",
-    name: "Ofer (Tutor)",
+    name: "עפר המורה",
     role: "tutor" as const,
   },
   {
     email: "aviel-student@teachme.co.il",
-    name: "Aviel (Student)",
+    name: "אביאל התלמיד",
     role: "student" as const,
   },
   {
     email: "aviel-tutor@teachme.co.il",
-    name: "Aviel (Tutor)",
+    name: "אביאל המורה",
     role: "tutor" as const,
   },
 ];

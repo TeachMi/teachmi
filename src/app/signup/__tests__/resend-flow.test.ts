@@ -13,7 +13,7 @@ import {
   silentLogger,
 } from "./fake-db";
 
-function makeDeps() {
+function makeDeps(overrides?: { next?: string | null }) {
   const db = new FakeDb();
   const email = new FakeEmailProvider();
   const recorder = new TrackRecorder();
@@ -25,6 +25,9 @@ function makeDeps() {
       db: db as unknown as DbForResend,
       emailProvider: email,
       ip: "10.0.0.1",
+      // Story 3.3 — booking-funnel intent target. Null by default so existing
+      // tests (which assert the no-intent redirect shape) keep working.
+      next: overrides?.next ?? null,
       origin: "https://teachme.test",
       track: recorder.capture,
       logger: silentLogger,
@@ -127,5 +130,53 @@ describe("runResend — invalid email", () => {
     expect(result.url).toBe("/signup/verify-error?reason=missing");
     expect(db.inserts).toHaveLength(0);
     expect(email.sends).toHaveLength(0);
+  });
+});
+
+// Story 3.3 (FR19) — booking-funnel intent threading for resend. The
+// verify-email-sent page passes `next` as a hidden field; the action extracts
+// + sanitizes it; runResend threads it into BOTH the regenerated verify URL
+// AND the post-resend redirect so a SECOND resend retains intent.
+describe("runResend — Story 3.3 next threading", () => {
+  const NEXT_URL =
+    "/booking-stub?tutor=11111111-2222-3333-4444-555555555555&slot=2026-05-20T11%3A00%3A00.000Z&duration=60&sig=abc";
+
+  it("threads next into the regenerated verification URL", async () => {
+    const { db, email, deps } = makeDeps({ next: NEXT_URL });
+    db.queueSelect<{ id: string }>([]); // rate-limit
+    db.queueSelect([{ id: "user-r-1", emailVerified: null }]); // user lookup
+
+    const result = await runResend(FORM, deps);
+
+    expect(result.kind).toBe("redirect");
+    expect(email.sends).toHaveLength(1);
+    const verifyUrl = email.sends[0]?.payload.verifyUrl as string;
+    expect(verifyUrl).toContain(`&next=${encodeURIComponent(NEXT_URL)}`);
+  });
+
+  it("appends &next= to the post-resend redirect when next is provided", async () => {
+    const { db, deps } = makeDeps({ next: NEXT_URL });
+    db.queueSelect<{ id: string }>([]); // rate-limit
+    db.queueSelect([{ id: "user-r-2", emailVerified: null }]); // user lookup
+
+    const result = await runResend(FORM, deps);
+
+    expect(result.kind).toBe("redirect");
+    expect(result.url).toBe(
+      `/signup/verify-email-sent?email=user%40example.com&next=${encodeURIComponent(NEXT_URL)}`,
+    );
+  });
+
+  it("omits &next= from the redirect when next is null (backward-compatible)", async () => {
+    const { db, deps } = makeDeps({ next: null });
+    db.queueSelect<{ id: string }>([]); // rate-limit
+    db.queueSelect([{ id: "user-r-3", emailVerified: null }]); // user lookup
+
+    const result = await runResend(FORM, deps);
+
+    expect(result.kind).toBe("redirect");
+    expect(result.url).toBe(
+      "/signup/verify-email-sent?email=user%40example.com",
+    );
   });
 });
