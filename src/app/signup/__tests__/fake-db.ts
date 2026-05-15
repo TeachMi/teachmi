@@ -152,19 +152,10 @@ export class FakeDb {
   }
 
   private makeInsertBuilder(table: unknown, value: unknown): InsertBuilder {
-    // Per-table call counting + targeted-N failure. Story 1.22 introduces this
-    // so a test can fail the SECOND insert into `consent_receipts` (the
-    // marketing receipt) while letting the FIRST (the privacy receipt) succeed.
-    const count = (this.insertCountByTable.get(table) ?? 0) + 1;
-    this.insertCountByTable.set(table, count);
-    const failSet = this.failOnNthByTable.get(table);
-    if (failSet?.has(count)) {
-      return this.makeRejectedBuilder(
-        new Error(
-          `FakeDb.failOnNthInsertInto: rejected insert #${count} into table ${String(table)}`,
-        ),
-      );
-    }
+    // Whole-table rejection short-circuit — does NOT increment the per-table
+    // counter so that combining `failingTables` with `failOnNthInsertInto` on
+    // the same table behaves predictably (rejected inserts don't shift the
+    // N-targeting). [Code review round 1, P-2.]
     if (this.failingTables.has(table)) {
       return this.makeRejectedBuilder(
         new Error(
@@ -176,6 +167,21 @@ export class FakeDb {
       const err = this.failNext;
       this.failNext = null;
       return this.makeRejectedBuilder(err);
+    }
+    // Per-table call counting + targeted-N failure. Story 1.22 introduces this
+    // so a test can fail the SECOND insert into `consent_receipts` (the
+    // marketing receipt) while letting the FIRST (the privacy receipt) succeed.
+    // Counter increments only when we've decided this insert is reaching the
+    // counting stage (i.e., not blanket-rejected above).
+    const count = (this.insertCountByTable.get(table) ?? 0) + 1;
+    this.insertCountByTable.set(table, count);
+    const failSet = this.failOnNthByTable.get(table);
+    if (failSet?.has(count)) {
+      return this.makeRejectedBuilder(
+        new Error(
+          `FakeDb.failOnNthInsertInto: rejected insert #${count} into table ${String(table)}`,
+        ),
+      );
     }
     this.inserts.push({ table, value });
     const base: Promise<unknown> = Promise.resolve(undefined);

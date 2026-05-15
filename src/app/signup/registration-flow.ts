@@ -475,11 +475,16 @@ export async function runRegister(
 
         // UPSERT notification_preferences. On INSERT, let the table defaults
         // populate the other 6 booleans (marketingSms/whatsapp default false;
-        // transactionalEmail default true per FR42). On UPDATE — defensive
-        // path for a stale row from e.g. Story 1.17 hard-delete-and-resignup
-        // scenarios — only flip marketingEmail; do NOT clobber other channel
-        // booleans a future Epic 6 settings UI may have set. See the story
-        // Dev Notes "Why a partial update on the UPDATE branch".
+        // transactionalEmail default true per FR42). On UPDATE — defense
+        // against a stale row from a future Epic 6 settings UI write (a user
+        // who previously toggled marketingSms=true in settings and then signs
+        // in again via a re-registration path). Only flip marketingEmail; do
+        // NOT clobber other channel booleans the settings UI may have set.
+        // (Story 1.17 hard-delete is NOT a relevant scenario here because
+        // notification_preferences.userId has ON DELETE CASCADE in the schema,
+        // so a user hard-delete removes this row entirely — there is no stale
+        // row left over from that path.) See the story Dev Notes "Why a
+        // partial update on the UPDATE branch". [Code review round 1, P-1.]
         await db
           .insert(notificationPreferences)
           .values({
@@ -508,6 +513,19 @@ export async function runRegister(
       // Intentionally do NOT throw. Marketing opt-in is OPTIONAL — a write
       // failure is non-blocking. The user can re-opt-in via the future
       // Epic 6 settings UI.
+      //
+      // Known partial-failure mode (code review round 1, DN-1): if the
+      // consent_receipts insert succeeds but the auditEvents insert OR the
+      // notification_preferences UPSERT fails, the user ends up with a
+      // marketing_opt_in receipt at CURRENT_MARKETING_OPTIN_VERSION but
+      // `marketing_email = false`. Subsequent submits hit ON CONFLICT DO
+      // NOTHING on the receipt and skip this entire block, so the preference
+      // flip is never retried inside `runRegister`. Accepted for MVP1
+      // because (a) the failure rate is very low on Neon HTTP, (b) the
+      // user-INSERT's ON CONFLICT on email already gates true concurrency
+      // here, (c) Epic 6 / Story 6.3's settings UI will self-heal by
+      // re-running the UPSERT on any visit (idempotent). Logged for ops
+      // visibility; tracked in deferred-work.md.
     }
   }
 

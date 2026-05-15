@@ -611,8 +611,11 @@ describe("runRegister — marketing opt-in (FR60)", () => {
     db.queueSelect<{ id: string }>([]); // rate-limit count
     db.queueReturning<{ id: string }>([{ id: "user-mk-fail" }]); // user RETURNING
     db.queueReturning<{ id: string }>([{ id: "consent-pp-mk-fail" }]); // privacy receipt RETURNING (#1 into consent_receipts)
-    // Fail the SECOND insert into consent_receipts — that's the marketing one.
-    // (Privacy receipt is #1; marketing is #2.)
+    // Ordering assumption: Story 1.21's privacy receipt is consent_receipts
+    // insert #1; Story 1.22's marketing receipt is #2. If a future story adds
+    // a third consent_receipts write inside `runRegister` BEFORE marketing,
+    // this assertion fails loudly — re-target the N. [Code review round 1, P-5.]
+    expect(db.insertedInto(consentReceipts)).toHaveLength(0);
     db.failOnNthInsertInto(consentReceipts, 2);
 
     const result = await runRegister(validFormOptedIn(), deps);
