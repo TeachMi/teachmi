@@ -71,3 +71,14 @@ body {
   color: var(--on-surface);
   font-family: var(--font-heebo), Arial, Helvetica, sans-serif;
 }
+
+/* Linen-fiber texture overlay — used on dark hero bands to break up flat
+   blocks of color. Mirrors `mocks/landing.html` line 51's `.linen-texture`
+   class which was CDN-served from lh3.googleusercontent.com in the mock.
+   Real local SVG asset at /linen-texture.svg (~500 bytes, tiles seamlessly
+   via `feTurbulence stitchTiles="stitch"`). */
+.linen-texture {
+  background-image: url("/linen-texture.svg");
+  background-repeat: repeat;
+  background-size: 200px 200px;
+}

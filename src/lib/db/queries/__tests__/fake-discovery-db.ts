@@ -22,12 +22,12 @@ export interface FakeTutorRow {
   hourlyPriceIls: number;
   lesson45PriceIls: number | null;
   lessonLengthMinutes: number;
-  vettingStatus: "pending" | "approved" | "rejected" | "paused";
   averageRating: string | null;
   ratingCount: number;
   totalLessonsCompleted: number;
   // gate-relevant columns
   isActive: boolean;
+  vettingStatus: "pending" | "approved" | "rejected" | "paused";
   deletedAt: Date | null;
 }
 
@@ -41,7 +41,6 @@ const PUBLIC_KEYS: Array<keyof DiscoverableTutorPublic> = [
   "hourlyPriceIls",
   "lesson45PriceIls",
   "lessonLengthMinutes",
-  "vettingStatus",
   "averageRating",
   "ratingCount",
   "totalLessonsCompleted",

@@ -184,9 +184,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const description = tutor.bio
     ? stripBidiOverrides(truncateForDescription(tutor.bio))
     : `${tutor.displayName} — מורה ב-TeachMe`;
-  const photoUrl =
-    (await presignFromR2("tutor-profile-photos", tutor.profilePhotoR2Key)) ??
-    "/og-default-tutor.png";
+  // OG image is served via a stable proxy route that re-signs the R2 URL
+  // per request. Social-media scrapers (Slack/FB/Twitter) cache the
+  // STABLE proxy URL; the signed R2 URL never escapes server-side. When
+  // the tutor has no profile photo, we serve the PNG placeholder
+  // directly. Story 3.2 review decision D2.
+  const photoUrl = tutor.profilePhotoR2Key
+    ? `/api/og/tutor/${tutor.userId}/photo`
+    : "/og-default-tutor.png";
 
   return {
     title: `${tutor.displayName} · TeachMe`,
@@ -257,7 +262,6 @@ export default async function PublicTutorProfilePage({
     from: weekStart,
     daysAhead: CALENDAR_DAYS_AHEAD,
     durationMinutes: selectedDuration,
-    now: new Date(),
   });
 
   const isSignedIn = !!session?.user?.id;
@@ -279,7 +283,6 @@ export default async function PublicTutorProfilePage({
           hourlyPriceIls={tutor.hourlyPriceIls}
           lesson45PriceIls={tutor.lesson45PriceIls}
           selectedDuration={selectedDuration}
-          hasAvailabilityRows={(calendarData?.availability.length ?? 0) > 0}
           isSignedIn={isSignedIn}
           weekStartUtc={weekStart}
         />

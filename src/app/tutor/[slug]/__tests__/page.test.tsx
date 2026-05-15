@@ -119,7 +119,6 @@ const FULL_TUTOR = {
   hourlyPriceIls: 180,
   lesson45PriceIls: 140,
   lessonLengthMinutes: 60,
-  vettingStatus: "approved",
   averageRating: "4.90",
   ratingCount: 124,
   totalLessonsCompleted: 1240,
@@ -395,7 +394,7 @@ describe("/tutor/[slug] page — generateMetadata (Story 3.2 extensions)", () =>
     expect(images?.[0]?.url).toBe("/og-default-tutor.png");
   });
 
-  it("uses the presigned photo URL when tutor HAS a photo", async () => {
+  it("uses the /api/og/tutor/[id]/photo proxy URL when tutor HAS a photo (no signed-URL leak in OG meta)", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
 
     const meta = await generateMetadata({
@@ -404,7 +403,10 @@ describe("/tutor/[slug] page — generateMetadata (Story 3.2 extensions)", () =>
     });
 
     const images = meta.openGraph?.images as Array<{ url: string }> | undefined;
-    expect(images?.[0]?.url).toBe(`https://stub.r2.local/${FULL_TUTOR.profilePhotoR2Key}?sig=fake`);
+    expect(images?.[0]?.url).toBe(`/api/og/tutor/${TUTOR_UUID}/photo`);
+    // Specifically MUST NOT contain a signed presigned URL.
+    expect(images?.[0]?.url).not.toContain("stub.r2.local");
+    expect(images?.[0]?.url).not.toContain("sig=");
   });
 
   it("emits noindex by default — only indexes in production with ALLOW_PUBLIC_INDEX=true", async () => {

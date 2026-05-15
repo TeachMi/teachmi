@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <rect width="1200" height="630" fill="#f9f7f2"/>
+  <g transform="translate(600, 260)">
+    <circle r="72" fill="#064e3b" opacity="0.12"/>
+    <text x="0" y="26" text-anchor="middle" font-family="Assistant, system-ui, sans-serif" font-size="96" font-weight="800" fill="#064e3b">ת</text>
+  </g>
+  <text x="600" y="430" text-anchor="middle" font-family="Assistant, system-ui, sans-serif" font-size="64" font-weight="800" fill="#064e3b">TeachMe</text>
+  <text x="600" y="490" text-anchor="middle" font-family="Heebo, system-ui, sans-serif" font-size="32" fill="#5e5e5b" direction="rtl">מורים פרטיים בעברית</text>
+  <text x="600" y="540" text-anchor="middle" font-family="Heebo, system-ui, sans-serif" font-size="22" fill="#707974" direction="rtl">לתלמידי בגרות ופסיכומטרי</text>
+</svg>

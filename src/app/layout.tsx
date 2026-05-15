@@ -38,6 +38,19 @@ export default function RootLayout({
       dir="rtl"
       className={`${heebo.variable} ${assistant.variable} h-full bg-surface antialiased`}
     >
+      <head>
+        {/* Material Symbols Outlined — loaded from Google Fonts. Used by
+            marketplace surfaces for inline icons (homepage subject cards,
+            tutor-profile verified badge / play overlay, etc.). Story 3.2
+            introduced the first usage but didn't wire the font load; Story
+            3.1 wires it here in the root layout so every page inherits
+            without per-component duplication. The font CDN cost is ~5KB
+            CSS + woff2 glyphs, lazy-loaded by the browser per `display=swap`. */}
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+        />
+      </head>
       <body className="flex min-h-full flex-col bg-surface font-body text-on-surface">
         <RadixProviders dir="rtl">{children}</RadixProviders>
         <Analytics />

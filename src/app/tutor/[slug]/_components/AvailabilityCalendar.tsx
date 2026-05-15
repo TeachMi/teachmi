@@ -12,6 +12,7 @@ import Link from "next/link";
 import { Card, CardBody } from "@/components/ui/card";
 import { formatHebrewWeekday, formatIlsCurrency } from "@/lib/hebrew/format";
 import type { SlotState, SlotStatesByDay } from "@/lib/availability/compute-slots";
+import { signSlotPayload } from "@/lib/auth/slot-signing";
 
 interface AvailabilityCalendarProps {
   tutorUserId: string;
@@ -19,8 +20,6 @@ interface AvailabilityCalendarProps {
   hourlyPriceIls: number;
   lesson45PriceIls: number | null;
   selectedDuration: 45 | 60;
-  /** Raw availability-row presence. Empty state is only for zero configured rows. */
-  hasAvailabilityRows: boolean;
   /** Whether a session exists. Drives the click-target URL: anon → /signup, signed-in → /booking-stub. */
   isSignedIn: boolean;
   /** UTC instant for the first day. Used for empty-state copy. */
@@ -44,12 +43,19 @@ function buildSignupCallbackUrl(
   duration: 45 | 60,
 ): string {
   const callbackUrl = `/tutor/${tutorUserId}?duration=${duration}`;
+  // Sign the (tutorUserId, slotIso, duration) tuple so Story 3.3 can
+  // detect tampered URLs cheaply before issuing any DB lookup. The
+  // signature is not a secrecy primitive — Story 3.3 must still validate
+  // the slot exists + is available — but it raises the floor for the
+  // anon-spoofing attack surface during the signup → booking handoff.
+  const sig = signSlotPayload({ tutorUserId, slotIso, duration });
   const params = new URLSearchParams({
     callbackUrl,
     intent: "book",
     tutorUserId,
     slotIso,
     duration: String(duration),
+    sig,
   });
   return `/signup?${params.toString()}`;
 }
@@ -59,10 +65,15 @@ function buildBookingStubUrl(
   slotIso: string,
   duration: 45 | 60,
 ): string {
+  // Same signature applied to the signed-in path. Story 4.3 will replace
+  // /booking-stub with the real booking action; until then, the param
+  // is just a forward-compat placeholder.
+  const sig = signSlotPayload({ tutorUserId, slotIso, duration });
   const params = new URLSearchParams({
     tutor: tutorUserId,
     slot: slotIso,
     duration: String(duration),
+    sig,
   });
   return `/booking-stub?${params.toString()}`;
 }
@@ -73,13 +84,15 @@ export function AvailabilityCalendar({
   hourlyPriceIls,
   lesson45PriceIls,
   selectedDuration,
-  hasAvailabilityRows,
   isSignedIn,
   weekStartUtc,
 }: AvailabilityCalendarProps) {
   const dayKeys = Array.from(slotStates.keys());
+  const hasAnyAvailability = Array.from(slotStates.values()).some((slots) =>
+    slots.some((s) => s.status !== "unavailable"),
+  );
 
-  if (!hasAvailabilityRows) {
+  if (!hasAnyAvailability) {
     return (
       <section id="schedule" aria-labelledby="schedule-heading" className="mb-12">
         <h2
