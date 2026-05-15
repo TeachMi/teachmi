@@ -1,6 +1,12 @@
 // Two-price card for the public tutor profile (Story 3.2). RSC.
 // "Package of 10" tile from the mock is explicitly omitted — packages are
 // Phase-2+ per locked product constraints.
+//
+// RTL FLEX NOTE: uses plain `flex` (NOT `flex-row-reverse`). In RTL writing
+// mode, flex-row already flows right-to-left — the first DOM child (the
+// 45-min tile) renders on the RIGHT edge per Story 3.2 AC3 ("Tile 1 —
+// rightmost in RTL: שיעור 45 דק׳"). Adding `flex-row-reverse` flips back
+// to left-to-right, clustering the tiles against the LEFT side of the box.
 
 import { formatIlsCurrency } from "@/lib/hebrew/format";
 
@@ -11,7 +17,7 @@ interface PriceBlockProps {
 
 export function PriceBlock({ hourlyPriceIls, lesson45PriceIls }: PriceBlockProps) {
   return (
-    <div className="bg-linen border border-linen-border rounded-xl p-4 flex flex-row-reverse gap-6">
+    <div className="bg-linen border border-linen-border rounded-xl p-4 flex gap-6">
       {lesson45PriceIls !== null && (
         <>
           <div className="text-start">

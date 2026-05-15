@@ -19,10 +19,31 @@ export function SiteHeader({ activeHref = "/", action }: SiteHeaderProps) {
 
   return (
     <header className="sticky top-0 z-50 border-b border-linen-border bg-linen/95 backdrop-blur-md">
-      <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
-        <Link className="group flex items-center gap-3" href="/" aria-label="TeachMe דף הבית">
-          <span className="flex size-10 items-center justify-center rounded-xl border border-primary-fixed-dim bg-primary-fixed/40 font-display text-lg font-extrabold text-primary-container transition group-hover:border-tertiary-accent">
-            ת
+      {/* `flex-row-reverse` matches the mock convention: in RTL it places
+          the logo block at the LEFT edge and the action cluster at the
+          RIGHT edge (mock landing.html line 71). The inner nav keeps
+          default flex-row so Hebrew reading order (בית → עזרה, right to
+          left) is preserved. */}
+      <div className="mx-auto flex w-full max-w-7xl flex-row-reverse flex-wrap items-center justify-between gap-4 px-6 py-4">
+        <Link className="group flex items-center gap-2" href="/" aria-label="TeachMe דף הבית">
+          {/* Material Symbol `school` (graduation hat) — mock convention
+              for the TeachMe wordmark icon. Replaces the older "ת" letter
+              placeholder. Font loaded globally via layout.tsx.
+              `style.fontSize` set inline because Google Fonts' CSS for the
+              `material-symbols-outlined` class hard-codes `font-size: 24px`
+              with higher specificity than Tailwind's `text-*` utilities;
+              inline style beats both. `fontVariationSettings` matches the
+              mock (FILL=0, wght=400) so the icon reads as an outlined
+              graduation-cap glyph rather than a filled bold one. */}
+          <span
+            className="material-symbols-outlined text-primary-container transition group-hover:text-tertiary-accent"
+            style={{
+              fontSize: "2.25rem",
+              fontVariationSettings: "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 40",
+            }}
+            aria-hidden="true"
+          >
+            school
           </span>
           <span className="font-display text-2xl font-extrabold tracking-normal text-primary-container">
             TeachMe

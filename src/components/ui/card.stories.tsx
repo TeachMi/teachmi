@@ -250,12 +250,12 @@ export const TutorProfileHero: Story = {
     <Card className="max-w-5xl" padding="lg">
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
         <div className="lg:col-span-3 text-start">
-          <div className="flex flex-row-reverse items-start gap-5 mb-5">
+          <div className="flex items-start gap-5 mb-5">
             <div className="w-20 h-20 rounded-full bg-primary-fixed/30 flex items-center justify-center text-2xl font-extrabold text-primary-container border-4 border-white shadow-md">
               מ
             </div>
             <div className="flex-1">
-              <div className="flex flex-row-reverse items-center gap-2 mb-1">
+              <div className="flex items-center gap-2 mb-1">
                 <h1 className="font-display font-extrabold text-3xl text-primary-container">
                   ד״ר מיכל לוי
                 </h1>
@@ -266,7 +266,7 @@ export const TutorProfileHero: Story = {
               <p className="text-on-surface-variant mb-3">
                 מומחית למתמטיקה — 5 יחידות
               </p>
-              <div className="flex flex-row-reverse items-center gap-4 text-sm">
+              <div className="flex items-center gap-4 text-sm">
                 <span className="font-bold">★ 4.9</span>
                 <span className="text-secondary">(124 ביקורות)</span>
                 <span className="text-secondary">·</span>
@@ -274,7 +274,7 @@ export const TutorProfileHero: Story = {
               </div>
             </div>
           </div>
-          <div className="bg-linen border border-linen-border rounded-xl p-4 flex flex-row-reverse gap-6">
+          <div className="bg-linen border border-linen-border rounded-xl p-4 flex gap-6">
             <div className="text-start">
               <div className="text-xs text-secondary mb-1">שיעור 45 דק׳</div>
               <div className="font-display font-bold text-2xl text-primary-container">
@@ -312,7 +312,7 @@ export const TutorPriceBlock: Story = {
   },
   render: () => (
     <Card padding="md" className="max-w-md">
-      <div className="bg-linen border border-linen-border rounded-xl p-4 flex flex-row-reverse gap-6">
+      <div className="bg-linen border border-linen-border rounded-xl p-4 flex gap-6">
         <div className="text-start">
           <div className="text-xs text-secondary mb-1">שיעור 45 דק׳</div>
           <div className="font-display font-bold text-2xl text-primary-container">
@@ -327,6 +327,30 @@ export const TutorPriceBlock: Story = {
           </div>
         </div>
       </div>
+    </Card>
+  ),
+};
+
+export const HomepageSubjectCard: Story = {
+  name: "Composition — homepage subject card",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/landing.html` (lines 231–258) — the headline-four subject card used on the marketplace homepage (Story 3.1, FR17). One of four cards rendered in a single row above the fold; each links to `/browse?subject=<slug>`. The mock includes a tutor-count chip ('1,200+ מורים') which is explicitly omitted from Story 3.1 — those numbers are aspirational at closed-beta scale.",
+      },
+    },
+  },
+  render: () => (
+    <Card padding="md" interactive className="max-w-xs text-start">
+      <div className="mb-3 flex items-center justify-start">
+        <span className="material-symbols-outlined text-3xl text-primary-container">
+          calculate
+        </span>
+      </div>
+      <h3 className="font-display text-xl font-bold text-primary-container">
+        מתמטיקה
+      </h3>
     </Card>
   ),
 };

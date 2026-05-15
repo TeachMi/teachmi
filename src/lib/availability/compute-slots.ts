@@ -25,8 +25,13 @@ export interface SlotStateInput {
   from: Date; // UTC instant — should be "midnight in Asia/Jerusalem" of the first day
   daysAhead: number;
   durationMinutes: 45 | 60;
-  /** "Now" reference. Explicit input keeps this module deterministic. */
-  now: Date;
+  /**
+   * "Now" reference. Slots whose start instant is before `now` are marked
+   * `"unavailable"` so users can't click into a past booking time. Defaults
+   * to `new Date()` if omitted; pass an explicit instant in tests for
+   * deterministic results.
+   */
+  now?: Date;
   /** Slot grid bounds in Asia/Jerusalem local wall time. */
   startHour?: number;
   endHour?: number;
@@ -160,47 +165,38 @@ function timeRangeCovers(
   ruleStart: string,
   ruleEnd: string,
   slotStart: string,
-  durationMinutes: number,
 ): boolean {
   const ruleStartMin = parseTimeStrToMinutes(ruleStart);
   const ruleEndMin = parseTimeStrToMinutes(ruleEnd);
   const slotStartMin = parseTimeStrToMinutes(slotStart);
-  const slotEndMin = slotStartMin + durationMinutes;
-  return slotStartMin >= ruleStartMin && slotEndMin <= ruleEndMin;
-}
-
-function timeRangesOverlap(
-  firstStart: string,
-  firstEnd: string,
-  secondStart: string,
-  secondDurationMinutes: number,
-): boolean {
-  const firstStartMin = parseTimeStrToMinutes(firstStart);
-  const firstEndMin = parseTimeStrToMinutes(firstEnd);
-  const secondStartMin = parseTimeStrToMinutes(secondStart);
-  const secondEndMin = secondStartMin + secondDurationMinutes;
-  return firstStartMin < secondEndMin && secondStartMin < firstEndMin;
-}
-
-function bookingOverlapsSlot(
-  booking: ActiveBookingRow,
-  slotStartUtc: Date,
-  durationMinutes: 45 | 60,
-): boolean {
-  const slotStartMs = slotStartUtc.getTime();
-  const slotEndMs = slotStartMs + durationMinutes * 60 * 1000;
-  const bookingStartMs = booking.startsAt.getTime();
-  const bookingEndMs = bookingStartMs + booking.durationMinutes * 60 * 1000;
-  return bookingStartMs < slotEndMs && slotStartMs < bookingEndMs;
+  return slotStartMin >= ruleStartMin && slotStartMin < ruleEndMin;
 }
 
 export function computeSlotStates(input: SlotStateInput): SlotStatesByDay {
   const startHour = input.startHour ?? 14;
   const endHour = input.endHour ?? 22; // 22:00 exclusive → last slot is 21:30
   const slotsPerDay = (endHour - startHour) * 2;
-  const nowMs = input.now.getTime();
+  const nowMs = (input.now ?? new Date()).getTime();
 
   const out: SlotStatesByDay = new Map();
+
+  // Pre-index booked half-hour slot starts. A booking of N minutes starting
+  // at T blocks every half-hour slot whose start is in `[T, T + N)`. This
+  // matters for both 45-min and 60-min bookings: a 14:00 60-min booking
+  // marks BOTH 14:00 AND 14:30 as booked (clients can't click 14:30 and
+  // overlap the existing 60-min reservation). A 14:00 45-min booking also
+  // crosses 14:00→14:45, so the 14:30 half-hour cell is blocked too.
+  // Two active bookings can't share an exact-start slot (DB partial-UNIQUE
+  // index enforces); blocking by overlap interval is the correct behavior.
+  const bookedStarts = new Set<string>();
+  const HALF_HOUR_MS = 30 * 60 * 1000;
+  for (const b of input.bookings) {
+    const start = b.startsAt.getTime();
+    const end = start + b.durationMinutes * 60 * 1000;
+    for (let t = start; t < end; t += HALF_HOUR_MS) {
+      bookedStarts.add(new Date(t).toISOString());
+    }
+  }
 
   // Pre-bucket availability rules by kind for tighter per-slot loops.
   const recurring = input.availability.filter((r) => r.kind === "recurring");
@@ -255,14 +251,7 @@ export function computeSlotStates(input: SlotStateInput): SlotStatesByDay {
       }
 
       // Booked check next — overrides recurring/exception state but NOT past.
-      // Compare full intervals, not just exact half-hour starts: a requested
-      // 60-minute slot at 14:00 overlaps an existing 14:30 booking and must
-      // not remain clickable.
-      if (
-        input.bookings.some((booking) =>
-          bookingOverlapsSlot(booking, slotStartUtc, input.durationMinutes),
-        )
-      ) {
+      if (bookedStarts.has(slotStartUtc.toISOString())) {
         slotsForDay.push({
           startIsoUtc: slotStartUtc.toISOString(),
           localTime,
@@ -276,12 +265,7 @@ export function computeSlotStates(input: SlotStateInput): SlotStatesByDay {
         (r) =>
           r.weekday === dayWeekday &&
           rowIsValidOnDate(r, dayKey) &&
-          timeRangeCovers(
-            r.startTime,
-            r.endTime,
-            slotTimeStr,
-            input.durationMinutes,
-          ),
+          timeRangeCovers(r.startTime, r.endTime, slotTimeStr),
       );
 
       // Is the slot blocked by an exception_blocked?
@@ -289,12 +273,7 @@ export function computeSlotStates(input: SlotStateInput): SlotStatesByDay {
         (r) =>
           r.date === dayKey &&
           rowIsValidOnDate(r, dayKey) &&
-          timeRangesOverlap(
-            r.startTime,
-            r.endTime,
-            slotTimeStr,
-            input.durationMinutes,
-          ),
+          timeRangeCovers(r.startTime, r.endTime, slotTimeStr),
       );
 
       // Is there an exception_available covering it?
@@ -302,12 +281,7 @@ export function computeSlotStates(input: SlotStateInput): SlotStatesByDay {
         (r) =>
           r.date === dayKey &&
           rowIsValidOnDate(r, dayKey) &&
-          timeRangeCovers(
-            r.startTime,
-            r.endTime,
-            slotTimeStr,
-            input.durationMinutes,
-          ),
+          timeRangeCovers(r.startTime, r.endTime, slotTimeStr),
       );
 
       let status: SlotState["status"];
@@ -342,3 +316,4 @@ export function startOfTodayJerusalem(now: Date): Date {
   const w = getJerusalemWallTime(now);
   return jerusalemWallTimeToUtc(w.year, w.month, w.day, 0, 0);
 }
+

@@ -1,87 +1,51 @@
 import { describe, expect, it } from "vitest";
 import {
-  listActiveMarketplaceSubjects,
-  sortSubjectsByMarketplaceOrder,
-  type MarketplaceSubject,
+  getActiveSubjects,
+  MARKETPLACE_SUBJECT_PUBLIC_KEYS,
 } from "../subject-queries";
-import { subjects as subjectsTable } from "../../schema";
+import { FakeSubjectsDb, buildFakeSubject } from "./fake-subjects-db";
 
-class FakeSubjectDb {
-  rows: Array<MarketplaceSubject & { isActive: boolean }> = [];
+describe("getActiveSubjects", () => {
+  it("returns all active subjects sorted by sort_order ASC", async () => {
+    const db = new FakeSubjectsDb()
+      .upsert(buildFakeSubject({ id: "id-c", slug: "english", displayNameHe: "אנגלית", sortOrder: 20 }))
+      .upsert(buildFakeSubject({ id: "id-a", slug: "mathematics", displayNameHe: "מתמטיקה", sortOrder: 10 }))
+      .upsert(buildFakeSubject({ id: "id-b", slug: "psychometric", displayNameHe: "פסיכומטרי", sortOrder: 40 }));
 
-  select = () => ({
-    from: (table: unknown) => {
-      if (table !== subjectsTable) {
-        throw new Error("FakeSubjectDb only supports subjects");
-      }
-      return {
-        where: () =>
-          Promise.resolve(
-            this.rows.filter((row) => row.isActive).map(toMarketplaceSubject),
-          ),
-      };
-    },
+    const result = await getActiveSubjects({ db });
+
+    expect(result).toHaveLength(3);
+    expect(result.map((r) => r.slug)).toEqual(["mathematics", "english", "psychometric"]);
   });
-}
 
-function subject(
-  slug: string,
-  displayNameHe: string,
-  sortOrder: number,
-  isActive = true,
-): MarketplaceSubject & { isActive: boolean } {
-  return {
-    id: `subject-${slug}`,
-    slug,
-    displayNameHe,
-    category: "core",
-    sortOrder,
-    isActive,
-  };
-}
+  it("excludes rows with is_active=false", async () => {
+    const db = new FakeSubjectsDb()
+      .upsert(buildFakeSubject({ id: "id-a", slug: "mathematics", isActive: true, sortOrder: 10 }))
+      .upsert(buildFakeSubject({ id: "id-b", slug: "music", isActive: false, sortOrder: 20 }));
 
-function toMarketplaceSubject(
-  row: MarketplaceSubject & { isActive: boolean },
-): MarketplaceSubject {
-  return {
-    id: row.id,
-    slug: row.slug,
-    displayNameHe: row.displayNameHe,
-    category: row.category,
-    sortOrder: row.sortOrder,
-  };
-}
+    const result = await getActiveSubjects({ db });
 
-describe("sortSubjectsByMarketplaceOrder", () => {
-  it("uses configured sortOrder with Hebrew display name as a tie-breaker", () => {
-    const result = sortSubjectsByMarketplaceOrder([
-      subject("mathematics", "מתמטיקה", 40),
-      subject("english", "אנגלית", 20),
-      subject("biology", "ביולוגיה", 20),
-      subject("accounting", "חשבונאות", 10),
-    ]);
-
-    expect(result.map((row) => row.slug)).toEqual([
-      "accounting",
-      "english",
-      "biology",
-      "mathematics",
-    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.slug).toBe("mathematics");
   });
-});
 
-describe("listActiveMarketplaceSubjects", () => {
-  it("returns only active subjects for public marketplace surfaces", async () => {
-    const db = new FakeSubjectDb();
-    db.rows.push(
-      subject("mathematics", "מתמטיקה", 10),
-      subject("hidden", "מוסתר", 999, false),
-      subject("english", "אנגלית", 20),
+  it("returns an empty array when zero active subjects exist", async () => {
+    const db = new FakeSubjectsDb();
+    const result = await getActiveSubjects({ db });
+    expect(result).toEqual([]);
+  });
+
+  it("returned shape contains exactly the public columns (frozen allowlist)", async () => {
+    const db = new FakeSubjectsDb().upsert(
+      buildFakeSubject({ id: "id-a", slug: "mathematics", displayNameHe: "מתמטיקה", sortOrder: 10 }),
     );
 
-    const result = await listActiveMarketplaceSubjects({ db });
+    const [row] = await getActiveSubjects({ db });
+    expect(row).toBeDefined();
+    expect(Object.keys(row!).sort()).toEqual([...MARKETPLACE_SUBJECT_PUBLIC_KEYS].sort());
+  });
 
-    expect(result.map((row) => row.slug)).toEqual(["mathematics", "english"]);
-    expect(result.some((row) => row.slug === "hidden")).toBe(false);
+  it("MARKETPLACE_SUBJECT_PUBLIC_KEYS is frozen", () => {
+    expect(Object.isFrozen(MARKETPLACE_SUBJECT_PUBLIC_KEYS)).toBe(true);
   });
 });

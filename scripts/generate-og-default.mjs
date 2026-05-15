@@ -1,14 +1,19 @@
-// One-shot script to rasterize public/og-default-tutor.svg → .png at
-// 1200×630 (the standard OG image size). Run via:
+// One-shot script to rasterize OG-image SVG sources → .png at 1200×630 (the
+// standard OG image size). Run via:
 //
 //   pnpm run og:generate
 //
 // or directly: `node scripts/generate-og-default.mjs`.
 //
-// Why a script not a build step: the SVG source rarely changes (design
-// touchups maybe twice a year), and committing the PNG means Vercel deploys
+// Generates one PNG per entry in `OG_IMAGES` below. To add a new OG image:
+//   1. Drop the SVG in `public/og-default-<name>.svg`.
+//   2. Append a row to `OG_IMAGES`.
+//   3. Run `pnpm run og:generate` and commit both files.
+//
+// Why a script not a build step: the SVG sources rarely change (design
+// touchups maybe twice a year), and committing the PNGs means Vercel deploys
 // don't need to install Sharp's native binaries. Re-run the script whenever
-// the SVG changes; the PNG is the source of truth at request time.
+// any SVG changes; the PNGs are the source of truth at request time.
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -31,14 +36,18 @@ const sharpModulePath = join(
 );
 const { default: sharp } = await import(pathToFileURL(sharpModulePath).href);
 
-const SVG_PATH = join(__dirname, "..", "public", "og-default-tutor.svg");
-const PNG_PATH = join(__dirname, "..", "public", "og-default-tutor.png");
+const OG_IMAGES = [
+  { svg: "og-default-tutor.svg", png: "og-default-tutor.png" },
+  { svg: "og-default-home.svg", png: "og-default-home.png" },
+];
 
-const svgBuffer = await readFile(SVG_PATH);
-
-await sharp(svgBuffer)
-  .resize(1200, 630, { fit: "fill" })
-  .png({ compressionLevel: 9, palette: false })
-  .toFile(PNG_PATH);
-
-console.log(`✓ Generated ${PNG_PATH}`);
+for (const { svg, png } of OG_IMAGES) {
+  const svgPath = join(__dirname, "..", "public", svg);
+  const pngPath = join(__dirname, "..", "public", png);
+  const svgBuffer = await readFile(svgPath);
+  await sharp(svgBuffer)
+    .resize(1200, 630, { fit: "fill" })
+    .png({ compressionLevel: 9, palette: false })
+    .toFile(pngPath);
+  console.log(`✓ Generated ${pngPath}`);
+}
