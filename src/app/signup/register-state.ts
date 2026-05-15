@@ -10,7 +10,8 @@ export type SignupFieldKey =
   | "password"
   | "role"
   | "tos"
-  | "privacyPolicy";
+  | "privacyPolicy"
+  | "marketingOptIn";
 
 export interface RegisterActionState {
   ok: boolean;
@@ -22,6 +23,7 @@ export interface RegisterActionState {
     role?: AppRole;
     tos?: boolean;
     privacyPolicy?: boolean;
+    marketingOptIn?: boolean;
   };
 }
 
