@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { auth } from "@/lib/auth/auth";
+import { isUuid } from "@/lib/auth/slug-validation";
 import {
   computeSlotStates,
   startOfTodayJerusalem,
@@ -30,14 +31,6 @@ export const dynamic = "force-dynamic";
 interface PageProps {
   params: Promise<{ slug: string }>;
   searchParams?: Promise<{ duration?: string }>;
-}
-
-// Plain TS validation (no zod) — matches the codebase convention established
-// by `profile-form-schema.ts` and `lib/auth/registration.ts`.
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function isUuid(value: string): boolean {
-  return UUID_RE.test(value);
 }
 
 const PRESIGNED_URL_TTL_SEC = 3600; // 1 hour

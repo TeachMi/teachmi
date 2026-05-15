@@ -122,6 +122,52 @@ test("approved tutor profile renders hero + subjects + bio + availability empty-
   expect(videoSrc).toBeTruthy();
 });
 
+test("approved tutor: bio edit preserves discoverability; price edit pauses it (Story 2.5 FR14)", async ({
+  page,
+}, testInfo) => {
+  const {
+    provisionInactiveTutor,
+    simulateAdminApproval,
+    simulateProfileEditOfBio,
+    simulateProfileEditOfPrice,
+  } = await import("./tutor-discovery.flow");
+
+  const tutor = await provisionInactiveTutor(testInfo);
+  if (!tutor) {
+    test.skip(true, "DATABASE_URL not set — tutor-discovery fixture cannot run.");
+    return;
+  }
+
+  await simulateAdminApproval(tutor.userId);
+
+  // 1. Baseline: tutor is discoverable (200) after admin approval.
+  const profileUrl = `/tutor/${tutor.userId}`;
+  const baseline = await page.goto(profileUrl);
+  expect(baseline?.status()).toBe(200);
+
+  // 2. Non-trigger bio edit. Should leave the tutor discoverable AND surface
+  //    the new bio on the public profile.
+  const newBio = `ביוגרפיה חדשה (Story 2.5 E2E ${Date.now()}) — מורה למתמטיקה.`;
+  await simulateProfileEditOfBio(tutor.userId, newBio);
+
+  const afterBioEdit = await page.goto(profileUrl);
+  expect(
+    afterBioEdit?.status(),
+    "non-trigger bio edit should NOT remove the tutor from discoverability",
+  ).toBe(200);
+  await expect(page.getByText(newBio)).toBeVisible();
+
+  // 3. Trigger price edit. Should flip the discoverability gate so the
+  //    public profile 404s.
+  await simulateProfileEditOfPrice(tutor.userId, 220);
+
+  const afterPriceEdit = await page.goto(profileUrl);
+  expect(
+    afterPriceEdit?.status(),
+    "trigger price edit should flip is_active=false → public profile 404",
+  ).toBe(404);
+});
+
 test("anon click on available slot redirects to signup with intent params (Story 3.2)", async ({
   page,
 }, testInfo) => {
@@ -162,4 +208,94 @@ test("anon click on available slot redirects to signup with intent params (Story
   // HMAC signature on (tutorUserId, slotIso, duration) — Story 3.3 verifies
   // it server-side before issuing a DB lookup. See review decision D1.
   expect(url.searchParams.get("sig")).toBeTruthy();
+});
+
+test("anon click on slot → /signup gate banner renders with tutor name (Story 3.3 AC1)", async ({
+  page,
+}, testInfo) => {
+  const {
+    provisionInactiveTutor,
+    simulateAdminApproval,
+    seedRecurringAvailability,
+    clearTutorSeededData,
+  } = await import("./tutor-discovery.flow");
+
+  const tutor = await provisionInactiveTutor(testInfo);
+  if (!tutor) {
+    test.skip(true, "DATABASE_URL not set — tutor-discovery fixture cannot run.");
+    return;
+  }
+
+  await clearTutorSeededData(tutor.userId);
+  await simulateAdminApproval(tutor.userId);
+  for (let weekday = 0; weekday < 7; weekday++) {
+    await seedRecurringAvailability(tutor.userId, weekday, "14:00:00", "18:00:00");
+  }
+
+  await page.goto(`/tutor/${tutor.userId}?duration=60`);
+  await page.locator('a[aria-label^="הזמינו את הזמן"]').first().click();
+  await page.waitForURL(/\/signup\?/);
+
+  // Banner copy includes the tutor's displayName ("ד״ר מיכל לוי" per the
+  // provisionInactiveTutor fixture seed).
+  await expect(
+    page.getByText("צפיתם במורה ד״ר מיכל לוי"),
+  ).toBeVisible();
+
+  // Hidden `next` input on the form encodes the booking-stub URL.
+  const nextValue = await page
+    .locator('input[name="next"]')
+    .first()
+    .getAttribute("value");
+  expect(nextValue).toBeTruthy();
+  expect(nextValue).toContain("/booking-stub?");
+  expect(nextValue).toContain(`tutor=${tutor.userId}`);
+  expect(nextValue).toContain("duration=60");
+});
+
+test("anon click on slot → /signup with tampered sig hides banner (Story 3.3 AC8)", async ({
+  page,
+}, testInfo) => {
+  const {
+    provisionInactiveTutor,
+    simulateAdminApproval,
+    seedRecurringAvailability,
+    clearTutorSeededData,
+  } = await import("./tutor-discovery.flow");
+
+  const tutor = await provisionInactiveTutor(testInfo);
+  if (!tutor) {
+    test.skip(true, "DATABASE_URL not set — tutor-discovery fixture cannot run.");
+    return;
+  }
+
+  await clearTutorSeededData(tutor.userId);
+  await simulateAdminApproval(tutor.userId);
+  for (let weekday = 0; weekday < 7; weekday++) {
+    await seedRecurringAvailability(tutor.userId, weekday, "14:00:00", "18:00:00");
+  }
+
+  // Synthesize a gate URL with the right shape but a garbage sig — simulates
+  // an attacker hand-crafting a URL without knowledge of AUTH_SECRET.
+  const params = new URLSearchParams({
+    callbackUrl: `/tutor/${tutor.userId}?duration=60`,
+    intent: "book",
+    tutorUserId: tutor.userId,
+    slotIso: "2026-05-20T11:00:00.000Z",
+    duration: "60",
+    sig: "AAAAAAAAAAAAAAAAAAAAAA",
+  });
+  await page.goto(`/signup?${params.toString()}`);
+
+  // Banner absent — silent degrade. Form still renders (we just check the
+  // signup heading is visible to confirm we didn't redirect / 404).
+  await expect(page.getByText("ברוכים הבאים ל-TeachMe")).toBeVisible();
+  await expect(page.getByText(/צפיתם במורה/)).toHaveCount(0);
+
+  // Hidden `next` input is present but empty (no intent funnel).
+  const nextValue = await page
+    .locator('input[name="next"]')
+    .first()
+    .getAttribute("value");
+  expect(nextValue).toBe("");
 });

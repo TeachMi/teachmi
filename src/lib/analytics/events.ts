@@ -157,6 +157,51 @@ export interface DataExportDownloadedEvent {
   userId: string;
 }
 
+// Story 3.3 (FR19) — booking-funnel intent surfacing on /signup + /signin.
+// `_landed` fires when the gate banner renders. `_tampered` fires when an
+// `intent=book` payload was present but failed validation (HMAC mismatch,
+// malformed UUID/ISO, missing fields) — security signal. `_tutor_not_found`
+// fires when sig was valid but the tutor row was no longer discoverable
+// (deactivated mid-funnel via Story 2.5 re-approval). `_completed` fires from
+// /signup/verify/route.ts after successful session creation when the verify
+// URL carried a valid `next` param decomposable into a booking-stub URL.
+
+export interface SignupIntentBookLandedEvent {
+  event: "signup_intent_book_landed";
+  tutorUserId: string;
+}
+
+export interface SigninIntentBookLandedEvent {
+  event: "signin_intent_book_landed";
+  tutorUserId: string;
+}
+
+export interface SignupIntentBookTamperedEvent {
+  event: "signup_intent_book_tampered";
+  /** Specific validation that failed — surfaced for security analytics. */
+  reason:
+    | "missing_intent"
+    | "missing_fields"
+    | "bad_uuid"
+    | "bad_slot_iso"
+    | "bad_duration"
+    | "sig_invalid";
+  /** Originating page so a single dashboard can split signup vs signin. */
+  source: "signup" | "signin";
+}
+
+export interface SignupIntentBookTutorNotFoundEvent {
+  event: "signup_intent_book_tutor_not_found";
+  tutorUserId: string;
+  source: "signup" | "signin";
+}
+
+export interface SignupIntentBookCompletedEvent {
+  event: "signup_intent_book_completed";
+  userId: string;
+  tutorUserId: string;
+}
+
 export type AnalyticsEvent =
   | SignupCompletedEvent
   | EmailVerifiedEvent
@@ -172,6 +217,11 @@ export type AnalyticsEvent =
   | TutorProfileCreatedEvent
   | TutorRateLimitedEvent
   | AdminRouteUnauthorizedEvent
-  | DataExportDownloadedEvent;
+  | DataExportDownloadedEvent
+  | SignupIntentBookLandedEvent
+  | SigninIntentBookLandedEvent
+  | SignupIntentBookTamperedEvent
+  | SignupIntentBookTutorNotFoundEvent
+  | SignupIntentBookCompletedEvent;
 
 export type AnalyticsEventName = AnalyticsEvent["event"];

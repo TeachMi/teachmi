@@ -2,24 +2,25 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { AppShell } from "@/components/layout/AppShell";
+import { StudentSubNav } from "@/components/layout/StudentSubNav";
 import { Button } from "@/components/ui/button";
-import { Card, CardBody } from "@/components/ui/card";
-import { signOut } from "@/lib/auth/auth";
+import { Card } from "@/components/ui/card";
 import { requireAuth } from "@/lib/auth/guards";
 import { getDb } from "@/lib/db/client";
+import { getUpcomingBookingsForStudent } from "@/lib/db/queries/booking-queries";
 import { tutorProfiles } from "@/lib/db/schema";
 import {
   requirePrivacyConsent,
   type DbForPrivacyConsent,
 } from "@/lib/legal/privacy-consent";
+import { EmptyStateHero } from "./_components/EmptyStateHero";
+import { Greeting } from "./_components/Greeting";
+import { QuickLinks } from "./_components/QuickLinks";
+import { RatePreviousLessonSlot } from "./_components/RatePreviousLessonSlot";
+import { UpcomingLessonsSlot } from "./_components/UpcomingLessonsSlot";
+import { WeeklySummary } from "./_components/WeeklySummary";
 
 export const dynamic = "force-dynamic";
-
-async function signOutAction() {
-  "use server";
-
-  await signOut({ redirectTo: "/signin" });
-}
 
 type TutorVettingStatus =
   | "missing"
@@ -44,9 +45,6 @@ async function readTutorOnboardingState(userId: string): Promise<TutorOnboarding
     return { vettingStatus: (rows[0]?.vettingStatus ?? "missing") as TutorVettingStatus };
   } catch (err) {
     console.error("[dashboard] tutor profile lookup failed", err);
-    // Don't crash the dashboard for tutors — render without the CTA so a Neon
-    // outage doesn't break the page. Tutors can navigate directly to
-    // /tutor/onboarding/profile if needed.
     return null;
   }
 }
@@ -61,52 +59,91 @@ export default async function DashboardPage() {
     db: getDb() as unknown as DbForPrivacyConsent,
     redirectFn: redirect,
   });
-  const displayName = user.name ?? user.email ?? "TeachMe";
-  const tutorState = user.role === "tutor" ? await readTutorOnboardingState(user.id) : null;
+
+  // Story 5.0 role gating: admins go to /admin (their existing landing);
+  // tutors see only the TutorOnboardingCta (or a placeholder for approved
+  // tutors until the real tutor-dashboard ships). Students get the full
+  // dashboard chrome. Single-role enum at MVP1; dual-role (FR5) is Phase 2+.
+  if (user.role === "admin") {
+    redirect("/admin");
+  }
+
+  if (user.role === "tutor") {
+    const tutorState = await readTutorOnboardingState(user.id);
+    return <TutorDashboardPlaceholder userId={user.id} tutorState={tutorState} />;
+  }
+
+  const now = new Date();
+  const displayName = user.name ?? (user.email ? user.email.split("@")[0] ?? null : null);
+  const upcoming = await getUpcomingBookingsForStudent(user.id, { now });
+  const hasUpcomingLessons = upcoming.length > 0;
 
   return (
-    <AppShell
-      activeHref="/dashboard"
-      headerAction={
-        <form action={signOutAction}>
-          <Button type="submit" variant="outline" size="md">
-            יציאה
-          </Button>
-        </form>
-      }
-      mainClassName="flex flex-1 px-6 py-16"
-    >
-      <section className="mx-auto flex w-full max-w-5xl flex-col gap-8">
+    <AppShell activeHref="/dashboard" mainClassName="flex flex-1 flex-col">
+      <StudentSubNav activeTab="schedule" />
+
+      <section className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-8">
+        <Greeting
+          now={now}
+          displayName={displayName}
+          hasUpcomingLessons={hasUpcomingLessons}
+        />
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            {hasUpcomingLessons ? <UpcomingLessonsSlot upcoming={upcoming} /> : <EmptyStateHero />}
+          </div>
+          <aside className="space-y-6">
+            <WeeklySummary />
+            <RatePreviousLessonSlot />
+            <QuickLinks />
+          </aside>
+        </div>
+      </section>
+    </AppShell>
+  );
+}
+
+function TutorDashboardPlaceholder({
+  userId,
+  tutorState,
+}: {
+  userId: string;
+  tutorState: TutorOnboardingState | null;
+}) {
+  // Approved tutor: show a "tutor dashboard is coming" placeholder pointing
+  // at the existing profile-edit surface (Story 2.5) until tutor-dashboard
+  // ships. Non-approved tutor: TutorOnboardingCta covers the onboarding
+  // funnel as it did pre-Story-5.0.
+  const isApproved = tutorState?.vettingStatus === "approved";
+
+  return (
+    <AppShell activeHref="/dashboard" mainClassName="flex flex-1 px-6 py-16">
+      <section className="mx-auto flex w-full max-w-3xl flex-col gap-6">
         <div className="space-y-3 text-start">
           <p className="text-sm font-bold text-primary-container">TeachMe</p>
           <h1 className="font-display text-3xl font-extrabold text-primary-container">
-            לוח הבקרה
+            לוח הבקרה — מורה
           </h1>
-          <p className="text-base leading-7 text-on-surface-variant">{displayName}</p>
+          <p className="text-base leading-7 text-on-surface-variant">
+            {isApproved
+              ? "הדשבורד המלא של המורה מגיע בקרוב. בינתיים תוכלו לערוך את הפרופיל ולנהל את החשבון."
+              : "השלימו את תהליך ההצטרפות כדי להתחיל ללמד."}
+          </p>
         </div>
 
         {tutorState && <TutorOnboardingCta state={tutorState} />}
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <Card padding="sm">
-            <p className="text-sm text-on-surface-variant">השיעור הבא</p>
-            <CardBody className="mt-2 font-display text-xl font-bold text-primary-container">
-              מוכן לסיפורי הדשבורד
-            </CardBody>
+        {isApproved && (
+          <Card padding="md" tone="highlighted" className="text-start">
+            <p className="mb-4 text-sm leading-7 text-on-surface-variant">
+              עריכת פרופיל מורה, ניהול זמינות וצפייה בהזמנות תיכנסנה לכאן בסיפורים הבאים.
+            </p>
+            <Button asChild variant="primary" size="md">
+              <Link href={`/tutor/${userId}/edit`}>עריכת פרופיל מורה</Link>
+            </Button>
           </Card>
-          <Card padding="sm">
-            <p className="text-sm text-on-surface-variant">מעטפת</p>
-            <CardBody className="mt-2 font-display text-xl font-bold text-primary-container">
-              RTL מלא
-            </CardBody>
-          </Card>
-          <Card padding="sm">
-            <p className="text-sm text-on-surface-variant">חשבון</p>
-            <CardBody className="mt-2 font-display text-xl font-bold text-primary-container">
-              מחובר
-            </CardBody>
-          </Card>
-        </div>
+        )}
       </section>
     </AppShell>
   );

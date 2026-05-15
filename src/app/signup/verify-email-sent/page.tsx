@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
+import { getSafeCallbackUrl } from "@/lib/auth/callback-url";
 import { resendVerificationAction } from "../resend-actions";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,13 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  searchParams?: Promise<{ email?: string | string[] }>;
+  searchParams?: Promise<{
+    email?: string | string[];
+    // Story 3.3 — booking-funnel intent target. Passed through from
+    // registerAction's redirect; threaded into the resend form so a resubmit
+    // regenerates the verify URL with `next` intact.
+    next?: string | string[];
+  }>;
 }
 
 function firstString(value: string | string[] | undefined): string | null {
@@ -24,6 +31,11 @@ function firstString(value: string | string[] | undefined): string | null {
 export default async function VerifyEmailSentPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const email = firstString(params?.email);
+  // Story 3.3: sanitize via getSafeCallbackUrl with empty-string fallback so
+  // missing / unsafe input collapses to "" — the hidden form input stays in
+  // the DOM with value="" (treated as null by resend-actions.ts).
+  const rawNext = firstString(params?.next);
+  const safeNext = rawNext ? getSafeCallbackUrl(rawNext, "") : "";
 
   return (
     <AppShell mainClassName="flex flex-1 items-center justify-center bg-linen px-6 py-16">
@@ -46,6 +58,7 @@ export default async function VerifyEmailSentPage({ searchParams }: PageProps) {
           {email && (
             <form action={resendVerificationAction} className="space-y-3">
               <input type="hidden" name="email" value={email} />
+              <input type="hidden" name="next" value={safeNext} />
               <Button type="submit" variant="outline" size="lg" fullWidth>
                 שלחו שוב
               </Button>

@@ -18,7 +18,7 @@ import {
   silentLogger,
 } from "./fake-db";
 
-function makeDeps() {
+function makeDeps(overrides?: { next?: string | null; skipEmailVerification?: boolean }) {
   const db = new FakeDb();
   const email = new FakeEmailProvider();
   const recorder = new TrackRecorder();
@@ -30,10 +30,15 @@ function makeDeps() {
       db: db as unknown as DbForRegister,
       emailProvider: email,
       ip: "10.0.0.1",
+      // Story 3.3 — booking-funnel intent target. Null by default so the bulk
+      // of existing tests (which assert on the no-intent redirect shape) keep
+      // working unchanged.
+      next: overrides?.next ?? null,
       origin: "https://teachme.test",
       userAgent: "Mozilla/5.0 (Vitest TeachMe)",
       track: recorder.capture,
       logger: silentLogger,
+      skipEmailVerification: overrides?.skipEmailVerification,
     },
   };
 }
@@ -701,5 +706,82 @@ describe("runRegister — marketing opt-in (FR60)", () => {
     expect(eventNames).toContain("signup_completed");
 
     expect(email.sends).toHaveLength(1);
+  }, 30_000);
+});
+
+// Story 3.3 (FR19) — booking-funnel intent threading. The /signup page passes
+// `next` (a /booking-stub URL) as a hidden form field; `actions.ts` extracts
+// + sanitizes it; `runRegister` threads it into BOTH the verification email
+// URL (so the magic-link click lands on /booking-stub instead of /dashboard)
+// AND the post-submit redirect (so a resend retains intent via the embedded
+// `&next=` query param).
+describe("runRegister — Story 3.3 next threading", () => {
+  const NEXT_URL =
+    "/booking-stub?tutor=11111111-2222-3333-4444-555555555555&slot=2026-05-20T11%3A00%3A00.000Z&duration=60&sig=abcdef0123456789";
+
+  it("threads next into the verification email URL as &next=<encoded>", async () => {
+    const { db, email, deps } = makeDeps({ next: NEXT_URL });
+    db.queueSelect<{ id: string }>([]);
+    db.queueReturning<{ id: string }>([{ id: "user-next-1" }]);
+    db.queueReturning<{ id: string }>([{ id: "consent-next-1" }]);
+
+    const result = await runRegister(validForm(), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // Verification URL includes &next= with the booking-stub URL encoded.
+    expect(email.sends).toHaveLength(1);
+    const verifyUrl = email.sends[0]?.payload.verifyUrl as string;
+    expect(verifyUrl).toMatch(
+      /^https:\/\/teachme\.test\/signup\/verify\?token=/,
+    );
+    expect(verifyUrl).toContain(`&next=${encodeURIComponent(NEXT_URL)}`);
+  }, 30_000);
+
+  it("appends &next= to the verify-email-sent redirect when next is provided", async () => {
+    const { db, deps } = makeDeps({ next: NEXT_URL });
+    db.queueSelect<{ id: string }>([]);
+    db.queueReturning<{ id: string }>([{ id: "user-next-2" }]);
+    db.queueReturning<{ id: string }>([{ id: "consent-next-2" }]);
+
+    const result = await runRegister(validForm(), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe(
+      `/signup/verify-email-sent?email=test%40example.com&next=${encodeURIComponent(NEXT_URL)}`,
+    );
+  }, 30_000);
+
+  it("omits &next= from the redirect when next is null (backward-compatible)", async () => {
+    const { db, deps } = makeDeps({ next: null });
+    db.queueSelect<{ id: string }>([]);
+    db.queueReturning<{ id: string }>([{ id: "user-next-3" }]);
+    db.queueReturning<{ id: string }>([{ id: "consent-next-3" }]);
+
+    const result = await runRegister(validForm(), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe(
+      "/signup/verify-email-sent?email=test%40example.com",
+    );
+  }, 30_000);
+
+  it("dev-skip path redirects to next when set (not /signin?verified=1)", async () => {
+    const { db, deps } = makeDeps({
+      next: NEXT_URL,
+      skipEmailVerification: true,
+    });
+    db.queueSelect<{ id: string }>([]);
+    db.queueReturning<{ id: string }>([{ id: "user-next-4" }]);
+    db.queueReturning<{ id: string }>([{ id: "consent-next-4" }]);
+
+    const result = await runRegister(validForm(), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.redirectTo).toBe(NEXT_URL);
   }, 30_000);
 });

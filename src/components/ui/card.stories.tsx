@@ -354,3 +354,205 @@ export const HomepageSubjectCard: Story = {
     </Card>
   ),
 };
+
+export const SignupIntentBanner: Story = {
+  name: "Composition — signup intent banner",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/signup.html` — the contextual intent banner Story 3.3 introduces at the top of the signup form when a visitor arrives via the booking-funnel gate URL emitted by `mocks/tutor.html`'s availability calendar (Story 3.2). The banner reuses the existing `Card tone='highlighted'` primitive plus a Material Symbols `info` glyph — no new primitive. The same banner is rendered on `/signin` so a visitor with an existing account who clicks 'התחברות' from the gated signup page keeps booking context. Copy is FR19-aligned: 'צפיתם במורה {displayName} — הרשמה תחזיר אתכם לבחירת השעה'.",
+      },
+    },
+  },
+  render: () => (
+    <Card tone="highlighted" padding="md" className="max-w-md text-start">
+      <CardBody>
+        <div className="flex items-start gap-3">
+          <span
+            aria-hidden="true"
+            className="material-symbols-outlined text-primary-container"
+          >
+            info
+          </span>
+          <div className="flex-1 space-y-1">
+            <p className="font-display text-base font-bold text-primary-container">
+              צפיתם במורה ד״ר מיכל לוי
+            </p>
+            <p className="text-sm leading-6 text-on-surface-variant">
+              הרשמה תחזיר אתכם לבחירת השעה — השלימו הרשמה ואימות אימייל, ונחזיר
+              אתכם לסיכום ההזמנה.
+            </p>
+          </div>
+        </div>
+      </CardBody>
+    </Card>
+  ),
+};
+
+export const DashboardEmptyStateHero: Story = {
+  name: "Composition — dashboard empty-state hero",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/dashboard.html` — the empty-state hero Story 5.0 introduces in place of the next-lesson card when the student has zero upcoming bookings (the MVP1 closed-beta-launch default). Renders inside the `lg:col-span-2` left column of the dashboard's 3-column grid. Story 5.1's PR replaces this with the populated 'next lesson' card (countdown + Join button) when the student has bookings.",
+      },
+    },
+  },
+  render: () => (
+    <Card tone="highlighted" padding="lg" className="max-w-2xl text-start">
+      <CardBody>
+        <div className="flex items-start gap-3">
+          <span
+            aria-hidden="true"
+            className="material-symbols-outlined text-3xl text-primary-container"
+          >
+            search
+          </span>
+          <div className="flex-1 space-y-2">
+            <h2 className="font-display text-xl font-extrabold text-primary-container">
+              עדיין לא הזמנתם שיעור
+            </h2>
+            <p className="text-sm leading-7 text-on-surface-variant">
+              מצאו מורה פרטי, ראו זמינות אמיתית, והזמינו שיעור בלחיצה.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          <Button size="lg">חיפוש מורה ←</Button>
+          <Button variant="outline" size="md">
+            ראו את המקצועות הפופולריים
+          </Button>
+        </div>
+      </CardBody>
+    </Card>
+  ),
+};
+
+export const DashboardQuickLinksSidebar: Story = {
+  name: "Composition — dashboard quick-links sidebar",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/dashboard.html` lines 250–266 — the right-rail 'פעולות מהירות' card. Story 5.0 ships three rows: 'חיפוש מורה חדש' linking to /browse, 'חשבוניות' disabled with a 'בקרוב' tag (Stories 4.7 / 8.x territory), and 'הגדרות חשבון' linking to /account/profile. Uses the existing `Card` primitive plus Material Symbols `chevron_left` for the RTL-correct chevron direction.",
+      },
+    },
+  },
+  render: () => (
+    <Card padding="md" className="max-w-xs text-start">
+      <h3 className="mb-3 font-display text-base font-bold text-primary-container">
+        פעולות מהירות
+      </h3>
+      <ul className="space-y-1 text-sm">
+        <li>
+          <a
+            href="#"
+            className="flex items-center justify-between rounded-lg p-2 transition-colors hover:bg-linen"
+          >
+            <span>חיפוש מורה חדש</span>
+            <span aria-hidden="true" className="material-symbols-outlined text-base">
+              chevron_left
+            </span>
+          </a>
+        </li>
+        <li>
+          <div
+            aria-disabled="true"
+            className="flex cursor-not-allowed items-center justify-between rounded-lg p-2 opacity-60"
+          >
+            <span>חשבוניות</span>
+            <span className="text-[10px] font-bold text-secondary">בקרוב</span>
+          </div>
+        </li>
+        <li>
+          <a
+            href="#"
+            className="flex items-center justify-between rounded-lg p-2 transition-colors hover:bg-linen"
+          >
+            <span>הגדרות חשבון</span>
+            <span aria-hidden="true" className="material-symbols-outlined text-base">
+              chevron_left
+            </span>
+          </a>
+        </li>
+      </ul>
+    </Card>
+  ),
+};
+
+export const ProfileSectionNav: Story = {
+  name: "Composition — profile section side-nav",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/student-settings.html` lines 37–55 — the 5-pane side-nav Story 5.0 ships on `/account/profile`. Each item is an anchor link to a same-page section (`#personal`, `#payment`, etc.). The `mחיקת חשבון` pane is danger-toned and links to `#danger` which itself contains a CTA to the existing `/account/delete` flow (Story 1.17).",
+      },
+    },
+  },
+  render: () => (
+    <nav className="max-w-xs space-y-1 rounded-xl border border-linen-border bg-white p-2 text-start">
+      {[
+        { icon: "person", label: "פרטים אישיים", active: true },
+        { icon: "credit_card", label: "אמצעי תשלום" },
+        { icon: "notifications", label: "התראות" },
+        { icon: "lock", label: "אבטחה" },
+        { icon: "delete", label: "מחיקת חשבון", danger: true },
+      ].map((item) => (
+        <a
+          key={item.label}
+          href="#"
+          className={
+            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-linen" +
+            (item.active ? " bg-linen text-primary-container font-bold" : "") +
+            (item.danger ? " text-danger" : "")
+          }
+        >
+          <span aria-hidden="true" className="material-symbols-outlined text-base">
+            {item.icon}
+          </span>
+          <span>{item.label}</span>
+        </a>
+      ))}
+    </nav>
+  ),
+};
+
+export const TutorProfileEditReapprovalWarning: Story = {
+  name: "Composition — tutor profile edit (re-approval warning)",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/tutor-profile-editor.html` (lines 49–53, 86–101) — the re-approval warning banner that appears at the top of the tutor profile edit page (Story 2.5, FR14), plus a representative section card with the inline 'דורש אישור מחדש' badge. Surfaces only in `mode='edit'`; create-mode (Story 2.1) does not render either element.",
+      },
+    },
+  },
+  render: () => (
+    <div className="space-y-5 max-w-3xl">
+      <Card
+        tone="highlighted"
+        className="border border-tertiary-fixed bg-tertiary-fixed/30 text-start"
+      >
+        <p className="text-xs text-on-tertiary-fixed-variant">
+          <strong>שימו לב:</strong> שינוי בסרטון, במחיר או במקצועות יסיר את הפרופיל מהאוויר עד אישור הצוות (~24 שעות).
+        </p>
+      </Card>
+      <Card padding="md" className="text-start">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="font-display text-lg font-bold text-primary-container">
+            תמחור — 2 אורכי שיעור
+          </h3>
+          <span className="text-xs bg-tertiary-fixed/40 text-on-tertiary-fixed-variant px-2 py-0.5 rounded font-bold">
+            דורש אישור מחדש
+          </span>
+        </div>
+        <p className="text-xs text-secondary">
+          שינוי במחיר ידרוש בדיקה מחודשת של הצוות לפני שיוצג שוב לסטודנטים.
+        </p>
+      </Card>
+    </div>
+  ),
+};
