@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getFilesProvider } from "..";
+import { R2FilesProvider } from "../r2";
 import { StubFilesProvider } from "../stub";
 
 describe("getFilesProvider", () => {
@@ -31,9 +32,9 @@ describe("getFilesProvider", () => {
     expect(getFilesProvider()).toBeInstanceOf(StubFilesProvider);
   });
 
-  it("throws fail-loud when FILES_PROVIDER=r2 (unimplemented in this branch)", () => {
+  it("returns R2FilesProvider when FILES_PROVIDER=r2", () => {
     process.env.FILES_PROVIDER = "r2";
-    expect(() => getFilesProvider()).toThrowError(/not yet implemented/);
+    expect(getFilesProvider()).toBeInstanceOf(R2FilesProvider);
   });
 
   it("throws on unrecognized value", () => {

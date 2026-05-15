@@ -1,3 +1,4 @@
+import { R2FilesProvider } from "./r2";
 import { StubFilesProvider } from "./stub";
 import type { FilesProvider } from "./types";
 
@@ -52,9 +53,7 @@ export function getFilesProvider(): FilesProvider {
   }
 
   if (trimmed === "r2") {
-    throw new Error(
-      'FilesProvider "r2" is not yet implemented in this branch — the Cloudflare R2 wiring lands as a follow-up once the EU DPA is signed (vendor-onboarding-checklist-2026-05-03.md). Keep FILES_PROVIDER=stub for closed-beta.',
-    );
+    return new R2FilesProvider();
   }
 
   throw new Error(

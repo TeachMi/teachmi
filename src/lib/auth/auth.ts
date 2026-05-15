@@ -56,6 +56,14 @@ export function createAuthConfig(): NextAuthConfig {
         if (session.user) {
           session.user.id = user.id;
           session.user.role = getUserRole(user);
+          // Surface the R2 key (not a URL) on the session so consumers
+          // (SiteHeader avatar, /account/profile) can resolve to a fresh
+          // presigned GET URL each render. Distinct from `user.image`
+          // which Auth.js populates from OAuth provider profile URLs.
+          const photoKey = (user as { profilePhotoR2Key?: string | null })
+            .profilePhotoR2Key;
+          session.user.profilePhotoR2Key =
+            typeof photoKey === "string" && photoKey.length > 0 ? photoKey : null;
         }
 
         return session;
