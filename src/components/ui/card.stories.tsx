@@ -354,3 +354,40 @@ export const HomepageSubjectCard: Story = {
     </Card>
   ),
 };
+
+export const TutorProfileEditReapprovalWarning: Story = {
+  name: "Composition — tutor profile edit (re-approval warning)",
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Mirrors `mocks/tutor-profile-editor.html` (lines 49–53, 86–101) — the re-approval warning banner that appears at the top of the tutor profile edit page (Story 2.5, FR14), plus a representative section card with the inline 'דורש אישור מחדש' badge. Surfaces only in `mode='edit'`; create-mode (Story 2.1) does not render either element.",
+      },
+    },
+  },
+  render: () => (
+    <div className="space-y-5 max-w-3xl">
+      <Card
+        tone="highlighted"
+        className="border border-tertiary-fixed bg-tertiary-fixed/30 text-start"
+      >
+        <p className="text-xs text-on-tertiary-fixed-variant">
+          <strong>שימו לב:</strong> שינוי בסרטון, במחיר או במקצועות יסיר את הפרופיל מהאוויר עד אישור הצוות (~24 שעות).
+        </p>
+      </Card>
+      <Card padding="md" className="text-start">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="font-display text-lg font-bold text-primary-container">
+            תמחור — 2 אורכי שיעור
+          </h3>
+          <span className="text-xs bg-tertiary-fixed/40 text-on-tertiary-fixed-variant px-2 py-0.5 rounded font-bold">
+            דורש אישור מחדש
+          </span>
+        </div>
+        <p className="text-xs text-secondary">
+          שינוי במחיר ידרוש בדיקה מחודשת של הצוות לפני שיוצג שוב לסטודנטים.
+        </p>
+      </Card>
+    </div>
+  ),
+};

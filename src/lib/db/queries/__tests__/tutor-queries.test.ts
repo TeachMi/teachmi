@@ -380,3 +380,87 @@ describe("cross-tutor isolation (Story 3.2)", () => {
     expect(result[0]!.proficiencyNote).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 2.5 — owner-only lookup. Returns the row regardless of `is_active`/
+// `vetting_status`, but soft-deleted rows stay hidden.
+// ---------------------------------------------------------------------------
+
+import { getTutorProfileForOwner, OWNER_PROFILE_KEYS } from "../tutor-queries";
+
+describe("getTutorProfileForOwner (Story 2.5)", () => {
+  it("returns row when is_active=false (post-edit re-vetting state)", async () => {
+    const db = new FakeDiscoveryDb()
+      .upsert(
+        buildFakeRow({
+          userId: TUTOR_ID,
+          isActive: false,
+          vettingStatus: "pending",
+        }),
+      )
+      .withOwnerOnlyMode(true);
+    db.withQueriedUserId(TUTOR_ID);
+
+    const result = await getTutorProfileForOwner(TUTOR_ID, { db });
+    expect(result).not.toBeNull();
+    expect(result?.userId).toBe(TUTOR_ID);
+    expect(result?.isActive).toBe(false);
+    expect(result?.vettingStatus).toBe("pending");
+  });
+
+  it("returns row when vetting_status='approved' (steady state)", async () => {
+    const db = new FakeDiscoveryDb()
+      .upsert(
+        buildFakeRow({
+          userId: TUTOR_ID,
+          isActive: true,
+          vettingStatus: "approved",
+        }),
+      )
+      .withOwnerOnlyMode(true);
+    db.withQueriedUserId(TUTOR_ID);
+
+    const result = await getTutorProfileForOwner(TUTOR_ID, { db });
+    expect(result).not.toBeNull();
+    expect(result?.isActive).toBe(true);
+    expect(result?.vettingStatus).toBe("approved");
+  });
+
+  it("returns null when deletedAt is set (soft-delete is hard hide)", async () => {
+    const db = new FakeDiscoveryDb()
+      .upsert(
+        buildFakeRow({
+          userId: TUTOR_ID,
+          isActive: true,
+          vettingStatus: "approved",
+          deletedAt: new Date("2026-05-13T10:00:00.000Z"),
+        }),
+      )
+      .withOwnerOnlyMode(true);
+    db.withQueriedUserId(TUTOR_ID);
+
+    const result = await getTutorProfileForOwner(TUTOR_ID, { db });
+    expect(result).toBeNull();
+  });
+
+  it("returns null for non-existent userId", async () => {
+    const db = new FakeDiscoveryDb().withOwnerOnlyMode(true);
+    db.withQueriedUserId(TUTOR_ID);
+
+    const result = await getTutorProfileForOwner(TUTOR_ID, { db });
+    expect(result).toBeNull();
+  });
+
+  it("returned shape exactly matches OWNER_PROFILE_KEYS allowlist", async () => {
+    const db = new FakeDiscoveryDb()
+      .upsert(buildFakeRow({ userId: TUTOR_ID, isActive: true }))
+      .withOwnerOnlyMode(true);
+    db.withQueriedUserId(TUTOR_ID);
+
+    const result = await getTutorProfileForOwner(TUTOR_ID, { db });
+    expect(result).not.toBeNull();
+    const actualKeys = Object.keys(result!).sort();
+    const allowedKeys = [...OWNER_PROFILE_KEYS].sort();
+    expect(actualKeys).toEqual(allowedKeys);
+  });
+});
