@@ -78,4 +78,29 @@ describe("buildVerificationUrl", () => {
       "http://localhost:3000/signup/verify?token=dev-token",
     );
   });
+
+  // Story 3.3 — `next` parameter threads the booking-funnel intent through
+  // the email-verification hop. Backward-compatible: 2-arg + `{ next: null }`
+  // + `undefined` opts all produce the SAME URL the pre-3.3 version produced.
+  it("appends &next= when next is provided (Story 3.3)", () => {
+    expect(
+      buildVerificationUrl("abc", "https://teachme.app", {
+        next: "/booking-stub?tutor=t&slot=s&duration=60&sig=x",
+      }),
+    ).toBe(
+      "https://teachme.app/signup/verify?token=abc&next=%2Fbooking-stub%3Ftutor%3Dt%26slot%3Ds%26duration%3D60%26sig%3Dx",
+    );
+  });
+
+  it("omits next when explicit null is passed (backward-compatible)", () => {
+    expect(buildVerificationUrl("abc", "https://teachme.app", { next: null })).toBe(
+      "https://teachme.app/signup/verify?token=abc",
+    );
+  });
+
+  it("omits next when opts is undefined (backward-compatible)", () => {
+    expect(buildVerificationUrl("abc", "https://teachme.app", undefined)).toBe(
+      "https://teachme.app/signup/verify?token=abc",
+    );
+  });
 });

@@ -209,3 +209,93 @@ test("anon click on available slot redirects to signup with intent params (Story
   // it server-side before issuing a DB lookup. See review decision D1.
   expect(url.searchParams.get("sig")).toBeTruthy();
 });
+
+test("anon click on slot → /signup gate banner renders with tutor name (Story 3.3 AC1)", async ({
+  page,
+}, testInfo) => {
+  const {
+    provisionInactiveTutor,
+    simulateAdminApproval,
+    seedRecurringAvailability,
+    clearTutorSeededData,
+  } = await import("./tutor-discovery.flow");
+
+  const tutor = await provisionInactiveTutor(testInfo);
+  if (!tutor) {
+    test.skip(true, "DATABASE_URL not set — tutor-discovery fixture cannot run.");
+    return;
+  }
+
+  await clearTutorSeededData(tutor.userId);
+  await simulateAdminApproval(tutor.userId);
+  for (let weekday = 0; weekday < 7; weekday++) {
+    await seedRecurringAvailability(tutor.userId, weekday, "14:00:00", "18:00:00");
+  }
+
+  await page.goto(`/tutor/${tutor.userId}?duration=60`);
+  await page.locator('a[aria-label^="הזמינו את הזמן"]').first().click();
+  await page.waitForURL(/\/signup\?/);
+
+  // Banner copy includes the tutor's displayName ("ד״ר מיכל לוי" per the
+  // provisionInactiveTutor fixture seed).
+  await expect(
+    page.getByText("צפיתם במורה ד״ר מיכל לוי"),
+  ).toBeVisible();
+
+  // Hidden `next` input on the form encodes the booking-stub URL.
+  const nextValue = await page
+    .locator('input[name="next"]')
+    .first()
+    .getAttribute("value");
+  expect(nextValue).toBeTruthy();
+  expect(nextValue).toContain("/booking-stub?");
+  expect(nextValue).toContain(`tutor=${tutor.userId}`);
+  expect(nextValue).toContain("duration=60");
+});
+
+test("anon click on slot → /signup with tampered sig hides banner (Story 3.3 AC8)", async ({
+  page,
+}, testInfo) => {
+  const {
+    provisionInactiveTutor,
+    simulateAdminApproval,
+    seedRecurringAvailability,
+    clearTutorSeededData,
+  } = await import("./tutor-discovery.flow");
+
+  const tutor = await provisionInactiveTutor(testInfo);
+  if (!tutor) {
+    test.skip(true, "DATABASE_URL not set — tutor-discovery fixture cannot run.");
+    return;
+  }
+
+  await clearTutorSeededData(tutor.userId);
+  await simulateAdminApproval(tutor.userId);
+  for (let weekday = 0; weekday < 7; weekday++) {
+    await seedRecurringAvailability(tutor.userId, weekday, "14:00:00", "18:00:00");
+  }
+
+  // Synthesize a gate URL with the right shape but a garbage sig — simulates
+  // an attacker hand-crafting a URL without knowledge of AUTH_SECRET.
+  const params = new URLSearchParams({
+    callbackUrl: `/tutor/${tutor.userId}?duration=60`,
+    intent: "book",
+    tutorUserId: tutor.userId,
+    slotIso: "2026-05-20T11:00:00.000Z",
+    duration: "60",
+    sig: "AAAAAAAAAAAAAAAAAAAAAA",
+  });
+  await page.goto(`/signup?${params.toString()}`);
+
+  // Banner absent — silent degrade. Form still renders (we just check the
+  // signup heading is visible to confirm we didn't redirect / 404).
+  await expect(page.getByText("ברוכים הבאים ל-TeachMe")).toBeVisible();
+  await expect(page.getByText(/צפיתם במורה/)).toHaveCount(0);
+
+  // Hidden `next` input is present but empty (no intent funnel).
+  const nextValue = await page
+    .locator('input[name="next"]')
+    .first()
+    .getAttribute("value");
+  expect(nextValue).toBe("");
+});

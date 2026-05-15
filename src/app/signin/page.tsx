@@ -3,8 +3,16 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
+import { Card, CardBody } from "@/components/ui/card";
 import { auth, signIn } from "@/lib/auth/auth";
 import { defaultPostSignInPath, getSafeCallbackUrl } from "@/lib/auth/callback-url";
+import { track } from "@/lib/analytics";
+import {
+  decomposeNextToGateParams,
+  parseGateParams,
+  type GateParams,
+} from "@/lib/booking/urls";
+import { getDiscoverableTutorByUserId } from "@/lib/db/queries/tutor-queries";
 import { SignInForm } from "./SignInForm";
 
 export const dynamic = "force-dynamic";
@@ -15,11 +23,7 @@ export const metadata: Metadata = {
 };
 
 interface SignInPageProps {
-  searchParams?: Promise<{
-    callbackUrl?: string | string[];
-    verified?: string | string[];
-    reset?: string | string[];
-  }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }
 
 async function tryReadSession() {
@@ -50,16 +54,78 @@ function readFirstString(value: string | string[] | undefined): string | null {
   return null;
 }
 
+/**
+ * Story 3.3 — resolve the booking-funnel intent target for the /signin page.
+ *
+ * Tries the same two emission shapes /signup accepts:
+ *   1. Multi-param `?intent=book&tutorUserId=...&slotIso=...&duration=...&sig=...`
+ *   2. Single-param `?callbackUrl=/booking-stub?tutor=...&slot=...&duration=...&sig=...`
+ *      (this is what /signup's "התחברות" cross-link emits per AC7).
+ *
+ * Fires `signup_intent_book_tampered` with `source: "signin"` on validation
+ * failure for security analytics.
+ */
+function resolveGateIntent(
+  params: Record<string, string | string[] | undefined>,
+): GateParams | null {
+  const { payload, reason } = parseGateParams(params);
+  if (payload) return payload;
+
+  if (reason && reason !== "missing_intent") {
+    track({
+      event: "signup_intent_book_tampered",
+      reason,
+      source: "signin",
+    });
+  }
+
+  const callbackUrl = readFirstString(params.callbackUrl);
+  if (!callbackUrl) return null;
+  return decomposeNextToGateParams(callbackUrl);
+}
+
 export default async function SignInPage({ searchParams }: SignInPageProps) {
-  const params = await searchParams;
-  const callbackUrl = getSafeCallbackUrl(params?.callbackUrl, defaultPostSignInPath);
-  const verified = readFirstString(params?.verified) === "1";
-  const reset = readFirstString(params?.reset) === "1";
+  const params = (await searchParams) ?? {};
+  const gate = resolveGateIntent(params);
+
+  // Story 3.3: when intent is valid + tutor discoverable, the gate's
+  // booking-stub URL OVERRIDES any explicit `?callbackUrl=` query param.
+  let tutorDisplayName: string | null = null;
+  if (gate) {
+    try {
+      const tutor = await getDiscoverableTutorByUserId(gate.tutorUserId);
+      if (tutor) {
+        tutorDisplayName = tutor.displayName;
+      } else {
+        track({
+          event: "signup_intent_book_tutor_not_found",
+          tutorUserId: gate.tutorUserId,
+          source: "signin",
+        });
+      }
+    } catch (err) {
+      console.error("[signin] tutor lookup failed", err);
+    }
+  }
+
+  const effectiveCallbackUrl =
+    gate && tutorDisplayName
+      ? gate.next
+      : getSafeCallbackUrl(params.callbackUrl, defaultPostSignInPath);
+  const verified = readFirstString(params.verified) === "1";
+  const reset = readFirstString(params.reset) === "1";
+
+  if (gate && tutorDisplayName) {
+    track({
+      event: "signin_intent_book_landed",
+      tutorUserId: gate.tutorUserId,
+    });
+  }
 
   const session = await tryReadSession();
 
   if (session?.user) {
-    redirect(callbackUrl);
+    redirect(effectiveCallbackUrl);
   }
 
   return (
@@ -86,6 +152,8 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
           </p>
         </div>
 
+        {tutorDisplayName && <IntentBanner tutorDisplayName={tutorDisplayName} />}
+
         {verified && (
           <div
             className="rounded-lg border border-primary-container/40 bg-primary-fixed/30 px-4 py-3 text-sm font-bold text-primary-container"
@@ -104,7 +172,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
         )}
 
         <form action={signInWithGoogle}>
-          <input name="callbackUrl" type="hidden" value={callbackUrl} />
+          <input name="callbackUrl" type="hidden" value={effectiveCallbackUrl} />
           <Button
             type="submit"
             variant="outline"
@@ -126,18 +194,50 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
           <div className="h-px flex-1 bg-linen-border" />
         </div>
 
-        <SignInForm callbackUrl={callbackUrl} />
+        <SignInForm callbackUrl={effectiveCallbackUrl} />
 
         <p className="text-center text-sm text-on-surface-variant">
           אין לכם חשבון?{" "}
           <Link
             className="font-bold text-primary-container hover:underline"
-            href="/signup"
+            href={
+              // Story 3.3: preserve booking intent across the cross-link.
+              // `/signup` page-level handler calls decomposeNextToGateParams
+              // on its callbackUrl param to reconstruct the gate payload.
+              gate && tutorDisplayName
+                ? `/signup?callbackUrl=${encodeURIComponent(gate.next)}`
+                : "/signup"
+            }
           >
             הרשמה
           </Link>
         </p>
       </section>
     </AppShell>
+  );
+}
+
+function IntentBanner({ tutorDisplayName }: { tutorDisplayName: string }) {
+  return (
+    <Card tone="highlighted" padding="md" className="text-start">
+      <CardBody>
+        <div className="flex items-start gap-3">
+          <span
+            aria-hidden="true"
+            className="material-symbols-outlined text-primary-container"
+          >
+            info
+          </span>
+          <div className="flex-1 space-y-1">
+            <p className="font-display text-base font-bold text-primary-container">
+              {`צפיתם במורה ${tutorDisplayName}`}
+            </p>
+            <p className="text-sm leading-6 text-on-surface-variant">
+              התחברו וחזרו לבחירת השעה — נחזיר אתכם לסיכום ההזמנה.
+            </p>
+          </div>
+        </div>
+      </CardBody>
+    </Card>
   );
 }

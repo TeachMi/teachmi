@@ -69,6 +69,17 @@ export interface RegisterDeps {
   db: DbForRegister;
   emailProvider: EmailProvider;
   ip: string;
+  /**
+   * Story 3.3 — booking-funnel intent target. When non-null, threaded into:
+   *   1. The verification email URL as `&next=<encoded>` so the magic-link
+   *      click lands the user on the booking-stub instead of /dashboard.
+   *   2. The post-submit redirect (`/signup/verify-email-sent?email=...&next=...`)
+   *      so a resend retains intent.
+   *   3. The dev-skip-verification redirect (`next || /signin?verified=1`).
+   * Sourced by `actions.ts` from `formData.get("next")` and pre-sanitized via
+   * `getSafeCallbackUrl(raw, "")` — unsafe input arrives here as null.
+   */
+  next: string | null;
   origin: string;
   /**
    * Raw `User-Agent` header value, captured by the action wrapper from
@@ -312,7 +323,7 @@ export async function runRegister(
         subject: EMAIL_TEMPLATES.AUTH_VERIFY_EMAIL.subject,
         templateId: EMAIL_TEMPLATES.AUTH_VERIFY_EMAIL.templateId,
         payload: {
-          verifyUrl: buildVerificationUrl(token, origin),
+          verifyUrl: buildVerificationUrl(token, origin, { next: deps.next }),
           expiresInMinutes: 15,
           displayName: name,
         },
@@ -541,10 +552,24 @@ export async function runRegister(
 
   track({ event: "signup_completed", userId, role });
 
+  // Story 3.3 — preserve `next` (the booking-stub URL) through the redirect:
+  //   - Dev-skip path: jump straight to `next` if set; else the existing
+  //     "verified, please sign in" landing.
+  //   - Normal path: pass `next` to /signup/verify-email-sent so a resend
+  //     retains intent (the resend form embeds it as a hidden input).
+  const next = deps.next;
+  if (skipVerification) {
+    return {
+      ok: true,
+      redirectTo: next && next.length > 0 ? next : "/signin?verified=1",
+    };
+  }
+  const verifyEmailSentBase = `/signup/verify-email-sent?email=${encodeURIComponent(email)}`;
   return {
     ok: true,
-    redirectTo: skipVerification
-      ? "/signin?verified=1"
-      : `/signup/verify-email-sent?email=${encodeURIComponent(email)}`,
+    redirectTo:
+      next && next.length > 0
+        ? `${verifyEmailSentBase}&next=${encodeURIComponent(next)}`
+        : verifyEmailSentBase,
   };
 }

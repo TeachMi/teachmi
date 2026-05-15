@@ -36,7 +36,19 @@ export function evaluateTokenValidity(
   return { valid: true, identifier: row.identifier };
 }
 
-export function buildVerificationUrl(token: string, origin: string): string {
+export function buildVerificationUrl(
+  token: string,
+  origin: string,
+  opts?: { next?: string | null },
+): string {
   const trimmed = origin.replace(/\/+$/, "");
-  return `${trimmed}/signup/verify?token=${encodeURIComponent(token)}`;
+  const params = new URLSearchParams({ token });
+  // Story 3.3: thread the post-verify redirect target through the magic-link
+  // URL so the booking-funnel intent survives the email hop. `next` rides on
+  // the URL — no DB persistence — and is hard-sanitized by `getSafeCallbackUrl`
+  // on the receiving side at /signup/verify/route.ts before any redirect.
+  if (opts?.next) {
+    params.set("next", opts.next);
+  }
+  return `${trimmed}/signup/verify?${params.toString()}`;
 }
