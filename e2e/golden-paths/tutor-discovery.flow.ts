@@ -302,13 +302,13 @@ export async function simulateProfileEditOfBio(
 }
 
 /**
- * Simulate a trigger profile edit (hourly price). Matches the orchestrator's
- * write order:
- *   1. is_active = false (FIRST)
- *   2. vetting_status = 'pending'
- *   3. price UPDATE
- * Stops short of writing the audit row — the spec asserts the gate, not the
- * audit table.
+ * Simulate a profile-edit price change. Story 2.5 originally flipped
+ * `is_active=false` + `vetting_status='pending'` here (matching the
+ * re-approval trigger sequence); Story 2.10 dropped the gate for
+ * closed-beta so the simulator now writes ONLY the price field. The
+ * tutor stays discoverable. Gate restoration deferred — when restored
+ * before public go-live, this simulator gets the is_active/vetting_status
+ * flips back (see deferred-work.md).
  */
 export async function simulateProfileEditOfPrice(
   tutorUserId: string,
@@ -319,14 +319,6 @@ export async function simulateProfileEditOfPrice(
   const sql = neon(url);
   const db = drizzle(sql);
 
-  await db
-    .update(tutorProfiles)
-    .set({ isActive: false })
-    .where(eq(tutorProfiles.userId, tutorUserId));
-  await db
-    .update(tutorProfiles)
-    .set({ vettingStatus: "pending" })
-    .where(eq(tutorProfiles.userId, tutorUserId));
   await db
     .update(tutorProfiles)
     .set({ hourlyPriceIls: newHourlyPriceIls })

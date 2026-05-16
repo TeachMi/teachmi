@@ -122,7 +122,7 @@ test("approved tutor profile renders hero + subjects + bio + availability empty-
   expect(videoSrc).toBeTruthy();
 });
 
-test("approved tutor: bio edit preserves discoverability; price edit pauses it (Story 2.5 FR14)", async ({
+test("approved tutor: bio AND price edits BOTH preserve discoverability (Story 2.10 FR14 — gate dropped for closed-beta)", async ({
   page,
 }, testInfo) => {
   const {
@@ -145,27 +145,29 @@ test("approved tutor: bio edit preserves discoverability; price edit pauses it (
   const baseline = await page.goto(profileUrl);
   expect(baseline?.status()).toBe(200);
 
-  // 2. Non-trigger bio edit. Should leave the tutor discoverable AND surface
-  //    the new bio on the public profile.
-  const newBio = `ביוגרפיה חדשה (Story 2.5 E2E ${Date.now()}) — מורה למתמטיקה.`;
+  // 2. Bio edit. Should leave the tutor discoverable AND surface the new bio
+  //    on the public profile.
+  const newBio = `ביוגרפיה חדשה (Story 2.10 E2E ${Date.now()}) — מורה למתמטיקה.`;
   await simulateProfileEditOfBio(tutor.userId, newBio);
 
   const afterBioEdit = await page.goto(profileUrl);
   expect(
     afterBioEdit?.status(),
-    "non-trigger bio edit should NOT remove the tutor from discoverability",
+    "bio edit should preserve discoverability",
   ).toBe(200);
   await expect(page.getByText(newBio)).toBeVisible();
 
-  // 3. Trigger price edit. Should flip the discoverability gate so the
-  //    public profile 404s.
+  // 3. Price edit. Story 2.5 originally PAUSED discoverability on a price
+  //    change (re-approval gate); Story 2.10 dropped the gate for closed-beta
+  //    so the price edit ALSO preserves discoverability. The gate restoration
+  //    is captured in deferred-work.md for pre-public-go-live.
   await simulateProfileEditOfPrice(tutor.userId, 220);
 
   const afterPriceEdit = await page.goto(profileUrl);
   expect(
     afterPriceEdit?.status(),
-    "trigger price edit should flip is_active=false → public profile 404",
-  ).toBe(404);
+    "price edit should preserve discoverability (gate dropped per Story 2.10)",
+  ).toBe(200);
 });
 
 test("anon click on available slot redirects to signup with intent params (Story 3.2)", async ({

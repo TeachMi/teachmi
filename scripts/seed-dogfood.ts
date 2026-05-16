@@ -118,11 +118,99 @@ async function main() {
       updated += 1;
       console.log(`  ~ ${row.email} updated (${row.id})`);
     }
+
+    // Story 2.10: seed an approved tutor_profiles + tutor_subjects rows for
+    // each tutor account so signing in lands them on /tutor/me directly
+    // (no /tutor/onboarding/profile detour). Idempotent — re-runs restore
+    // the canonical "approved + active" state.
+    if (account.role === "tutor") {
+      await seedTutorProfile(sql, row.id, account);
+    }
   }
 
   console.log("");
   console.log(`Done. ${inserted} inserted, ${updated} updated.`);
   console.log(`Sign in at: /signin with any of the above emails + password "${DOGFOOD_PASSWORD}"`);
+}
+
+// Hebrew bios are deliberately distinct per tutor so the dogfood marketplace
+// shows two recognizable cards instead of a duplicate pair.
+const TUTOR_PROFILE_OVERRIDES: Record<string, { bio: string; subjectSlugs: string[] }> = {
+  "ofer-tutor@teachme.co.il": {
+    bio:
+      "מורה למתמטיקה ומדעי המחשב עם 8 שנות ניסיון, מתכניות הכשרה במכון וייצמן ועד הכנה לבגרות. גישה ידידותית, סבלנית, ויעילה — מתאים לתלמידי תיכון ומכינות.",
+    subjectSlugs: ["mathematics", "psychometric"],
+  },
+  "aviel-tutor@teachme.co.il": {
+    bio:
+      "מורה לאנגלית וללשון עברית עם תואר שני בבלשנות. מלמדת לבגרות ב-5 יחידות כבר 6 שנים, אוהבת לעבוד עם תלמידים שמתקשים בכתיבה — שיטה ברורה, ללא לחץ.",
+    subjectSlugs: ["english", "lashon"],
+  },
+};
+
+async function seedTutorProfile(
+  sql: ReturnType<typeof neon<false, false>>,
+  userId: string,
+  account: { email: string; name: string; role: "student" | "tutor" },
+): Promise<void> {
+
+  const override = TUTOR_PROFILE_OVERRIDES[account.email];
+  if (!override) {
+    console.warn(`  ? ${account.email}: no tutor-profile override defined; skipping`);
+    return;
+  }
+
+  // UPSERT the profile row.
+  await sql`
+    INSERT INTO tutor_profiles (
+      user_id, display_name, bio, city,
+      hourly_price_ils, lesson_45_price_ils, lesson_length_minutes,
+      vetting_status, is_active,
+      intro_video_r2_key, profile_photo_r2_key,
+      created_by_kind, created_by_actor
+    )
+    VALUES (
+      ${userId}, ${account.name}, ${override.bio}, ${"תל אביב"},
+      ${180}, ${140}, ${60},
+      ${"approved"}, ${true},
+      ${null}, ${null},
+      ${"system"}, ${"dogfood-seed"}
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+      vetting_status = 'approved',
+      is_active = true,
+      deleted_at = NULL,
+      display_name = EXCLUDED.display_name,
+      bio = EXCLUDED.bio,
+      city = EXCLUDED.city,
+      hourly_price_ils = EXCLUDED.hourly_price_ils,
+      lesson_45_price_ils = EXCLUDED.lesson_45_price_ils,
+      intro_video_r2_key = EXCLUDED.intro_video_r2_key,
+      updated_at = now(),
+      updated_by_kind = ${"system"},
+      updated_by_actor = ${"dogfood-seed"}
+  `;
+
+  // UPSERT subjects. Resolve slug → id via the launch-subjects taxonomy
+  // seeded by `pnpm db:seed`. If a slug is missing (taxonomy not seeded),
+  // skip it silently — the dogfood tutor will just have no subjects.
+  const subjectRows = (await sql`
+    SELECT id, slug FROM subjects
+    WHERE slug = ANY(${override.subjectSlugs})
+  `) as Array<{ id: string; slug: string }>;
+  for (const subj of subjectRows) {
+    await sql`
+      INSERT INTO tutor_subjects (
+        tutor_user_id, subject_id, created_by_kind, created_by_actor
+      )
+      VALUES (
+        ${userId}, ${subj.id}, ${"system"}, ${"dogfood-seed"}
+      )
+      ON CONFLICT (tutor_user_id, subject_id) DO NOTHING
+    `;
+  }
+
+  console.log(`    profile + ${subjectRows.length} subject(s) seeded for ${account.email}`);
 }
 
 main().catch((err) => {

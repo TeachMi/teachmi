@@ -520,39 +520,42 @@ export const ProfileSectionNav: Story = {
   ),
 };
 
-export const TutorProfileEditReapprovalWarning: Story = {
-  name: "Composition — tutor profile edit (re-approval warning)",
+export const TutorSelfServiceTabNav: Story = {
+  name: "Composition — tutor self-service tab nav",
   parameters: {
     docs: {
       description: {
         story:
-          "Mirrors `mocks/tutor-profile-editor.html` (lines 49–53, 86–101) — the re-approval warning banner that appears at the top of the tutor profile edit page (Story 2.5, FR14), plus a representative section card with the inline 'דורש אישור מחדש' badge. Surfaces only in `mode='edit'`; create-mode (Story 2.1) does not render either element.",
+          "Mirrors `mocks/tutor-dashboard.html` lines 41–46 — the active-tab `border-b-2 border-tertiary-accent` pattern used by Story 2.10's `<TutorTabNav>` at `/tutor/me/*`. The three tabs (פרופיל / זמינות / חשבוניות) are path-based — each tab is its own RSC page under the shared `/tutor/me` layout. RTL-safe: uses plain `flex justify-start`, NOT `flex-row-reverse` (which aligns to END = LEFT in Hebrew).",
       },
     },
   },
   render: () => (
-    <div className="space-y-5 max-w-3xl">
-      <Card
-        tone="highlighted"
-        className="border border-tertiary-fixed bg-tertiary-fixed/30 text-start"
+    <div className="border-b border-linen-border bg-linen">
+      <nav
+        className="mx-auto flex max-w-7xl px-6"
+        aria-label="ניווט אזור מורה"
       >
-        <p className="text-xs text-on-tertiary-fixed-variant">
-          <strong>שימו לב:</strong> שינוי בסרטון, במחיר או במקצועות יסיר את הפרופיל מהאוויר עד אישור הצוות (~24 שעות).
-        </p>
-      </Card>
-      <Card padding="md" className="text-start">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h3 className="font-display text-lg font-bold text-primary-container">
-            תמחור — 2 אורכי שיעור
-          </h3>
-          <span className="text-xs bg-tertiary-fixed/40 text-on-tertiary-fixed-variant px-2 py-0.5 rounded font-bold">
-            דורש אישור מחדש
-          </span>
-        </div>
-        <p className="text-xs text-secondary">
-          שינוי במחיר ידרוש בדיקה מחודשת של הצוות לפני שיוצג שוב לסטודנטים.
-        </p>
-      </Card>
+        <a
+          href="#"
+          aria-current="page"
+          className="px-5 py-3 border-b-2 border-tertiary-accent text-primary-container text-sm font-bold"
+        >
+          פרופיל
+        </a>
+        <a
+          href="#"
+          className="px-5 py-3 border-b-2 border-transparent text-on-surface-variant hover:text-primary-container text-sm font-bold transition-colors"
+        >
+          זמינות
+        </a>
+        <a
+          href="#"
+          className="px-5 py-3 border-b-2 border-transparent text-on-surface-variant hover:text-primary-container text-sm font-bold transition-colors"
+        >
+          חשבוניות
+        </a>
+      </nav>
     </div>
   ),
 };

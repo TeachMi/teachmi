@@ -43,10 +43,24 @@ export function Hero({
       : firstSubject.displayNameHe
     : (tutor.city ?? "מורה ב-TeachMe");
 
+  // Bio: split on paragraph breaks for nice line-spacing inside the hero.
+  // Same `stripBidiOverrides`-style cleanup as the page's old About section
+  // isn't applied here — the page's render still calls `stripBidiOverrides`
+  // on `tutor.bio` before the Hero would consume it via props. For the Hero,
+  // we render the bio raw and rely on React's HTML escaping; the bidi
+  // override stripping is a page-level concern.
+  const bioParagraphs =
+    tutor.bio && tutor.bio.trim().length > 0
+      ? tutor.bio
+          .split(/\n\n+|\n/)
+          .map((para) => para.trim())
+          .filter((para) => para.length > 0)
+      : [];
+
   return (
     <section
       aria-label="פרופיל המורה"
-      className="grid grid-cols-1 lg:grid-cols-5 gap-8 mb-10"
+      className="grid grid-cols-1 lg:grid-cols-5 gap-8 mb-10 items-start"
     >
       {/* Info column — rightmost in RTL via DOM order */}
       <div className="lg:col-span-3 text-start">
@@ -57,8 +71,8 @@ export function Hero({
             size="xl"
             className="border-4 border-white shadow-md"
           />
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
               <h1 className="font-display font-extrabold text-3xl text-primary-container">
                 {tutor.displayName}
               </h1>
@@ -76,7 +90,7 @@ export function Hero({
             <p className="text-on-surface-variant mb-3">{headline}</p>
 
             {(rating !== null || tutor.totalLessonsCompleted > 0) && (
-              <div className="flex flex-wrap items-center gap-4 text-sm">
+              <div className="flex flex-wrap items-center gap-4 text-sm mb-3">
                 {rating !== null && (
                   <span className="flex items-center gap-1">
                     <span
@@ -111,6 +125,18 @@ export function Hero({
             )}
           </div>
         </div>
+
+        {/* Bio — moved inside the Hero right column 2026-05-16 so the about
+            sits immediately under the name and headline, paired visually
+            with the video on the left rather than as a separate
+            full-width section below. */}
+        {bioParagraphs.length > 0 && (
+          <div className="mb-5 space-y-3 text-on-surface leading-relaxed">
+            {bioParagraphs.map((para, idx) => (
+              <p key={idx}>{para}</p>
+            ))}
+          </div>
+        )}
 
         {/* Two-price summary — delegated to the standalone PriceBlock
             component so the same JSX powers the hero, future browse cards,
