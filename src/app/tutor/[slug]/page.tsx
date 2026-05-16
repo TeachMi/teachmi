@@ -263,7 +263,7 @@ export default async function PublicTutorProfilePage({
     <AppShell mainClassName="flex-1 bg-linen">
       <div className="mx-auto w-full max-w-7xl px-6 py-8">
         <Hero
-          tutor={tutor}
+          tutor={{ ...tutor, bio: tutor.bio ? stripBidiOverrides(tutor.bio) : tutor.bio }}
           subjects={subjects}
           rating={rating}
           introVideoUrl={introVideoUrl}
@@ -281,35 +281,6 @@ export default async function PublicTutorProfilePage({
         />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-12">
-          {tutor.bio && tutor.bio.trim().length > 0 && (
-            <section
-              id="about"
-              aria-labelledby="about-heading"
-              className="lg:col-span-2 bg-white rounded-xl border border-linen-border p-6 text-start"
-            >
-              <h2
-                id="about-heading"
-                className="font-display font-bold text-xl text-primary-container mb-4"
-              >
-                {tutor.displayName.includes(" ")
-                  ? `אודות ${tutor.displayName.split(" ")[0]}`
-                  : "אודות המורה"}
-              </h2>
-              {stripBidiOverrides(tutor.bio)
-                .split(/\n\n+|\n/)
-                .map((para) => para.trim())
-                .filter((para) => para.length > 0)
-                .map((para, idx) => (
-                  <p
-                    key={idx}
-                    className="text-on-surface-variant leading-relaxed mb-4 last:mb-0"
-                  >
-                    {para}
-                  </p>
-                ))}
-            </section>
-          )}
-
           {rating !== null && <RatingWidget histogram={rating} />}
         </div>
 

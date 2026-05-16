@@ -26,7 +26,7 @@ export async function editProfileAction(
   _prevState: ProfileActionState,
   formData: FormData,
 ): Promise<ProfileActionState> {
-  const user = await requireTutor("/tutor");
+  const user = await requireTutor("/tutor/me");
   const hdrs = await headers();
   const ip = readIp(hdrs.get("x-forwarded-for"));
   const draft = parseFormDataIntoDraftInput(formData);

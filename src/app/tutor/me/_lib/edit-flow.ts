@@ -1,23 +1,22 @@
-// Pure orchestrator for Story 2.5's profile-edit Server Action.
+// Pure orchestrator for Story 2.10's tutor-profile-edit Server Action.
 // FakeDb-tested via edit-flow.test.ts. `actions.ts` ("use server") is the
 // thin Next.js wrapper that builds the real dependencies and converts the
 // outcome into a redirect / state return.
 //
-// The load-bearing logic is the change categorization (see
-// `categorize-changes.ts`) plus Story 2.3 AC4's trigger-sequence write order:
+// Originally authored as part of Story 2.5 with a re-approval trigger
+// sequence (Story 2.3 AC4: is_active=false FIRST → vetting_status=pending
+// → trigger updates → non-trigger → 2 audit rows). Story 2.10 SIMPLIFIES
+// the orchestrator: every edit saves immediately, profile stays
+// discoverable, ONE audit row written. The re-approval gate is dropped
+// for closed-beta and restored before public go-live (see
+// deferred-work.md "Restore re-approval gate (FR14) before public
+// go-live").
 //
-//   1. UPDATE tutor_profiles SET is_active = false   (FIRST — partial failure
-//                                                     leaves invisible-but-stale)
-//   2. UPDATE tutor_profiles SET vetting_status = 'pending'
-//   3. Trigger-field UPDATEs (intro video / prices / subjects)
-//   4. Non-trigger-field UPDATEs (display_name / bio / city / photo)
-//   5. INSERT audit_events (event_type='tutor.profile_edit_triggered_reapproval')
-//   6. INSERT audit_events (event_type='tutor.profile_edited') — only if
-//      non-trigger fields ALSO changed
-//
-// Audit goes LAST so a partial failure never leaves a "we vetted this" trail
-// for data that hasn't been written yet — same outside-cleanup placement
-// Stories 1.21 and 1.22 established.
+// The `categorize-changes.ts` helper still returns the
+// `triggerChanges` / `nonTriggerChanges` split — kept in the return
+// shape as a FORWARD-COMPAT HOOK so the gate-restoration story (pre-go-live)
+// can re-introduce the trigger sequence as a ~50-line orchestrator diff
+// without rewriting the helper.
 
 import { and, eq } from "drizzle-orm";
 import {
@@ -77,8 +76,11 @@ interface ExistingProfileLookup {
   lesson45PriceIls: number | null;
 }
 
+// The select aliases `tutor_subjects.subject_id` (a UUID FK to subjects.id).
+// Field name mirrors the underlying column, NOT the slug — the UUID is
+// translated to a slug via `idToSlug` below.
 interface ExistingSubjectLookup {
-  subjectSlug: string;
+  subjectId: string;
 }
 
 // --- Orchestrator ----------------------------------------------------------
@@ -95,10 +97,9 @@ export async function runEditProfile(
   }
   const input = parsed.value;
 
-  // Defense-in-depth R2-key ownership check — same shape as
-  // `runSubmitProfile`. Even if the action layer also guards, refusing here
-  // means an attacker cannot smuggle another tutor's r2Key through the edit
-  // flow either.
+  // Defense-in-depth R2-key ownership check. The action layer also guards;
+  // refusing here means a misbehaving client cannot smuggle another tutor's
+  // r2Key through the edit flow either.
   if (!input.introVideoR2Key.startsWith(`intros/${deps.tutorUserId}/`)) {
     log.error(
       `[runEditProfile] intro_video r2Key does not match tutor prefix: ${input.introVideoR2Key}`,
@@ -158,25 +159,26 @@ export async function runEditProfile(
       return { ok: false, formError: "פרופיל לא נמצא. השלימו תחילה את אשף ההצטרפות." };
     }
 
-    // 2. Load existing subjects (slug set) — paired with the SUBJECT_IDS map
-    //    via the inverse mapping below.
+    // 2. Load existing subjects so the categorize helper can compare sets.
     const existingSubjectRows = (await db
-      .select({ subjectSlug: tutorSubjects.subjectId })
+      .select({ subjectId: tutorSubjects.subjectId })
       .from(tutorSubjects)
       .where(eq(tutorSubjects.tutorUserId, deps.tutorUserId))) as ExistingSubjectLookup[];
 
-    // Invert the (slug → id) map so we can translate existing tutor_subjects'
-    // subject_id back to slugs. Subject taxonomy entries deleted between the
-    // tutor's original submit and this edit (admin hidden a subject) appear
-    // as ids without a slug — treat those as a deleted subject, contributing
-    // a placeholder slug so the diff catches them as "the set changed".
+    // Invert the (slug → id) map. Taxonomy entries deleted between original
+    // submit and this edit appear as ids without a slug — treat them with a
+    // placeholder so the diff catches the change.
     const idToSlug = new Map<string, string>();
     for (const [slug, id] of subjectIds.entries()) idToSlug.set(id, slug);
     const existingSlugs = existingSubjectRows.map(
-      (row) => idToSlug.get(row.subjectSlug) ?? `__unknown_${row.subjectSlug}`,
+      (row) => idToSlug.get(row.subjectId) ?? `__unknown_${row.subjectId}`,
     );
 
-    // 3. Build the categorized change set.
+    // 3. Diff old vs new. The trigger/non-trigger split in the return shape
+    //    is FORWARD-COMPAT only — Story 2.10 ignores the distinction. When
+    //    the re-approval gate is restored before public go-live, this split
+    //    is what the trigger-sequence write order keys off (see
+    //    deferred-work.md).
     const oldValues: ProfileValues = {
       displayName: existing.displayName,
       bio: existing.bio ?? "",
@@ -204,63 +206,38 @@ export async function runEditProfile(
       return {
         ok: true,
         changes,
-        redirectTo: `/tutor/${deps.tutorUserId}`,
+        redirectTo: "/tutor/me",
       };
     }
 
-    const hasTriggerChange = changes.triggerChanges.length > 0;
+    // 5. Single UPDATE on tutor_profiles for every changed scalar field.
+    //    Bundle trigger + non-trigger fields together — they're all just
+    //    "fields that changed" under the simplified Story 2.10 model.
+    const profileUpdateSet: Record<string, unknown> = {};
+    const allChanges = [
+      ...changes.triggerChanges,
+      ...changes.nonTriggerChanges,
+    ];
+    if (allChanges.includes("display_name")) profileUpdateSet.displayName = input.displayName;
+    if (allChanges.includes("bio")) profileUpdateSet.bio = input.bio;
+    if (allChanges.includes("city")) profileUpdateSet.city = input.city;
+    if (allChanges.includes("profile_photo")) profileUpdateSet.profilePhotoR2Key = input.photoR2Key;
+    if (allChanges.includes("intro_video")) profileUpdateSet.introVideoR2Key = input.introVideoR2Key;
+    if (allChanges.includes("hourly_price")) profileUpdateSet.hourlyPriceIls = input.price60Ils;
+    if (allChanges.includes("lesson_45_price")) profileUpdateSet.lesson45PriceIls = input.price45Ils;
 
-    // 5. Trigger-sequence — Story 2.3 AC4 contract.
-    //    Each step is its own UPDATE so partial failures land in safe states
-    //    (invisible-but-stale). Audit goes last.
-    if (hasTriggerChange) {
-      // 5a. is_active=false FIRST. Idempotent if already false.
+    if (Object.keys(profileUpdateSet).length > 0) {
+      profileUpdateSet.updatedAt = deps.now();
+      profileUpdateSet.updatedByKind = "user";
+      profileUpdateSet.updatedByActor = deps.tutorUserId;
       await db
         .update(tutorProfiles)
-        .set({
-          isActive: false,
-          updatedAt: deps.now(),
-          updatedByKind: "user",
-          updatedByActor: deps.tutorUserId,
-        })
-        .where(eq(tutorProfiles.id, existing.id));
-
-      // 5b. vetting_status='pending'.
-      await db
-        .update(tutorProfiles)
-        .set({
-          vettingStatus: "pending",
-          updatedAt: deps.now(),
-          updatedByKind: "user",
-          updatedByActor: deps.tutorUserId,
-        })
+        .set(profileUpdateSet)
         .where(eq(tutorProfiles.id, existing.id));
     }
 
-    // 6. Trigger-field updates. Group all profile-row trigger fields into one
-    //    UPDATE so we don't trigger a half-priced state on partial failure.
-    const triggerProfileSet: Record<string, unknown> = {};
-    if (changes.triggerChanges.includes("intro_video")) {
-      triggerProfileSet.introVideoR2Key = input.introVideoR2Key;
-    }
-    if (changes.triggerChanges.includes("hourly_price")) {
-      triggerProfileSet.hourlyPriceIls = input.price60Ils;
-    }
-    if (changes.triggerChanges.includes("lesson_45_price")) {
-      triggerProfileSet.lesson45PriceIls = input.price45Ils;
-    }
-    if (Object.keys(triggerProfileSet).length > 0) {
-      triggerProfileSet.updatedAt = deps.now();
-      triggerProfileSet.updatedByKind = "user";
-      triggerProfileSet.updatedByActor = deps.tutorUserId;
-      await db
-        .update(tutorProfiles)
-        .set(triggerProfileSet)
-        .where(eq(tutorProfiles.id, existing.id));
-    }
-
-    // 7. Subjects — DELETE-then-INSERT (same pattern Story 2.1's submit uses).
-    if (changes.triggerChanges.includes("subjects")) {
+    // 6. Subjects — DELETE-then-INSERT (same pattern Story 2.1's submit uses).
+    if (allChanges.includes("subjects")) {
       await db
         .delete(tutorSubjects)
         .where(eq(tutorSubjects.tutorUserId, deps.tutorUserId));
@@ -280,10 +257,12 @@ export async function runEditProfile(
       }
     }
 
-    // 8. Intro-video re-upload — re-confirm the tutor_documents row in
-    //    pending state so admin queue (Story 2.4) surfaces it for review.
-    //    Same DEFENSE-IN-DEPTH ownership filter as `runSubmitProfile`.
-    if (changes.triggerChanges.includes("intro_video")) {
+    // 7. Intro-video re-upload — flip the tutor_documents row back to
+    //    pending so the eventual admin queue (Story 2.4) can surface it
+    //    for review. Story 2.10's "no gate" model still keeps this signal
+    //    intact so a future gate restoration (deferred-work.md) doesn't
+    //    have to re-thread the document state.
+    if (allChanges.includes("intro_video")) {
       const documentsUpdated = (await db
         .update(tutorDocuments)
         .set({
@@ -306,69 +285,33 @@ export async function runEditProfile(
       }
     }
 
-    // 9. Non-trigger-field updates. Group all into one UPDATE.
-    const nonTriggerProfileSet: Record<string, unknown> = {};
-    if (changes.nonTriggerChanges.includes("display_name")) {
-      nonTriggerProfileSet.displayName = input.displayName;
-    }
-    if (changes.nonTriggerChanges.includes("bio")) {
-      nonTriggerProfileSet.bio = input.bio;
-    }
-    if (changes.nonTriggerChanges.includes("city")) {
-      nonTriggerProfileSet.city = input.city;
-    }
-    if (changes.nonTriggerChanges.includes("profile_photo")) {
-      nonTriggerProfileSet.profilePhotoR2Key = input.photoR2Key;
-    }
-    if (Object.keys(nonTriggerProfileSet).length > 0) {
-      nonTriggerProfileSet.updatedAt = deps.now();
-      nonTriggerProfileSet.updatedByKind = "user";
-      nonTriggerProfileSet.updatedByActor = deps.tutorUserId;
-      await db
-        .update(tutorProfiles)
-        .set(nonTriggerProfileSet)
-        .where(eq(tutorProfiles.id, existing.id));
-    }
+    // 8. ONE audit row covering every changed field. Story 2.5 wrote two
+    //    rows (trigger + non-trigger) because the gate distinguished them;
+    //    Story 2.10 collapses to a single `tutor.profile_edited` event
+    //    with `changedFields` listing every field that moved.
+    await db.insert(auditEvents).values(
+      toAuditEventValues({
+        eventType: "tutor.profile_edited",
+        actorKind: "user",
+        actorId: deps.tutorUserId,
+        targetType: "tutor_profile",
+        targetId: existing.id,
+        payload: {
+          changedFields: allChanges,
+        },
+      }),
+    );
 
-    // 10. Audit row(s). Trigger audit FIRST (matches AC2 ordering), then a
-    //     separate non-trigger row when both kinds happened in the same save.
-    if (hasTriggerChange) {
-      await db.insert(auditEvents).values(
-        toAuditEventValues({
-          eventType: "tutor.profile_edit_triggered_reapproval",
-          actorKind: "user",
-          actorId: deps.tutorUserId,
-          targetType: "tutor_profile",
-          targetId: existing.id,
-          payload: {
-            changedFields: changes.triggerChanges,
-            previousVettingStatus: existing.vettingStatus,
-          },
-        }),
-      );
-    }
-    if (changes.nonTriggerChanges.length > 0) {
-      await db.insert(auditEvents).values(
-        toAuditEventValues({
-          eventType: "tutor.profile_edited",
-          actorKind: "user",
-          actorId: deps.tutorUserId,
-          targetType: "tutor_profile",
-          targetId: existing.id,
-          payload: {
-            changedFields: changes.nonTriggerChanges,
-          },
-        }),
-      );
-    }
-
-    // 11. Redirect target. Trigger flows route the tutor to /dashboard (the
-    //     "in review" Card is the right next-state). Non-trigger flows route
-    //     back to the public profile so the tutor sees their fresh values.
+    // 9. Redirect to /tutor/me — the tutor lands back on their Profile tab
+    //    with the fresh values. Story 2.5 redirected to /dashboard on
+    //    trigger flows and /tutor/<userId> on non-trigger flows; both of
+    //    those branches collapse here since every edit preserves
+    //    discoverability and the dashboard now redirects tutors to
+    //    /tutor/me anyway.
     return {
       ok: true,
       changes,
-      redirectTo: hasTriggerChange ? "/dashboard" : `/tutor/${deps.tutorUserId}`,
+      redirectTo: "/tutor/me",
     };
   } catch (err) {
     log.error("[runEditProfile] sequential writes failed", err);

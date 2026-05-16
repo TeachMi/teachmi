@@ -4,7 +4,6 @@ import {
   startTransition,
   useActionState,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -15,10 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
 import { isStubUrl } from "@/lib/providers/files";
-import {
-  categorizeChanges,
-  type ProfileValues,
-} from "../../[slug]/edit/categorize-changes";
 import { profileFormAction } from "./actions";
 // PhotoCropModal moved to a shared location so the student /account/profile
 // surface can reuse the same crop UX without a cross-feature import.
@@ -63,10 +58,15 @@ interface ProfileFormProps {
   initialPreviews: FormInitialPreviews;
   isResubmit: boolean;
   /**
-   * Story 2.5 — "edit" mode renders the re-approval warning banner,
-   * per-section "דורש אישור מחדש" badges, the "View public profile" link, and
-   * a dynamic CTA. Defaults to "create" so Story 2.1's existing mount in
+   * "edit" mode swaps the create-flow CTAs ("המשך לחתימת הסכם" + "שמרו טיוטה")
+   * for the simpler edit-mode CTAs ("שמרו" + "ביטול" → /tutor/me).
+   * Defaults to "create" so Story 2.1's existing mount in
    * `/tutor/onboarding/profile/page.tsx` keeps its original behavior.
+   *
+   * Story 2.10 removed the re-approval warning banner + per-section badges
+   * + dynamic CTA copy that Story 2.5 had wired here — every edit now saves
+   * immediately for closed-beta. Restoration deferred per
+   * `_bmad-output/planning-artifacts/deferred-work.md`.
    */
   mode?: "create" | "edit";
   /**
@@ -74,11 +74,6 @@ interface ProfileFormProps {
    * `profileFormAction`; edit-mode mounts pass `editProfileAction` here.
    */
   saveAction?: typeof profileFormAction;
-  /**
-   * URL of the owner's public profile (`/tutor/<userId>`). Used only in edit
-   * mode for the "View public profile" link. Ignored in create mode.
-   */
-  ownerProfileUrl?: string;
 }
 
 const AUTO_SAVE_DEBOUNCE_MS = 30_000;
@@ -90,7 +85,6 @@ export function ProfileForm({
   isResubmit,
   mode = "create",
   saveAction = profileFormAction,
-  ownerProfileUrl,
 }: ProfileFormProps) {
   const [state, formAction, pending] = useActionState(
     saveAction,
@@ -170,6 +164,13 @@ export function ProfileForm({
    * FormData snapshot would overwrite the fresh R2 key.
    */
   function persistDraftImmediately(overrides: Record<string, string>) {
+    // Story 2.10 amendment 2026-05-16: in edit mode, the user explicitly
+    // clicks "שמרו" to save. Auto-saving on every upload would (a) bypass
+    // the explicit-save UX contract, (b) trigger the redirect-to-/tutor/me
+    // before the user has finished editing other fields. The r2Key still
+    // lives in client state (`photoState.r2Key` / `videoState.r2Key`) and
+    // ships via the hidden form input on the explicit submit.
+    if (mode === "edit") return;
     if (pending) return;
     const formEl = formRef.current;
     if (!formEl) return;
@@ -185,9 +186,13 @@ export function ProfileForm({
     startTransition(() => formAction(fd));
   }
 
-  // Debounced auto-save on any field change. Stores the timer ID in a ref so
-  // `persistDraftImmediately` can cancel it before firing immediately.
+  // Debounced auto-save on any field change. Story 2.10 amendment 2026-05-16:
+  // disabled in edit mode — the user explicitly clicks "שמרו" in /tutor/me
+  // and we don't want background saves bypassing that contract. The auto-save
+  // remains active in create mode (Story 2.1 onboarding wizard) so the draft
+  // doesn't get lost mid-wizard.
   useEffect(() => {
+    if (mode === "edit") return;
     if (pending) return;
     const formEl = formRef.current;
     if (!formEl) return;
@@ -205,7 +210,7 @@ export function ProfileForm({
       }
     };
     // Track keystroke changes via a tick state. Subjects toggles also re-arm.
-  }, [selectedSubjects, photoState.r2Key, videoState.r2Key, pending, formAction]);
+  }, [mode, selectedSubjects, photoState.r2Key, videoState.r2Key, pending, formAction]);
 
   const submitFieldErrors =
     state.intent === "submit" && !state.ok ? state.fieldErrors ?? {} : {};
@@ -433,85 +438,15 @@ export function ProfileForm({
     persistDraftImmediately({ introVideoR2Key: confirm.r2Key });
   }
 
-  const subjectsExceedingSoftCap =
-    selectedSubjects.length > PROFILE_FORM_LIMITS.SUBJECTS_SOFT_HINT;
-
   const isEditMode = mode === "edit";
 
-  // Story 2.5 — dynamic CTA copy. Compute on every render via the same
-  // categorizeChanges helper used by the orchestrator, so the button text
-  // and the actual semantics never drift. Pure + cheap. Idempotent no-op
-  // (hasAnyChange=false) disables the button to make AC5's no-op visible.
-  const currentValues = useMemo<ProfileValues>(
-    () => ({
-      displayName,
-      bio,
-      city: initialValues.city ?? "",
-      profilePhotoR2Key: photoState.r2Key,
-      introVideoR2Key: videoState.r2Key,
-      hourlyPriceIls: parsePriceForDiff(price60),
-      lesson45PriceIls: parsePriceForDiff(price45),
-      subjects: selectedSubjects,
-    }),
-    [
-      displayName,
-      bio,
-      initialValues.city,
-      photoState.r2Key,
-      videoState.r2Key,
-      price60,
-      price45,
-      selectedSubjects,
-    ],
-  );
-  const baselineValues = useMemo<ProfileValues>(
-    () => ({
-      displayName: initialValues.displayName ?? "",
-      bio: initialValues.bio ?? "",
-      city: initialValues.city ?? "",
-      profilePhotoR2Key: initialValues.photoR2Key,
-      introVideoR2Key: initialValues.introVideoR2Key,
-      hourlyPriceIls: initialValues.price60Ils,
-      lesson45PriceIls: initialValues.price45Ils,
-      subjects: initialValues.subjects,
-    }),
-    [initialValues],
-  );
-  const editChanges = isEditMode
-    ? categorizeChanges(baselineValues, currentValues)
-    : null;
-  const ctaCopy = (() => {
-    if (!isEditMode) return "המשך לחתימת הסכם ←";
-    if (editChanges && editChanges.triggerChanges.length > 0) {
-      return "שמרו ושלחו לאישור";
-    }
-    return "שמרו";
-  })();
-  const ctaDisabled = isEditMode && editChanges?.hasAnyChange === false;
+  // CTA copy: create mode → "המשך לחתימת הסכם ←" (Story 2.1 wizard cap).
+  // Edit mode → static "שמרו" (Story 2.10 — re-approval gate dropped; the
+  // dynamic copy variant Story 2.5 introduced is removed).
+  const ctaCopy = isEditMode ? "שמרו" : "המשך לחתימת הסכם ←";
 
   return (
     <form ref={formRef} action={formAction} className="space-y-5" noValidate>
-      {isEditMode && ownerProfileUrl && (
-        <div className="flex items-center justify-start">
-          <Link
-            href={ownerProfileUrl}
-            className="text-xs font-bold text-primary-container border border-primary-fixed-dim rounded px-3 py-1.5 hover:bg-primary-fixed/30"
-          >
-            צפו בפרופיל הציבורי ←
-          </Link>
-        </div>
-      )}
-      {isEditMode && (
-        <Card
-          tone="highlighted"
-          className="border border-tertiary-fixed bg-tertiary-fixed/30 text-start"
-        >
-          <p className="text-xs text-on-tertiary-fixed-variant">
-            <strong>שימו לב:</strong> שינוי בסרטון, במחיר או במקצועות יסיר את הפרופיל מהאוויר עד אישור הצוות (~24 שעות).
-          </p>
-        </Card>
-      )}
-
       <input type="hidden" name="intent" value="submit" />
       <input
         type="hidden"
@@ -573,7 +508,7 @@ export function ProfileForm({
             surface="linen"
             minLength={PROFILE_FORM_LIMITS.DISPLAY_NAME_MIN_CHARS}
             maxLength={PROFILE_FORM_LIMITS.DISPLAY_NAME_MAX_CHARS}
-            placeholder="ד״ר ישראלה י."
+            placeholder=""
             autoComplete="name"
           />
         </div>
@@ -652,14 +587,11 @@ export function ProfileForm({
 
       {/* ===== Subjects ===== */}
       <Card padding="md" className="text-start">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h3 className="font-display text-lg font-bold text-primary-container">
-            מקצועות שאתם מלמדים
-          </h3>
-          {isEditMode && <ReApprovalBadge />}
-        </div>
+        <h3 className="mb-2 font-display text-lg font-bold text-primary-container">
+          מקצועות שאתם מלמדים
+        </h3>
         <p className="mb-4 text-xs text-secondary">
-          בחרו עד {PROFILE_FORM_LIMITS.SUBJECTS_SOFT_HINT} מקצועות. התרכזו במה שאתם הכי טובים בו.
+          בחרו את המקצועות שאתם מלמדים.
         </p>
         <div className="flex flex-wrap gap-2">
           {availableSubjects.map((subject) => {
@@ -684,12 +616,7 @@ export function ProfileForm({
         </div>
         <p className="mt-4 text-xs text-secondary">
           נבחרו:{" "}
-          <span
-            className={cn(
-              "font-bold text-primary-container",
-              subjectsExceedingSoftCap && "text-danger",
-            )}
-          >
+          <span className="font-bold text-primary-container">
             {selectedSubjects.length}
           </span>{" "}
           מקצועות
@@ -703,12 +630,9 @@ export function ProfileForm({
 
       {/* ===== Pricing ===== */}
       <Card padding="md" className="text-start">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h3 className="font-display text-lg font-bold text-primary-container">
-            תמחור — 2 אורכי שיעור
-          </h3>
-          {isEditMode && <ReApprovalBadge />}
-        </div>
+        <h3 className="mb-2 font-display text-lg font-bold text-primary-container">
+          תמחור — 2 אורכי שיעור
+        </h3>
         <p className="mb-4 text-xs text-secondary">
           אתם קובעים את המחיר. הממוצע בתחום שלכם: ₪150-200 לשעה.
         </p>
@@ -732,12 +656,9 @@ export function ProfileForm({
 
       {/* ===== Intro video ===== */}
       <Card padding="md" className="text-start">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h3 className="font-display text-lg font-bold text-primary-container">
-            סרטון היכרות
-          </h3>
-          {isEditMode && <ReApprovalBadge />}
-        </div>
+        <h3 className="mb-2 font-display text-lg font-bold text-primary-container">
+          סרטון היכרות
+        </h3>
         <p className="mb-4 text-xs text-secondary">
           סרטונים מקבלים פי 4 הזמנות. {PROFILE_FORM_LIMITS.INTRO_VIDEO_MIN_DURATION_SEC}-
           {PROFILE_FORM_LIMITS.INTRO_VIDEO_MAX_DURATION_SEC} שניות, עד 50MB.
@@ -856,7 +777,6 @@ export function ProfileForm({
             type="submit"
             size="lg"
             fullWidth
-            disabled={ctaDisabled}
             loading={pending && state.intent === "submit"}
             onClick={() => {
               const formEl = formRef.current;
@@ -869,14 +789,14 @@ export function ProfileForm({
             {ctaCopy}
           </Button>
           <Link
-            href="/dashboard"
+            href="/tutor/me"
             className="text-sm font-bold text-on-surface bg-white border border-linen-border rounded-lg px-6 py-3.5 hover:border-primary-fixed-dim"
           >
             ביטול
           </Link>
         </div>
       ) : (
-        <div className="flex flex-row-reverse items-center gap-3">
+        <div className="flex items-center gap-3">
           <Button
             type="submit"
             size="lg"
@@ -947,25 +867,6 @@ interface PriceInputProps {
   value: string;
   onChange: (value: string) => void;
   error: string | undefined;
-}
-
-function ReApprovalBadge() {
-  return (
-    <span className="text-xs bg-tertiary-fixed/40 text-on-tertiary-fixed-variant px-2 py-0.5 rounded font-bold">
-      דורש אישור מחדש
-    </span>
-  );
-}
-
-// Loose price parser for the dirty-state diff. Real validation runs at submit
-// via `parseSubmitInput`. Here we only need to distinguish "the user typed a
-// new number" from "the user typed nothing/garbage" — empty strings and
-// non-numerics map to null so the diff doesn't fire on transient invalid
-// input.
-function parsePriceForDiff(raw: string): number | null {
-  if (raw.trim() === "") return null;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function isValidPrice(raw: string): boolean {

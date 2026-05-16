@@ -15,9 +15,16 @@ export const PROFILE_FORM_LIMITS = {
   DISPLAY_NAME_MIN_CHARS: 2,
   DISPLAY_NAME_MAX_CHARS: 200,
   SUBJECTS_MIN: 1,
-  SUBJECTS_MAX: 8,
-  /** UX hint surfaced in the form copy; the schema cap is SUBJECTS_MAX. */
-  SUBJECTS_SOFT_HINT: 3,
+  /**
+   * Story 2.10 amendment 2026-05-16: subject max + soft hint dropped per
+   * founder direction. Closed-beta tutors should pick whatever subjects they
+   * actually teach — the original "up to 3" soft hint was a Story-2.1-era
+   * heuristic. Validation now only enforces SUBJECTS_MIN. The constants are
+   * kept exported (set to large values acting as guard rails) so existing
+   * imports don't break.
+   */
+  SUBJECTS_MAX: 100,
+  SUBJECTS_SOFT_HINT: 100,
   PHOTO_MAX_BYTES: 5_000_000,
   INTRO_VIDEO_MAX_BYTES: 50_000_000,
   INTRO_VIDEO_MIN_DURATION_SEC: 5,

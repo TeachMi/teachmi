@@ -159,11 +159,9 @@ describe("runSubmitProfile — re-submit after changes-requested", () => {
 describe("runSubmitProfile — validation failures", () => {
   it.each([
     ["empty subjects array", { subjects: [] }, "subjects"],
-    [
-      "subjects exceeding cap of 8",
-      { subjects: Array.from({ length: 9 }, (_, i) => `english-${i}`) },
-      "subjects",
-    ],
+    // Story 2.10 amendment 2026-05-16: the upper-bound subject cap was
+    // dropped (SUBJECTS_MAX raised to 100 acting as a guard rail) per
+    // founder direction. Only the minimum-1 constraint stays.
     ["bio under 50 chars", { bio: "קצר מדי" }, "bio"],
     ["bio over 1000 chars", { bio: "x".repeat(1001) }, "bio"],
     ["price45 of 0", { price45Ils: 0 }, "price45Ils"],
