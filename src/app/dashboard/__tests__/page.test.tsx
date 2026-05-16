@@ -206,4 +206,42 @@ describe("DashboardPage", () => {
     const props = findProps(tree, GreetingSpy);
     expect(props?.displayName).toBe("noa");
   });
+
+  // Story 2.10 — role-based redirects out of /dashboard.
+  it("redirects tutors to /tutor/me", async () => {
+    mockRequireAuth.mockResolvedValue({
+      id: "tutor-1",
+      name: "ד״ר מיכל",
+      email: "michal@teachme.co.il",
+      role: "tutor",
+    });
+
+    let thrown: unknown;
+    try {
+      await DashboardPage();
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as Error).message).toBe(`${REDIRECT_SENTINEL}/tutor/me`);
+    // mockGetUpcoming MUST NOT have been called — the redirect runs BEFORE
+    // the student data load.
+    expect(mockGetUpcoming).not.toHaveBeenCalled();
+  });
+
+  it("redirects admins to /admin (unchanged from Story 5.0)", async () => {
+    mockRequireAuth.mockResolvedValue({
+      id: "admin-1",
+      name: "Admin",
+      email: "admin@teachme.co.il",
+      role: "admin",
+    });
+
+    let thrown: unknown;
+    try {
+      await DashboardPage();
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as Error).message).toBe(`${REDIRECT_SENTINEL}/admin`);
+  });
 });

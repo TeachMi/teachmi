@@ -295,19 +295,20 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
     expect(subjProps?.subjects).toEqual(subjects);
   });
 
-  it("renders the about/bio section in the page output (inline, not via _components)", async () => {
+  it("passes the tutor's bio (bidi-stripped) to <Hero> so it renders under the name", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
 
-    const result = await PublicTutorProfilePage({
+    lastRendered = await PublicTutorProfilePage({
       params: Promise.resolve({ slug: TUTOR_UUID }),
       searchParams: Promise.resolve({}),
     });
 
-    // Bio is rendered inline in page.tsx (not via a mocked _component), so
-    // we CAN assert on the rendered text content here.
-    const json = JSON.stringify(result);
-    expect(json).toContain("אודות");
-    expect(json).toContain("מורה למתמטיקה עם 8 שנות ניסיון");
+    // 2026-05-16 amendment: the bio moved out of a standalone "About"
+    // section in page.tsx and into the Hero component's right column. The
+    // page no longer renders the bio inline — it threads `tutor.bio` (with
+    // bidi-override chars stripped) through to <Hero> via props.
+    const heroProps = lastPropsTo(componentSpies.hero) as { tutor: { bio: string | null } };
+    expect(heroProps?.tutor?.bio).toBe(FULL_TUTOR.bio);
   });
 
   it("defaults selectedDuration to 60 when ?duration= is absent", async () => {
