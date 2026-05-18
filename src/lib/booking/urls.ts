@@ -26,7 +26,7 @@ import { signSlotPayload, verifySlotSignature } from "@/lib/auth/slot-signing";
 export interface GateParams {
   tutorUserId: string;
   slotIso: string;
-  duration: 45 | 60;
+  duration: 45 | 60 | 75 | 90;
   sig: string;
   /** Computed booking-stub URL — the post-verify redirect target. */
   next: string;
@@ -58,9 +58,9 @@ function isValidIsoUtc(value: string): boolean {
   return !Number.isNaN(Date.parse(value));
 }
 
-function coerceDuration(value: string): 45 | 60 | null {
+function coerceDuration(value: string): 45 | 60 | 75 | 90 | null {
   const n = Number(value);
-  return n === 45 || n === 60 ? n : null;
+  return n === 45 || n === 60 || n === 75 || n === 90 ? n : null;
 }
 
 function firstString(value: string | string[] | undefined): string | null {
@@ -78,7 +78,7 @@ function firstString(value: string | string[] | undefined): string | null {
 export function buildGateSignupUrl(input: {
   tutorUserId: string;
   slotIso: string;
-  duration: 45 | 60;
+  duration: 45 | 60 | 75 | 90;
 }): string {
   const callbackUrl = `/tutor/${input.tutorUserId}?duration=${input.duration}`;
   const sig = signSlotPayload({
@@ -109,7 +109,7 @@ export function buildGateSignupUrl(input: {
 export function buildBookingStubUrl(input: {
   tutorUserId: string;
   slotIso: string;
-  duration: 45 | 60;
+  duration: 45 | 60 | 75 | 90;
   sig: string;
 }): string {
   const params = new URLSearchParams({
@@ -128,7 +128,7 @@ export function buildBookingStubUrl(input: {
 export function buildSignedBookingStubUrl(input: {
   tutorUserId: string;
   slotIso: string;
-  duration: 45 | 60;
+  duration: 45 | 60 | 75 | 90;
 }): string {
   const sig = signSlotPayload({
     tutorUserId: input.tutorUserId,

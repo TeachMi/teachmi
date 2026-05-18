@@ -34,7 +34,10 @@ interface PageProps {
 }
 
 const PRESIGNED_URL_TTL_SEC = 3600; // 1 hour
-const CALENDAR_DAYS_AHEAD = 7;
+// Two-week public-calendar horizon (Sally 2026-05-18). Students rarely
+// plan more than 2 weeks ahead; the tutor's exception-overrides further
+// out still apply when the visitor navigates there.
+const CALENDAR_DAYS_AHEAD = 14;
 
 // Wrap in `cache()` so `generateMetadata` and the page body share the same
 // per-request lookup. Without this, Next 16 issues two DB round-trips per
@@ -122,8 +125,17 @@ async function presignFromR2(
   }
 }
 
-function parseDuration(raw: string | undefined): 45 | 60 {
-  return raw === "45" ? 45 : 60;
+function parseDuration(raw: string | undefined): 45 | 60 | 75 | 90 {
+  switch (raw) {
+    case "45":
+      return 45;
+    case "75":
+      return 75;
+    case "90":
+      return 90;
+    default:
+      return 60;
+  }
 }
 
 function truncateForDescription(text: string, maxLen = 160): string {
@@ -273,8 +285,12 @@ export default async function PublicTutorProfilePage({
         <AvailabilityCalendar
           tutorUserId={tutor.userId}
           slotStates={slotStates}
-          hourlyPriceIls={tutor.hourlyPriceIls}
-          lesson45PriceIls={tutor.lesson45PriceIls}
+          prices={{
+            45: tutor.lesson45PriceIls,
+            60: tutor.hourlyPriceIls,
+            75: tutor.lesson75PriceIls,
+            90: tutor.lesson90PriceIls,
+          }}
           selectedDuration={selectedDuration}
           isSignedIn={isSignedIn}
           weekStartUtc={weekStart}

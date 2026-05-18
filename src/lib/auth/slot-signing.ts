@@ -29,7 +29,14 @@ const SIGNATURE_BYTE_LENGTH = 16; // 128 bits
 export interface SlotPayload {
   tutorUserId: string;
   slotIso: string;
-  duration: 45 | 60;
+  /**
+   * Lesson duration in minutes. Originally 45 | 60 (Story 3.2); widened
+   * to 45 | 60 | 75 | 90 on 2026-05-18 when the tutor profile gained
+   * per-length pricing for all four. Signing canonicalizes via simple
+   * string interpolation so widening the type is non-breaking for any
+   * already-issued signatures.
+   */
+  duration: 45 | 60 | 75 | 90;
 }
 
 function canonicalize(payload: SlotPayload): string {

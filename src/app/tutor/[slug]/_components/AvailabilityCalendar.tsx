@@ -1,63 +1,104 @@
-// 7-day × half-hour availability calendar for the public tutor profile
-// (Story 3.2). RSC — slot states are computed server-side; the only
-// "interactive" element is a <Link> wrapping each available slot.
+"use client";
+
+// 7-day half-hour availability calendar on the public tutor profile.
 //
-// Forward-link contracts:
-// - Anon click  → /signup?callbackUrl=...&intent=book&tutorUserId=...&slotIso=...&duration=...
-//                 (Story 3.3 reads these on /signup to show the "return to slot" banner)
-// - Signed-in   → /booking-stub?tutor=...&slot=...&duration=...
-//                 (Story 4.3 replaces /booking-stub with the real booking route)
+// Founder direction 2026-05-18:
+//   - 2 colors only — open (green) vs not-open (gray). We DELIBERATELY
+//     do not distinguish "tutor doesn't work then" / "tutor explicitly
+//     blocked" / "someone else booked it." A student should not be able
+//     to infer a tutor's working pattern from their public profile.
+//   - Default window 14:00–22:00 (prime tutoring time in IL). Toggles
+//     above + below the grid let the student expand to morning
+//     (08:00–14:00) or late evening (22:00–23:00) on demand.
+//   - All offered lesson lengths (45/60/75/90) render as duration tabs.
+//   - 2-week horizon (extended from 1) — the parent page fetches +
+//     navigates within that range.
+//
+// Window constants imported from the SAME `SCHEDULE_GRID` the tutor
+// editor uses (`src/app/tutor/me/schedule/_lib/schedule-flow.ts`) so
+// the editor and the public calendar can never drift apart again.
+//
+// Forward-link contracts (unchanged):
+//   - Anon click   → /signup?callbackUrl=...&intent=book&...
+//   - Signed-in    → /booking-stub?tutor=...&slot=...&duration=...
+//   Story 4.x replaces /booking-stub with the real booking route.
 
 import Link from "next/link";
+import { useState } from "react";
 import { Card, CardBody } from "@/components/ui/card";
 import { formatHebrewWeekday, formatIlsCurrency } from "@/lib/hebrew/format";
 import type { SlotState, SlotStatesByDay } from "@/lib/availability/compute-slots";
-// Story 3.3 extracted these into a shared module so /signup + /signin can
-// consume the SAME URL shape this component emits — preventing producer/
-// consumer drift. Producer side stays identical: `buildGateSignupUrl` mints
-// the sig internally; `buildSignedBookingStubUrl` does the same for the
-// signed-in branch. The URLs are byte-equivalent to the inline helpers this
-// component previously defined.
+import { SCHEDULE_GRID } from "@/app/tutor/me/schedule/_lib/schedule-flow";
 import {
   buildGateSignupUrl,
   buildSignedBookingStubUrl,
 } from "@/lib/booking/urls";
 
+// Default "prime tutoring time" — what students see without any expand.
+// 14:00–22:00 matches the IL afternoon/evening tutoring rhythm Sally
+// flagged. The user can expand to the full SCHEDULE_GRID window.
+const DEFAULT_VISIBLE_START_HOUR = 14;
+const DEFAULT_VISIBLE_END_HOUR = 22;
+
+export type LessonDurationMinutes = 45 | 60 | 75 | 90;
+
 interface AvailabilityCalendarProps {
   tutorUserId: string;
   slotStates: SlotStatesByDay;
-  hourlyPriceIls: number;
-  lesson45PriceIls: number | null;
-  selectedDuration: 45 | 60;
-  /** Whether a session exists. Drives the click-target URL: anon → /signup, signed-in → /booking-stub. */
+  /** Per-length pricing (null = length not offered). */
+  prices: Record<LessonDurationMinutes, number | null>;
+  selectedDuration: LessonDurationMinutes;
+  /** `false` → anon links go to `/signup`; `true` → signed-in stub. */
   isSignedIn: boolean;
-  /** UTC instant for the first day. Used for empty-state copy. */
+  /** UTC instant of the first visible day (Sunday at IL midnight). */
   weekStartUtc: Date;
 }
 
-const SLOT_START_HOUR = 14;
-const SLOT_END_HOUR = 22;
-const HOURS_RANGE = Array.from(
-  { length: (SLOT_END_HOUR - SLOT_START_HOUR) * 2 },
-  (_, idx) => {
-    const hour = SLOT_START_HOUR + Math.floor(idx / 2);
-    const minute = idx % 2 === 0 ? "00" : "30";
-    return `${String(hour).padStart(2, "0")}:${minute}`;
-  },
-);
+interface SlotRow {
+  hour: number;
+  minute: number;
+  timeLabel: string;
+}
+
+function buildSlotRows(startHour: number, endHour: number): SlotRow[] {
+  const out: SlotRow[] = [];
+  for (let h = startHour; h < endHour; h++) {
+    for (const m of [0, 30]) {
+      out.push({
+        hour: h,
+        minute: m,
+        timeLabel: `${String(h).padStart(2, "0")}:${m === 0 ? "00" : "30"}`,
+      });
+    }
+  }
+  return out;
+}
+
+const DURATION_OPTIONS: LessonDurationMinutes[] = [45, 60, 75, 90];
 
 export function AvailabilityCalendar({
   tutorUserId,
   slotStates,
-  hourlyPriceIls,
-  lesson45PriceIls,
+  prices,
   selectedDuration,
   isSignedIn,
   weekStartUtc,
 }: AvailabilityCalendarProps) {
+  const [showMorning, setShowMorning] = useState(false);
+  const [showLate, setShowLate] = useState(false);
+
+  // Visible window in hours.
+  const visibleStartHour = showMorning
+    ? SCHEDULE_GRID.START_HOUR
+    : DEFAULT_VISIBLE_START_HOUR;
+  const visibleEndHour = showLate
+    ? SCHEDULE_GRID.END_HOUR
+    : DEFAULT_VISIBLE_END_HOUR;
+  const rows = buildSlotRows(visibleStartHour, visibleEndHour);
+
   const dayKeys = Array.from(slotStates.keys());
   const hasAnyAvailability = Array.from(slotStates.values()).some((slots) =>
-    slots.some((s) => s.status !== "unavailable"),
+    slots.some((s) => s.status === "available"),
   );
 
   if (!hasAnyAvailability) {
@@ -88,84 +129,75 @@ export function AvailabilityCalendar({
     );
   }
 
+  // Render duration tabs only for lengths the tutor offers (non-null price).
+  // Auto-fallback: if the selected duration was hidden by the tutor's
+  // pricing config, fall back to the first offered length so we never
+  // render an empty tab strip.
+  const offeredDurations = DURATION_OPTIONS.filter((d) => prices[d] !== null);
+  const effectiveSelected = offeredDurations.includes(selectedDuration)
+    ? selectedDuration
+    : (offeredDurations[0] ?? selectedDuration);
+
   return (
     <section id="schedule" aria-labelledby="schedule-heading" className="mb-12">
       <div className="bg-white rounded-xl border border-linen-border overflow-hidden">
-        {/* Header row: heading + duration toggle + (disabled) week nav */}
-        <div className="flex flex-col md:flex-row-reverse md:justify-between md:items-center gap-4 p-4 border-b border-linen-border">
+        {/* Header — heading + duration toggle */}
+        <div className="flex flex-col gap-4 p-4 border-b border-linen-border md:flex-row md:items-center md:justify-between">
           <h2
             id="schedule-heading"
             className="font-display font-bold text-lg text-primary-container"
           >
             בחרו זמן שיעור
           </h2>
-          <div className="flex flex-row-reverse items-center gap-3 flex-wrap">
-            {/* Duration toggle — query string driven, no client JS */}
+          {offeredDurations.length > 0 && (
             <div
-              className="flex flex-row-reverse gap-1 bg-surface-container rounded-md p-0.5"
+              className="flex flex-wrap items-center gap-1 bg-surface-container rounded-md p-0.5"
               role="group"
               aria-label="משך השיעור"
             >
-              <Link
-                href={`/tutor/${tutorUserId}?duration=60`}
-                aria-pressed={selectedDuration === 60}
-                scroll={false}
-                className={
-                  selectedDuration === 60
-                    ? "px-3 py-1 rounded bg-white shadow-sm text-primary-container text-xs font-bold"
-                    : "px-3 py-1 rounded text-secondary text-xs font-bold"
-                }
-              >
-                60 דק׳ — {formatIlsCurrency(hourlyPriceIls)}
-              </Link>
-              {lesson45PriceIls !== null && (
-                <Link
-                  href={`/tutor/${tutorUserId}?duration=45`}
-                  aria-pressed={selectedDuration === 45}
-                  scroll={false}
-                  className={
-                    selectedDuration === 45
-                      ? "px-3 py-1 rounded bg-white shadow-sm text-primary-container text-xs font-bold"
-                      : "px-3 py-1 rounded text-secondary text-xs font-bold"
-                  }
-                >
-                  45 דק׳ — {formatIlsCurrency(lesson45PriceIls)}
-                </Link>
-              )}
+              {offeredDurations.map((dur) => {
+                const isActive = effectiveSelected === dur;
+                const price = prices[dur];
+                return (
+                  <Link
+                    key={dur}
+                    href={`/tutor/${tutorUserId}?duration=${dur}`}
+                    aria-pressed={isActive}
+                    scroll={false}
+                    className={
+                      isActive
+                        ? "px-3 py-1 rounded bg-white shadow-sm text-primary-container text-xs font-bold"
+                        : "px-3 py-1 rounded text-secondary text-xs font-bold hover:text-primary-container"
+                    }
+                  >
+                    {dur} דק׳ — {price !== null ? formatIlsCurrency(price) : "—"}
+                  </Link>
+                );
+              })}
             </div>
-            {/* Week nav — disabled at MVP 1; current-week only */}
-            <div
-              className="flex flex-row-reverse items-center gap-2"
-              aria-label="ניווט בין שבועות"
-            >
-              <button
-                type="button"
-                disabled
-                aria-disabled="true"
-                title="ניווט בין שבועות יתאפשר בקרוב"
-                className="w-8 h-8 rounded-lg bg-linen border border-linen-border flex items-center justify-center opacity-50 cursor-not-allowed"
-              >
-                <span className="material-symbols-outlined text-base" aria-hidden="true">
-                  chevron_right
-                </span>
-              </button>
-              <span className="text-sm font-bold text-primary-container">השבוע</span>
-              <button
-                type="button"
-                disabled
-                aria-disabled="true"
-                title="ניווט בין שבועות יתאפשר בקרוב"
-                className="w-8 h-8 rounded-lg bg-linen border border-linen-border flex items-center justify-center opacity-50 cursor-not-allowed"
-              >
-                <span className="material-symbols-outlined text-base" aria-hidden="true">
-                  chevron_left
-                </span>
-              </button>
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* Calendar grid */}
+        {/* Morning expand toggle */}
+        {visibleStartHour > SCHEDULE_GRID.START_HOUR ? (
+          <button
+            type="button"
+            onClick={() => setShowMorning(true)}
+            className="w-full border-b border-linen-border bg-linen px-4 py-2 text-xs font-bold text-primary-container hover:bg-linen-border/40"
+          >
+            ▼ הצגת שעות בוקר ({String(SCHEDULE_GRID.START_HOUR).padStart(2, "0")}:00–{String(DEFAULT_VISIBLE_START_HOUR).padStart(2, "0")}:00)
+          </button>
+        ) : visibleStartHour < DEFAULT_VISIBLE_START_HOUR ? (
+          <button
+            type="button"
+            onClick={() => setShowMorning(false)}
+            className="w-full border-b border-linen-border bg-linen px-4 py-2 text-xs font-bold text-primary-container hover:bg-linen-border/40"
+          >
+            ▲ הסתרת שעות בוקר
+          </button>
+        ) : null}
+
+        {/* Grid */}
         <div className="overflow-x-auto">
           <div
             className="min-w-[640px] grid text-xs"
@@ -173,7 +205,7 @@ export function AvailabilityCalendar({
               gridTemplateColumns: `60px repeat(${dayKeys.length}, 1fr)`,
             }}
           >
-            {/* Header row: empty cell + 7 day headers */}
+            {/* Day headers */}
             <div className="border-b border-linen-border p-2" />
             {dayKeys.map((dayKey, idx) => {
               const dayDate = new Date(
@@ -195,36 +227,49 @@ export function AvailabilityCalendar({
               );
             })}
 
-            {/* Time-slot rows */}
-            {HOURS_RANGE.map((timeLabel) => (
+            {/* Slot rows */}
+            {rows.map((row) => (
               <CalendarRow
-                key={timeLabel}
-                timeLabel={timeLabel}
+                key={row.timeLabel}
+                timeLabel={row.timeLabel}
                 dayKeys={dayKeys}
                 slotStates={slotStates}
                 tutorUserId={tutorUserId}
-                selectedDuration={selectedDuration}
+                selectedDuration={effectiveSelected}
                 isSignedIn={isSignedIn}
               />
             ))}
           </div>
         </div>
 
-        {/* Legend */}
-        <div className="p-3 border-t border-linen-border flex flex-row-reverse items-center gap-4 text-xs text-secondary">
+        {/* Late-evening expand toggle */}
+        {visibleEndHour < SCHEDULE_GRID.END_HOUR ? (
+          <button
+            type="button"
+            onClick={() => setShowLate(true)}
+            className="w-full border-t border-linen-border bg-linen px-4 py-2 text-xs font-bold text-primary-container hover:bg-linen-border/40"
+          >
+            ▼ הצגת שעות ערב מאוחרות ({String(DEFAULT_VISIBLE_END_HOUR).padStart(2, "0")}:00–{String(SCHEDULE_GRID.END_HOUR).padStart(2, "0")}:00)
+          </button>
+        ) : visibleEndHour > DEFAULT_VISIBLE_END_HOUR ? (
+          <button
+            type="button"
+            onClick={() => setShowLate(false)}
+            className="w-full border-t border-linen-border bg-linen px-4 py-2 text-xs font-bold text-primary-container hover:bg-linen-border/40"
+          >
+            ▲ הסתרת שעות ערב מאוחרות
+          </button>
+        ) : null}
+
+        {/* Legend — 2 colors only (founder direction 2026-05-18) */}
+        <div className="border-t border-linen-border flex items-center gap-4 p-3 text-xs text-secondary">
           <span className="flex items-center gap-1">
-            <span
-              className="w-3 h-3 rounded bg-tertiary-fixed"
-              aria-hidden="true"
-            />
-            זמין
+            <span className="w-3 h-3 rounded bg-success" aria-hidden="true" />
+            פנוי
           </span>
           <span className="flex items-center gap-1">
-            <span
-              className="w-3 h-3 rounded bg-surface-high"
-              aria-hidden="true"
-            />
-            תפוס
+            <span className="w-3 h-3 rounded bg-surface-container" aria-hidden="true" />
+            לא פנוי
           </span>
         </div>
       </div>
@@ -237,7 +282,7 @@ interface CalendarRowProps {
   dayKeys: string[];
   slotStates: SlotStatesByDay;
   tutorUserId: string;
-  selectedDuration: 45 | 60;
+  selectedDuration: LessonDurationMinutes;
   isSignedIn: boolean;
 }
 
@@ -274,7 +319,7 @@ function CalendarRow({
 interface SlotCellProps {
   slot: SlotState | undefined;
   tutorUserId: string;
-  selectedDuration: 45 | 60;
+  selectedDuration: LessonDurationMinutes;
   isSignedIn: boolean;
 }
 
@@ -284,20 +329,14 @@ function SlotCell({
   selectedDuration,
   isSignedIn,
 }: SlotCellProps) {
-  if (!slot || slot.status === "unavailable") {
+  // 2-color rule (founder 2026-05-18): everything that's not "available"
+  // renders identically — privacy-preserving, students can't infer
+  // booking patterns or blocked days.
+  if (!slot || slot.status !== "available") {
     return (
-      <div className="h-10 border-s border-linen-border" aria-hidden="true" />
+      <div className="h-10 border-s border-linen-border bg-surface-container" aria-hidden="true" />
     );
   }
-  if (slot.status === "booked") {
-    return (
-      <div
-        className="h-10 border-s border-linen-border bg-surface-high opacity-60"
-        aria-label="תפוס"
-      />
-    );
-  }
-  // available
   const href = isSignedIn
     ? buildSignedBookingStubUrl({
         tutorUserId,
@@ -313,7 +352,7 @@ function SlotCell({
     <Link
       href={href}
       aria-label={`הזמינו את הזמן ${slot.localTime}`}
-      className="h-10 border-s border-linen-border bg-tertiary-fixed hover:bg-tertiary-accent/40 transition-colors flex items-center justify-center text-[10px] font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-container"
+      className="h-10 border-s border-linen-border bg-success hover:bg-success/85 transition-colors flex items-center justify-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-container"
     />
   );
 }
