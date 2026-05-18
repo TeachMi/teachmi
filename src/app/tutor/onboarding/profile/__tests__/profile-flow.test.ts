@@ -18,11 +18,11 @@ const SUBJECT_IDS = new Map([
 
 const VALID_INPUT = {
   displayName: "ד״ר ישראלה ישראלי",
+  gender: "female",
   bio:
     "מורה למתמטיקה וטכנולוגיה עם תואר ד״ר מאוניברסיטת תל אביב. מלמדת מעל 8 שנים, מהתיכון ועד הכנה לפסיכומטרי. גישה ידידותית, סבלנית, ויעילה.",
   subjects: ["mathematics", "english", "psychometric"],
-  price45Ils: 140,
-  price60Ils: 180,
+  prices: { 45: 140, 60: 180, 75: null, 90: null },
   city: "תל אביב",
   photoR2Key: `photos/${TUTOR_ID}/01HQXY.png`,
   introVideoR2Key: `intros/${TUTOR_ID}/01HQXY.mp4`,
@@ -164,10 +164,12 @@ describe("runSubmitProfile — validation failures", () => {
     // founder direction. Only the minimum-1 constraint stays.
     ["bio under 50 chars", { bio: "קצר מדי" }, "bio"],
     ["bio over 1000 chars", { bio: "x".repeat(1001) }, "bio"],
-    ["price45 of 0", { price45Ils: 0 }, "price45Ils"],
-    ["price60 of 0", { price60Ils: 0 }, "price60Ils"],
-    ["price60 over cap", { price60Ils: 50_000 }, "price60Ils"],
-    ["price45 ≥ price60", { price45Ils: 200, price60Ils: 180 }, "price45Ils"],
+    ["price45 of 0", { prices: { 45: 0, 60: 180, 75: null, 90: null } }, "price45Ils"],
+    ["price60 of 0", { prices: { 45: 140, 60: 0, 75: null, 90: null } }, "price60Ils"],
+    ["price60 over cap", { prices: { 45: 140, 60: 50_000, 75: null, 90: null } }, "price60Ils"],
+    // Story 2.10 follow-up 2026-05-17: cross-length consistency (price45 < price60) was dropped.
+    // The previous "price45 ≥ price60 → error" test case no longer applies.
+    ["no lengths offered at all", { prices: { 45: null, 60: null, 75: null, 90: null } }, "prices"],
     ["missing intro video", { introVideoR2Key: undefined }, "introVideoR2Key"],
     ["display name under 2 chars", { displayName: "א" }, "displayName"],
   ])("rejects %s", async (_name, overrideInput, expectedField) => {

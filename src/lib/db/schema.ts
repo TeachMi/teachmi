@@ -262,12 +262,27 @@ export const tutorProfiles = pgTable(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     displayName: text("display_name").notNull(),
+    // Grammatical gender — drives Hebrew copy that gender-agrees with the
+    // tutor (e.g., the verified badge: "מורה מאומת" male / "מורה מאומתת"
+    // female). Closed-beta enum: M/F only. Extending to "other" / prefer-not-
+    // to-say would still need a fallback for Hebrew agreement (default to
+    // masculine, the unmarked form).
+    gender: text("gender", { enum: ["male", "female"] }).notNull(),
     bio: text("bio"),
     city: text("city"),
     introVideoR2Key: text("intro_video_r2_key"),                                // R2 object key; presigned URL for view
     profilePhotoR2Key: text("profile_photo_r2_key"),
-    hourlyPriceIls: integer("hourly_price_ils").notNull(),                      // 60-min price, whole shekels
-    lesson45PriceIls: integer("lesson_45_price_ils"),                           // 45-min price, whole shekels (nullable for drafts; required at submit per FR10)
+    // Per-lesson-length pricing. Each is NULL unless the tutor offers that
+    // length. Story 2.10 follow-up (founder direction 2026-05-17): relaxed
+    // from "60-min required" to "at least one length must be set" — the
+    // marketplace no longer assumes a canonical hourly rate. The
+    // application-layer validation enforces "≥1 non-null"; cross-length
+    // consistency checks (e.g. price45 < price60) are deferred — to be
+    // revisited when pricing-policy data shows up.
+    hourlyPriceIls: integer("hourly_price_ils"),                                // 60-min price, whole shekels
+    lesson45PriceIls: integer("lesson_45_price_ils"),                           // 45-min price, whole shekels
+    lesson75PriceIls: integer("lesson_75_price_ils"),                           // 75-min price, whole shekels
+    lesson90PriceIls: integer("lesson_90_price_ils"),                           // 90-min price, whole shekels
     lessonLengthMinutes: smallint("lesson_length_minutes").notNull().default(60),
     commissionRateOverride: numeric("commission_rate_override", { precision: 5, scale: 4 }), // NULL = platform default; e.g., 0.2000 = 20%
     // Vetting

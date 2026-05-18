@@ -3,6 +3,9 @@ import { categorizeChanges, type ProfileValues } from "../categorize-changes";
 
 const BASE: ProfileValues = {
   displayName: "ד״ר מיכל לוי",
+  gender: "female",
+  lesson75PriceIls: null,
+  lesson90PriceIls: null,
   bio: "מורה למתמטיקה עם 8 שנות ניסיון.",
   city: "תל אביב",
   profilePhotoR2Key: "photos/00000000-0000-0000-0000-000000000001/abc.jpg",
@@ -24,6 +27,13 @@ describe("categorizeChanges — non-trigger only", () => {
     const out = categorizeChanges(BASE, { ...BASE, displayName: "ד״ר מיכל לוי-כהן" });
     expect(out.triggerChanges).toEqual([]);
     expect(out.nonTriggerChanges).toEqual(["display_name"]);
+  });
+
+  it("gender change only → nonTrigger=[gender] (non-trigger because it doesn't affect discoverability, just gendered Hebrew copy)", () => {
+    const out = categorizeChanges(BASE, { ...BASE, gender: "male" });
+    expect(out.triggerChanges).toEqual([]);
+    expect(out.nonTriggerChanges).toEqual(["gender"]);
+    expect(out.hasAnyChange).toBe(true);
   });
 
   it("city change only → nonTrigger=[city]", () => {

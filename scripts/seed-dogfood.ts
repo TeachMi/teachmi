@@ -160,17 +160,20 @@ async function seedTutorProfile(
     return;
   }
 
-  // UPSERT the profile row.
+  // UPSERT the profile row. Both seeded tutors (עפר המורה, אביאל המורה) have
+  // masculine Hebrew names, so default to gender='male' — Hebrew grammar
+  // requires gender agreement on copy like "מורה מאומת" / "מורה מאומתת"
+  // (Story 2.10 follow-up).
   await sql`
     INSERT INTO tutor_profiles (
-      user_id, display_name, bio, city,
+      user_id, display_name, gender, bio, city,
       hourly_price_ils, lesson_45_price_ils, lesson_length_minutes,
       vetting_status, is_active,
       intro_video_r2_key, profile_photo_r2_key,
       created_by_kind, created_by_actor
     )
     VALUES (
-      ${userId}, ${account.name}, ${override.bio}, ${"תל אביב"},
+      ${userId}, ${account.name}, ${"male"}, ${override.bio}, ${"תל אביב"},
       ${180}, ${140}, ${60},
       ${"approved"}, ${true},
       ${null}, ${null},
@@ -181,6 +184,7 @@ async function seedTutorProfile(
       is_active = true,
       deleted_at = NULL,
       display_name = EXCLUDED.display_name,
+      gender = EXCLUDED.gender,
       bio = EXCLUDED.bio,
       city = EXCLUDED.city,
       hourly_price_ils = EXCLUDED.hourly_price_ils,

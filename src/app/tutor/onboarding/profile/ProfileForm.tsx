@@ -28,7 +28,10 @@ import {
 import {
   ALLOWED_INTRO_VIDEO_MIME_TYPES,
   ALLOWED_PHOTO_MIME_TYPES,
+  LESSON_LENGTH_MINUTES,
   PROFILE_FORM_LIMITS,
+  type LessonLengthMinutes,
+  type TutorGender,
 } from "./profile-form-schema";
 
 interface SubjectChoice {
@@ -38,10 +41,16 @@ interface SubjectChoice {
 
 interface FormInitialValues {
   displayName: string;
+  /**
+   * Grammatical gender (M/F). `null` only on first-time wizard mount where
+   * the tutor hasn't picked yet — required at submit. Drives Hebrew-copy
+   * gender agreement (see `verifiedTutorLabel` in profile-form-schema.ts).
+   */
+  gender: TutorGender | null;
   bio: string;
   subjects: string[];
-  price45Ils: number | null;
-  price60Ils: number | null;
+  /** Per-length pricing. `null` per length = "not offered." Story 2.10 follow-up 2026-05-17. */
+  prices: Record<45 | 60 | 75 | 90, number | null>;
   city: string;
   photoR2Key: string | null;
   introVideoR2Key: string | null;
@@ -74,6 +83,15 @@ interface ProfileFormProps {
    * `profileFormAction`; edit-mode mounts pass `editProfileAction` here.
    */
   saveAction?: typeof profileFormAction;
+  /**
+   * Edit-mode only. Invoked when the user clicks "ביטול" (Cancel) to discard
+   * in-progress edits and return to the read-only view. When omitted, the
+   * Cancel control falls back to a Link to /tutor/me — but on /tutor/me the
+   * Link is a same-URL navigation that doesn't actually unmount the form
+   * (ProfileTabClient holds isEditing state). Pass `onCancel` from the
+   * client wrapper to flip isEditing back to false.
+   */
+  onCancel?: () => void;
 }
 
 const AUTO_SAVE_DEBOUNCE_MS = 30_000;
@@ -85,6 +103,7 @@ export function ProfileForm({
   isResubmit,
   mode = "create",
   saveAction = profileFormAction,
+  onCancel,
 }: ProfileFormProps) {
   const [state, formAction, pending] = useActionState(
     saveAction,
@@ -124,12 +143,19 @@ export function ProfileForm({
   // on undefined would crash the form on first render.
   const [bio, setBio] = useState(initialValues.bio ?? "");
   const [displayName, setDisplayName] = useState(initialValues.displayName ?? "");
-  const [price45, setPrice45] = useState<string>(
-    initialValues.price45Ils?.toString() ?? "",
-  );
-  const [price60, setPrice60] = useState<string>(
-    initialValues.price60Ils?.toString() ?? "",
-  );
+  const [gender, setGender] = useState<TutorGender | "">(initialValues.gender ?? "");
+  // Per-length pricing — one editable string per supported length. Empty
+  // string = "length not offered" (the submit parser treats it as undefined
+  // and the row's column stays NULL).
+  const [prices, setPrices] = useState<Record<LessonLengthMinutes, string>>({
+    45: initialValues.prices[45]?.toString() ?? "",
+    60: initialValues.prices[60]?.toString() ?? "",
+    75: initialValues.prices[75]?.toString() ?? "",
+    90: initialValues.prices[90]?.toString() ?? "",
+  });
+  function setPriceFor(len: LessonLengthMinutes, value: string) {
+    setPrices((prev) => ({ ...prev, [len]: value }));
+  }
 
   const formRef = useRef<HTMLFormElement | null>(null);
   /** Pending debounce timer; cleared by the immediate-save path to prevent races. */
@@ -233,19 +259,16 @@ export function ProfileForm({
   const showDisplayNameError =
     submitFieldErrors.displayName !== undefined &&
     displayName.trim().length < PROFILE_FORM_LIMITS.DISPLAY_NAME_MIN_CHARS;
-  // Price dismissal accounts for BOTH the per-field bounds AND the relational
-  // invariant (price45 < price60). The latter is a "wrong combination" error
-  // that doesn't go away just by typing — only by the user changing the values
-  // so one is genuinely lower than the other.
-  const bothPricesParseable = isValidPrice(price45) && isValidPrice(price60);
-  const pricePairInvariantSatisfied =
-    bothPricesParseable && Number(price45) < Number(price60);
-  const showPrice45Error =
-    submitFieldErrors.price45Ils !== undefined &&
-    (!isValidPrice(price45) || !pricePairInvariantSatisfied);
-  const showPrice60Error =
-    submitFieldErrors.price60Ils !== undefined &&
-    (!isValidPrice(price60) || !pricePairInvariantSatisfied);
+  // Per-length price dismissal — show the server-returned error only if
+  // the field's value still doesn't parse as a positive price. The
+  // cross-length consistency invariant ("price45 < price60") was dropped
+  // per founder direction 2026-05-17 (relaxed pricing model).
+  const showPriceError: Record<LessonLengthMinutes, boolean> = {
+    45: submitFieldErrors.price45Ils !== undefined && !isValidPrice(prices[45]),
+    60: submitFieldErrors.price60Ils !== undefined && !isValidPrice(prices[60]),
+    75: submitFieldErrors.price75Ils !== undefined && !isValidPrice(prices[75]),
+    90: submitFieldErrors.price90Ils !== undefined && !isValidPrice(prices[90]),
+  };
 
   // Collect a flat list of remaining (post-client-dismissal) error messages so
   // we can surface them at the top of the form. Without this, a submit click
@@ -254,10 +277,14 @@ export function ProfileForm({
   const submitFieldErrorList: string[] = [];
   if (state.intent === "submit" && !state.ok) {
     if (showDisplayNameError && submitFieldErrors.displayName) submitFieldErrorList.push(submitFieldErrors.displayName);
+    if (submitFieldErrors.gender) submitFieldErrorList.push(submitFieldErrors.gender);
     if (showBioError && submitFieldErrors.bio) submitFieldErrorList.push(submitFieldErrors.bio);
     if (submitFieldErrors.subjects) submitFieldErrorList.push(submitFieldErrors.subjects);
-    if (showPrice45Error && submitFieldErrors.price45Ils) submitFieldErrorList.push(submitFieldErrors.price45Ils);
-    if (showPrice60Error && submitFieldErrors.price60Ils) submitFieldErrorList.push(submitFieldErrors.price60Ils);
+    if (submitFieldErrors.prices) submitFieldErrorList.push(submitFieldErrors.prices);
+    if (showPriceError[45] && submitFieldErrors.price45Ils) submitFieldErrorList.push(submitFieldErrors.price45Ils);
+    if (showPriceError[60] && submitFieldErrors.price60Ils) submitFieldErrorList.push(submitFieldErrors.price60Ils);
+    if (showPriceError[75] && submitFieldErrors.price75Ils) submitFieldErrorList.push(submitFieldErrors.price75Ils);
+    if (showPriceError[90] && submitFieldErrors.price90Ils) submitFieldErrorList.push(submitFieldErrors.price90Ils);
     if (submitFieldErrors.introVideoR2Key) submitFieldErrorList.push(submitFieldErrors.introVideoR2Key);
   }
   const submitHasErrors =
@@ -512,6 +539,49 @@ export function ProfileForm({
             autoComplete="name"
           />
         </div>
+        {/* Grammatical gender. Founder direction 2026-05-17: gender is set
+            ONCE at onboarding (create mode), never re-surfaced in edit
+            mode. In edit mode the value is preserved via a hidden input so
+            the diff in `runEditProfile` sees no change. Drives gender-
+            agreeing Hebrew copy on the public profile (verified badge
+            "מורה מאומת" vs "מורה מאומתת"). Native radios — no Radix
+            primitive needed for two-option agreement. */}
+        {isEditMode ? (
+          <input type="hidden" name="gender" value={gender} />
+        ) : (
+          <fieldset className="mb-4">
+            <legend className="mb-1 text-sm font-bold text-on-surface">מין</legend>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm text-on-surface">
+                <input
+                  type="radio"
+                  name="gender"
+                  value="male"
+                  checked={gender === "male"}
+                  onChange={() => setGender("male")}
+                  className="h-4 w-4 accent-primary-container"
+                />
+                זכר
+              </label>
+              <label className="flex items-center gap-2 text-sm text-on-surface">
+                <input
+                  type="radio"
+                  name="gender"
+                  value="female"
+                  checked={gender === "female"}
+                  onChange={() => setGender("female")}
+                  className="h-4 w-4 accent-primary-container"
+                />
+                נקבה
+              </label>
+            </div>
+            {submitFieldErrors.gender && (
+              <p className="mt-1 text-xs text-error" role="alert">
+                {submitFieldErrors.gender}
+              </p>
+            )}
+          </fieldset>
+        )}
         {/* Single shared row of labels above the two input columns. This is */}
         {/* the cleanest way to top-align the avatar with the textarea: both */}
         {/* columns start at the SAME baseline, and the labels live above. In */}
@@ -631,26 +701,31 @@ export function ProfileForm({
       {/* ===== Pricing ===== */}
       <Card padding="md" className="text-start">
         <h3 className="mb-2 font-display text-lg font-bold text-primary-container">
-          תמחור — 2 אורכי שיעור
+          תמחור — בחרו אורכי שיעור
         </h3>
         <p className="mb-4 text-xs text-secondary">
-          אתם קובעים את המחיר. הממוצע בתחום שלכם: ₪150-200 לשעה.
+          אתם קובעים את המחיר. סמנו רק את אורכי השיעור שאתם מציעים. הממוצע בתחום: ₪150-200 לשעה.
         </p>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <PriceInput
-            name="price45Ils"
-            label="שיעור 45 דק׳"
-            value={price45}
-            onChange={setPrice45}
-            error={showPrice45Error ? submitFieldErrors.price45Ils : undefined}
-          />
-          <PriceInput
-            name="price60Ils"
-            label="שיעור 60 דק׳"
-            value={price60}
-            onChange={setPrice60}
-            error={showPrice60Error ? submitFieldErrors.price60Ils : undefined}
-          />
+        {submitFieldErrors.prices && (
+          <p role="alert" className="mb-3 text-xs font-bold text-danger">
+            {submitFieldErrors.prices}
+          </p>
+        )}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {LESSON_LENGTH_MINUTES.map((len) => (
+            <PriceInput
+              key={len}
+              name={`price${len}Ils`}
+              label={`שיעור ${len} דק׳`}
+              value={prices[len]}
+              onChange={(v) => setPriceFor(len, v)}
+              error={
+                showPriceError[len]
+                  ? submitFieldErrors[`price${len}Ils` as `price${typeof len}Ils`]
+                  : undefined
+              }
+            />
+          ))}
         </div>
       </Card>
 
@@ -788,12 +863,22 @@ export function ProfileForm({
           >
             {ctaCopy}
           </Button>
-          <Link
-            href="/tutor/me"
-            className="text-sm font-bold text-on-surface bg-white border border-linen-border rounded-lg px-6 py-3.5 hover:border-primary-fixed-dim"
-          >
-            ביטול
-          </Link>
+          {onCancel ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="text-sm font-bold text-on-surface bg-white border border-linen-border rounded-lg px-6 py-3.5 hover:border-primary-fixed-dim"
+            >
+              ביטול
+            </button>
+          ) : (
+            <Link
+              href="/tutor/me"
+              className="text-sm font-bold text-on-surface bg-white border border-linen-border rounded-lg px-6 py-3.5 hover:border-primary-fixed-dim"
+            >
+              ביטול
+            </Link>
+          )}
         </div>
       ) : (
         <div className="flex items-center gap-3">

@@ -1,40 +1,57 @@
-// Two-price card for the public tutor profile (Story 3.2). RSC.
-// "Package of 10" tile from the mock is explicitly omitted — packages are
-// Phase-2+ per locked product constraints.
+// Lesson-length price tiles for the public tutor profile (Story 3.2 +
+// Story 2.10 follow-up 2026-05-17). RSC. Renders only the lengths the
+// tutor opted into — each is its own tile with vertical-divider separators
+// between them.
 //
-// RTL FLEX NOTE: uses plain `flex` (NOT `flex-row-reverse`). In RTL writing
-// mode, flex-row already flows right-to-left — the first DOM child (the
-// 45-min tile) renders on the RIGHT edge per Story 3.2 AC3 ("Tile 1 —
-// rightmost in RTL: שיעור 45 דק׳"). Adding `flex-row-reverse` flips back
-// to left-to-right, clustering the tiles against the LEFT side of the box.
+// RTL FLEX NOTE: uses plain `flex` (NOT `flex-row-reverse`). In RTL
+// writing mode, flex-row already flows right-to-left — the first DOM
+// child renders on the RIGHT edge. The tiles are sorted ASCENDING by
+// minutes (45 → 60 → 75 → 90); in RTL that means the shortest length
+// sits on the leading (right) edge, matching the mock convention.
 
 import { formatIlsCurrency } from "@/lib/hebrew/format";
 
 interface PriceBlockProps {
-  hourlyPriceIls: number;
+  hourlyPriceIls: number | null;
   lesson45PriceIls: number | null;
+  lesson75PriceIls: number | null;
+  lesson90PriceIls: number | null;
 }
 
-export function PriceBlock({ hourlyPriceIls, lesson45PriceIls }: PriceBlockProps) {
+export function PriceBlock({
+  hourlyPriceIls,
+  lesson45PriceIls,
+  lesson75PriceIls,
+  lesson90PriceIls,
+}: PriceBlockProps) {
+  // Build the offered set in canonical minutes-ascending order.
+  const tiles: Array<{ minutes: 45 | 60 | 75 | 90; price: number }> = [];
+  if (lesson45PriceIls !== null) tiles.push({ minutes: 45, price: lesson45PriceIls });
+  if (hourlyPriceIls !== null) tiles.push({ minutes: 60, price: hourlyPriceIls });
+  if (lesson75PriceIls !== null) tiles.push({ minutes: 75, price: lesson75PriceIls });
+  if (lesson90PriceIls !== null) tiles.push({ minutes: 90, price: lesson90PriceIls });
+
+  if (tiles.length === 0) {
+    // Defensive: shouldn't happen for a discoverable tutor (the form
+    // requires ≥1 length). Render nothing rather than an empty box.
+    return null;
+  }
+
   return (
-    <div className="bg-linen border border-linen-border rounded-xl p-4 flex gap-6">
-      {lesson45PriceIls !== null && (
-        <>
+    <div className="bg-linen border border-linen-border rounded-xl p-4 flex flex-wrap items-stretch gap-6">
+      {tiles.map((tile, idx) => (
+        <div key={tile.minutes} className="flex items-stretch gap-6">
           <div className="text-start">
-            <div className="text-xs text-secondary mb-1">שיעור 45 דק׳</div>
+            <div className="text-xs text-secondary mb-1">שיעור {tile.minutes} דק׳</div>
             <div className="font-display font-bold text-2xl text-primary-container">
-              {formatIlsCurrency(lesson45PriceIls)}
+              {formatIlsCurrency(tile.price)}
             </div>
           </div>
-          <div className="w-px bg-linen-border" aria-hidden="true" />
-        </>
-      )}
-      <div className="text-start">
-        <div className="text-xs text-secondary mb-1">שיעור 60 דק׳</div>
-        <div className="font-display font-bold text-2xl text-primary-container">
-          {formatIlsCurrency(hourlyPriceIls)}
+          {idx < tiles.length - 1 && (
+            <div className="w-px bg-linen-border" aria-hidden="true" />
+          )}
         </div>
-      </div>
+      ))}
     </div>
   );
 }

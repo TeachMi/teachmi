@@ -112,6 +112,7 @@ const NOT_A_UUID = "ד״ר מיכל לוי"; // also Hebrew; should fail UUID pa
 const FULL_TUTOR = {
   userId: TUTOR_UUID,
   displayName: "ד״ר מיכל לוי",
+  gender: "female",
   bio: "מורה למתמטיקה עם 8 שנות ניסיון.",
   city: "תל אביב",
   introVideoR2Key: `intros/${TUTOR_UUID}/abc.mp4`,

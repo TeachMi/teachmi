@@ -68,12 +68,15 @@ interface ExistingProfileLookup {
   vettingStatus: "pending" | "approved" | "rejected" | "paused";
   isActive: boolean;
   displayName: string;
+  gender: "male" | "female";
   bio: string | null;
   city: string | null;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
-  hourlyPriceIls: number;
+  hourlyPriceIls: number | null;
   lesson45PriceIls: number | null;
+  lesson75PriceIls: number | null;
+  lesson90PriceIls: number | null;
 }
 
 // The select aliases `tutor_subjects.subject_id` (a UUID FK to subjects.id).
@@ -140,12 +143,15 @@ export async function runEditProfile(
         vettingStatus: tutorProfiles.vettingStatus,
         isActive: tutorProfiles.isActive,
         displayName: tutorProfiles.displayName,
+        gender: tutorProfiles.gender,
         bio: tutorProfiles.bio,
         city: tutorProfiles.city,
         introVideoR2Key: tutorProfiles.introVideoR2Key,
         profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
         hourlyPriceIls: tutorProfiles.hourlyPriceIls,
         lesson45PriceIls: tutorProfiles.lesson45PriceIls,
+        lesson75PriceIls: tutorProfiles.lesson75PriceIls,
+        lesson90PriceIls: tutorProfiles.lesson90PriceIls,
       })
       .from(tutorProfiles)
       .where(eq(tutorProfiles.userId, deps.tutorUserId))) as ExistingProfileLookup[];
@@ -181,22 +187,28 @@ export async function runEditProfile(
     //    deferred-work.md).
     const oldValues: ProfileValues = {
       displayName: existing.displayName,
+      gender: existing.gender,
       bio: existing.bio ?? "",
       city: existing.city ?? "",
       profilePhotoR2Key: existing.profilePhotoR2Key,
       introVideoR2Key: existing.introVideoR2Key,
       hourlyPriceIls: existing.hourlyPriceIls,
       lesson45PriceIls: existing.lesson45PriceIls,
+      lesson75PriceIls: existing.lesson75PriceIls,
+      lesson90PriceIls: existing.lesson90PriceIls,
       subjects: existingSlugs,
     };
     const newValues: ProfileValues = {
       displayName: input.displayName,
+      gender: input.gender,
       bio: input.bio,
       city: input.city ?? "",
       profilePhotoR2Key: input.photoR2Key,
       introVideoR2Key: input.introVideoR2Key,
-      hourlyPriceIls: input.price60Ils,
-      lesson45PriceIls: input.price45Ils,
+      hourlyPriceIls: input.prices[60],
+      lesson45PriceIls: input.prices[45],
+      lesson75PriceIls: input.prices[75],
+      lesson90PriceIls: input.prices[90],
       subjects: input.subjects,
     };
     const changes = categorizeChanges(oldValues, newValues);
@@ -219,12 +231,15 @@ export async function runEditProfile(
       ...changes.nonTriggerChanges,
     ];
     if (allChanges.includes("display_name")) profileUpdateSet.displayName = input.displayName;
+    if (allChanges.includes("gender")) profileUpdateSet.gender = input.gender;
     if (allChanges.includes("bio")) profileUpdateSet.bio = input.bio;
     if (allChanges.includes("city")) profileUpdateSet.city = input.city;
     if (allChanges.includes("profile_photo")) profileUpdateSet.profilePhotoR2Key = input.photoR2Key;
     if (allChanges.includes("intro_video")) profileUpdateSet.introVideoR2Key = input.introVideoR2Key;
-    if (allChanges.includes("hourly_price")) profileUpdateSet.hourlyPriceIls = input.price60Ils;
-    if (allChanges.includes("lesson_45_price")) profileUpdateSet.lesson45PriceIls = input.price45Ils;
+    if (allChanges.includes("hourly_price")) profileUpdateSet.hourlyPriceIls = input.prices[60];
+    if (allChanges.includes("lesson_45_price")) profileUpdateSet.lesson45PriceIls = input.prices[45];
+    if (allChanges.includes("lesson_75_price")) profileUpdateSet.lesson75PriceIls = input.prices[75];
+    if (allChanges.includes("lesson_90_price")) profileUpdateSet.lesson90PriceIls = input.prices[90];
 
     if (Object.keys(profileUpdateSet).length > 0) {
       profileUpdateSet.updatedAt = deps.now();

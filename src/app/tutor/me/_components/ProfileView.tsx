@@ -7,13 +7,19 @@
 // RTL-safe: uses plain `flex justify-start`, `text-start`. No
 // `flex-row-reverse` / `text-end` anywhere.
 
+// Gender is set ONCE at onboarding and not surfaced as a user-facing field
+// on the read-only profile view (founder direction 2026-05-17). It still
+// drives gendered Hebrew copy on the public profile (verified badge), but
+// the tutor doesn't see "זכר / נקבה" on their own dashboard. Kept off the
+// prop list for the same reason — ProfileView doesn't need the value.
+
 interface ProfileViewProps {
   displayName: string;
   bio: string;
   city: string;
   subjectsHe: string[];
-  price45Ils: number | null;
-  price60Ils: number | null;
+  /** Per-length pricing. `null` per length = "not offered." */
+  prices: Record<45 | 60 | 75 | 90, number | null>;
   photoUrl: string | null;
   introVideoUrl: string | null;
   onEdit: () => void;
@@ -24,12 +30,15 @@ export function ProfileView({
   bio,
   city,
   subjectsHe,
-  price45Ils,
-  price60Ils,
+  prices,
   photoUrl,
   introVideoUrl,
   onEdit,
 }: ProfileViewProps) {
+  // Show only the lengths the tutor opted into. Empty state covered below.
+  const offeredLengths = ([45, 60, 75, 90] as const).filter(
+    (len) => typeof prices[len] === "number",
+  );
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-linen-border bg-white p-6 text-start">
@@ -100,25 +109,28 @@ export function ProfileView({
         )}
       </div>
 
-      {/* Pricing */}
+      {/* Pricing — only offered lengths are shown */}
       <div className="rounded-xl border border-linen-border bg-white p-6 text-start">
         <h3 className="mb-3 font-display text-lg font-bold text-primary-container">
-          תמחור — 2 אורכי שיעור
+          תמחור
         </h3>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="rounded-lg border border-linen-border bg-linen p-4">
-            <div className="text-xs text-secondary">שיעור 45 דק׳</div>
-            <div className="font-display text-2xl font-bold text-primary-container">
-              {price45Ils !== null ? `₪${price45Ils}` : "—"}
-            </div>
+        {offeredLengths.length > 0 ? (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            {offeredLengths.map((len) => (
+              <div
+                key={len}
+                className="rounded-lg border border-linen-border bg-linen p-4"
+              >
+                <div className="text-xs text-secondary">שיעור {len} דק׳</div>
+                <div className="font-display text-2xl font-bold text-primary-container">
+                  ₪{prices[len]}
+                </div>
+              </div>
+            ))}
           </div>
-          <div className="rounded-lg border border-linen-border bg-linen p-4">
-            <div className="text-xs text-secondary">שיעור 60 דק׳</div>
-            <div className="font-display text-2xl font-bold text-primary-container">
-              {price60Ils !== null ? `₪${price60Ils}` : "—"}
-            </div>
-          </div>
-        </div>
+        ) : (
+          <p className="text-sm text-secondary">לא הוגדרו מחירים עדיין.</p>
+        )}
       </div>
 
       {/* Intro video */}

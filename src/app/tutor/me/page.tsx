@@ -74,10 +74,15 @@ export default async function TutorMeProfilePage() {
 
   const initialValues = {
     displayName: profile.displayName,
+    gender: profile.gender,
     bio: profile.bio ?? "",
     subjects: currentSubjectSlugs,
-    price45Ils: profile.lesson45PriceIls,
-    price60Ils: profile.hourlyPriceIls,
+    prices: {
+      45: profile.lesson45PriceIls,
+      60: profile.hourlyPriceIls,
+      75: profile.lesson75PriceIls,
+      90: profile.lesson90PriceIls,
+    },
     city: profile.city ?? "",
     photoR2Key: profile.profilePhotoR2Key,
     introVideoR2Key: profile.introVideoR2Key,

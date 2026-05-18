@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db/client";
 import { subjects, tutorProfiles, tutorWizardState } from "@/lib/db/schema";
 import { requireTutor } from "../_lib/require-tutor";
 import { ProfileForm } from "./ProfileForm";
+import { isTutorGender, type TutorGender } from "./profile-form-schema";
 import { getTutorProfilePreviewUrls } from "./upload-actions";
 
 export const dynamic = "force-dynamic";
@@ -18,10 +19,10 @@ type SubjectRow = { id: string; slug: string; displayNameHe: string };
 
 interface DraftSnapshot {
   displayName?: string;
+  gender?: TutorGender;
   bio?: string;
   subjects?: string[];
-  price45Ils?: number;
-  price60Ils?: number;
+  prices?: Partial<Record<45 | 60 | 75 | 90, number | null>>;
   city?: string;
   photoR2Key?: string;
   introVideoR2Key?: string;
@@ -38,12 +39,15 @@ async function tryReadInitialState(userId: string) {
       db
         .select({
           displayName: tutorProfiles.displayName,
+          gender: tutorProfiles.gender,
           bio: tutorProfiles.bio,
           city: tutorProfiles.city,
           introVideoR2Key: tutorProfiles.introVideoR2Key,
           profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
           hourlyPriceIls: tutorProfiles.hourlyPriceIls,
           lesson45PriceIls: tutorProfiles.lesson45PriceIls,
+          lesson75PriceIls: tutorProfiles.lesson75PriceIls,
+          lesson90PriceIls: tutorProfiles.lesson90PriceIls,
           vettingStatus: tutorProfiles.vettingStatus,
         })
         .from(tutorProfiles)
@@ -76,12 +80,21 @@ export default async function TutorOnboardingProfilePage() {
 
   const draft: DraftSnapshot = readDraftFromWizard(wizardRow?.data);
 
+  // Profile column may not yet exist for a brand-new wizard run; profile
+  // gender is the DB-side authoritative source once submitted.
+  const profileGender = (profile?.gender as TutorGender | undefined) ?? null;
+  const draftPrices = draft.prices ?? {};
   const initialValues = {
     displayName: draft.displayName ?? profile?.displayName ?? user.name ?? "",
+    gender: draft.gender ?? profileGender ?? null,
     bio: draft.bio ?? profile?.bio ?? "",
     subjects: draft.subjects ?? [],
-    price45Ils: draft.price45Ils ?? profile?.lesson45PriceIls ?? null,
-    price60Ils: draft.price60Ils ?? profile?.hourlyPriceIls ?? null,
+    prices: {
+      45: draftPrices[45] ?? profile?.lesson45PriceIls ?? null,
+      60: draftPrices[60] ?? profile?.hourlyPriceIls ?? null,
+      75: draftPrices[75] ?? profile?.lesson75PriceIls ?? null,
+      90: draftPrices[90] ?? profile?.lesson90PriceIls ?? null,
+    },
     city: draft.city ?? profile?.city ?? "",
     photoR2Key: draft.photoR2Key ?? profile?.profilePhotoR2Key ?? null,
     introVideoR2Key: draft.introVideoR2Key ?? profile?.introVideoR2Key ?? null,
@@ -127,16 +140,30 @@ export default async function TutorOnboardingProfilePage() {
 function readDraftFromWizard(data: unknown): DraftSnapshot {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return {};
   const record = data as Record<string, unknown>;
+  const rawGender = stringField(record.gender);
   return {
     displayName: stringField(record.displayName),
+    gender: rawGender !== undefined && isTutorGender(rawGender) ? rawGender : undefined,
     bio: stringField(record.bio),
     subjects: stringArrayField(record.subjects),
-    price45Ils: numericField(record.price45Ils),
-    price60Ils: numericField(record.price60Ils),
+    prices: readDraftPrices(record.prices),
     city: stringField(record.city),
     photoR2Key: stringField(record.photoR2Key),
     introVideoR2Key: stringField(record.introVideoR2Key),
   };
+}
+
+function readDraftPrices(
+  value: unknown,
+): Partial<Record<45 | 60 | 75 | 90, number | null>> | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const out: Partial<Record<45 | 60 | 75 | 90, number | null>> = {};
+  for (const len of [45, 60, 75, 90] as const) {
+    const v = record[String(len)];
+    if (typeof v === "number" && Number.isFinite(v)) out[len] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function stringField(value: unknown): string | undefined {

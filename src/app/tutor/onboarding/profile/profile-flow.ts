@@ -32,8 +32,7 @@ function clampDraftForPersistence(raw: ProfileDraftInput): ProfileDraftInput {
     displayName: raw.displayName?.slice(0, PROFILE_FORM_LIMITS.DISPLAY_NAME_MAX_CHARS),
     bio: raw.bio?.slice(0, PROFILE_FORM_LIMITS.BIO_MAX_CHARS),
     subjects: raw.subjects?.slice(0, PROFILE_FORM_LIMITS.SUBJECTS_MAX),
-    price45Ils: raw.price45Ils,
-    price60Ils: raw.price60Ils,
+    prices: raw.prices,
     city: raw.city?.slice(0, 80),
     photoR2Key: raw.photoR2Key?.slice(0, PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS),
     introVideoR2Key: raw.introVideoR2Key?.slice(0, PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS),
@@ -202,12 +201,15 @@ export async function runSubmitProfile(
         .values({
           userId: deps.tutorUserId,
           displayName: input.displayName,
+          gender: input.gender,
           bio: input.bio,
           city: input.city,
           introVideoR2Key: input.introVideoR2Key,
           profilePhotoR2Key: input.photoR2Key,
-          hourlyPriceIls: input.price60Ils,
-          lesson45PriceIls: input.price45Ils,
+          hourlyPriceIls: input.prices[60],
+          lesson45PriceIls: input.prices[45],
+          lesson75PriceIls: input.prices[75],
+          lesson90PriceIls: input.prices[90],
           lessonLengthMinutes: 60,
           vettingStatus: "pending",
           isActive: false,
@@ -224,12 +226,15 @@ export async function runSubmitProfile(
         .update(tutorProfiles)
         .set({
           displayName: input.displayName,
+          gender: input.gender,
           bio: input.bio,
           city: input.city,
           introVideoR2Key: input.introVideoR2Key,
           profilePhotoR2Key: input.photoR2Key,
-          hourlyPriceIls: input.price60Ils,
-          lesson45PriceIls: input.price45Ils,
+          hourlyPriceIls: input.prices[60],
+          lesson45PriceIls: input.prices[45],
+          lesson75PriceIls: input.prices[75],
+          lesson90PriceIls: input.prices[90],
           // Re-submitting after changes-requested flips us back to "pending"
           // for re-review (Story 2.4 owns the admin queue surface). Approved
           // profiles editing high-impact fields is Story 2.5's concern — this
@@ -466,8 +471,7 @@ function serializeDraftForPersistence(
   if (raw.displayName !== undefined && raw.displayName !== null) out.displayName = raw.displayName;
   if (raw.bio !== undefined && raw.bio !== null) out.bio = raw.bio;
   if (raw.subjects && raw.subjects.length > 0) out.subjects = raw.subjects;
-  if (raw.price45Ils !== undefined && raw.price45Ils !== null) out.price45Ils = raw.price45Ils;
-  if (raw.price60Ils !== undefined && raw.price60Ils !== null) out.price60Ils = raw.price60Ils;
+  if (raw.prices && Object.keys(raw.prices).length > 0) out.prices = raw.prices;
   if (raw.city !== undefined && raw.city !== null) out.city = raw.city;
   if (raw.photoR2Key !== undefined && raw.photoR2Key !== null) out.photoR2Key = raw.photoR2Key;
   if (raw.introVideoR2Key !== undefined && raw.introVideoR2Key !== null)

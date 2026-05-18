@@ -20,16 +20,25 @@ export type TriggerField =
   | "intro_video"
   | "hourly_price"
   | "lesson_45_price"
+  | "lesson_75_price"
+  | "lesson_90_price"
   | "subjects";
 
 export type NonTriggerField =
   | "display_name"
+  | "gender"
   | "bio"
   | "city"
   | "profile_photo";
 
 export interface ProfileValues {
   displayName: string;
+  /**
+   * Grammatical gender ("male"/"female"). Non-trigger field — changing
+   * gender just swaps the gendered-copy rendering (the verified-tutor badge
+   * etc.); it doesn't require admin re-vet.
+   */
+  gender: "male" | "female";
   bio: string;
   city: string;
   /** R2 object key for the profile photo. `null` for "no photo set". */
@@ -38,6 +47,8 @@ export interface ProfileValues {
   introVideoR2Key: string | null;
   hourlyPriceIls: number | null;
   lesson45PriceIls: number | null;
+  lesson75PriceIls: number | null;
+  lesson90PriceIls: number | null;
   /** Subject slugs — order-insensitive; categorize compares as sets. */
   subjects: string[];
 }
@@ -75,6 +86,9 @@ export function categorizeChanges(
   if (normalizeText(oldValues.displayName) !== normalizeText(newValues.displayName)) {
     nonTriggerChanges.push("display_name");
   }
+  if (oldValues.gender !== newValues.gender) {
+    nonTriggerChanges.push("gender");
+  }
   if (normalizeText(oldValues.bio) !== normalizeText(newValues.bio)) {
     nonTriggerChanges.push("bio");
   }
@@ -94,6 +108,12 @@ export function categorizeChanges(
   }
   if (oldValues.lesson45PriceIls !== newValues.lesson45PriceIls) {
     triggerChanges.push("lesson_45_price");
+  }
+  if (oldValues.lesson75PriceIls !== newValues.lesson75PriceIls) {
+    triggerChanges.push("lesson_75_price");
+  }
+  if (oldValues.lesson90PriceIls !== newValues.lesson90PriceIls) {
+    triggerChanges.push("lesson_90_price");
   }
   if (!subjectsEqual(oldValues.subjects, newValues.subjects)) {
     triggerChanges.push("subjects");

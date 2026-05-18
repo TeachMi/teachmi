@@ -18,12 +18,15 @@ import type {
 export interface FakeTutorRow {
   userId: string;
   displayName: string;
+  gender: "male" | "female";
   bio: string | null;
   city: string | null;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
-  hourlyPriceIls: number;
+  hourlyPriceIls: number | null;
   lesson45PriceIls: number | null;
+  lesson75PriceIls: number | null;
+  lesson90PriceIls: number | null;
   lessonLengthMinutes: number;
   averageRating: string | null;
   ratingCount: number;
@@ -37,12 +40,15 @@ export interface FakeTutorRow {
 const PUBLIC_KEYS: Array<keyof DiscoverableTutorPublic> = [
   "userId",
   "displayName",
+  "gender",
   "bio",
   "city",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
   "lesson45PriceIls",
+  "lesson75PriceIls",
+  "lesson90PriceIls",
   "lessonLengthMinutes",
   "averageRating",
   "ratingCount",
@@ -158,12 +164,15 @@ function projectPublic(row: FakeTutorRow): DiscoverableTutorPublic {
 const OWNER_KEYS: Array<keyof TutorProfileForOwner> = [
   "userId",
   "displayName",
+  "gender",
   "bio",
   "city",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
   "lesson45PriceIls",
+  "lesson75PriceIls",
+  "lesson90PriceIls",
   "lessonLengthMinutes",
   "vettingStatus",
   "isActive",
@@ -181,12 +190,15 @@ export function buildFakeRow(overrides: Partial<FakeTutorRow> = {}): FakeTutorRo
   return {
     userId: "00000000-0000-0000-0000-000000000001",
     displayName: "ד״ר מיכל לוי",
+    gender: "female",
     bio: "מורה למתמטיקה עם 8 שנות ניסיון.",
     city: "תל אביב",
     introVideoR2Key: "intros/00000000-0000-0000-0000-000000000001/abc.mp4",
     profilePhotoR2Key: "photos/00000000-0000-0000-0000-000000000001/abc.jpg",
     hourlyPriceIls: 180,
     lesson45PriceIls: 140,
+    lesson75PriceIls: null,
+    lesson90PriceIls: null,
     lessonLengthMinutes: 60,
     averageRating: "4.90",
     ratingCount: 124,

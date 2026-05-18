@@ -11,6 +11,7 @@
 
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { verifiedTutorLabel } from "@/app/tutor/onboarding/profile/profile-form-schema";
 import type { DiscoverableTutorPublic } from "@/lib/db/queries/tutor-queries";
 import type { TutorSubjectPublic } from "@/lib/db/queries/tutor-queries";
 import type { RatingHistogram } from "@/lib/db/queries/tutor-queries";
@@ -84,7 +85,7 @@ export function Hero({
                 >
                   verified
                 </span>
-                מורה מאומתת
+                {verifiedTutorLabel(tutor.gender)}
               </Badge>
             </div>
             <p className="text-on-surface-variant mb-3">{headline}</p>
@@ -145,6 +146,8 @@ export function Hero({
           <PriceBlock
             hourlyPriceIls={tutor.hourlyPriceIls}
             lesson45PriceIls={tutor.lesson45PriceIls}
+            lesson75PriceIls={tutor.lesson75PriceIls}
+            lesson90PriceIls={tutor.lesson90PriceIls}
           />
         </div>
       </div>

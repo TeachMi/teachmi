@@ -49,12 +49,15 @@ const MAX_BOOKING_DURATION_MS = 120 * 60 * 1000;
 export interface DiscoverableTutorPublic {
   userId: string;
   displayName: string;
+  gender: "male" | "female";
   bio: string | null;
   city: string | null;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
-  hourlyPriceIls: number;
+  hourlyPriceIls: number | null;
   lesson45PriceIls: number | null;
+  lesson75PriceIls: number | null;
+  lesson90PriceIls: number | null;
   lessonLengthMinutes: number;
   averageRating: string | null;
   ratingCount: number;
@@ -128,12 +131,15 @@ interface TutorQueryDeps {
 const PUBLIC_COLUMNS = {
   userId: tutorProfiles.userId,
   displayName: tutorProfiles.displayName,
+  gender: tutorProfiles.gender,
   bio: tutorProfiles.bio,
   city: tutorProfiles.city,
   introVideoR2Key: tutorProfiles.introVideoR2Key,
   profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
   hourlyPriceIls: tutorProfiles.hourlyPriceIls,
   lesson45PriceIls: tutorProfiles.lesson45PriceIls,
+  lesson75PriceIls: tutorProfiles.lesson75PriceIls,
+  lesson90PriceIls: tutorProfiles.lesson90PriceIls,
   lessonLengthMinutes: tutorProfiles.lessonLengthMinutes,
   averageRating: tutorProfiles.averageRating,
   ratingCount: tutorProfiles.ratingCount,
@@ -181,12 +187,15 @@ export async function isTutorDiscoverable(
 export const DISCOVERABLE_TUTOR_PUBLIC_KEYS = Object.freeze([
   "userId",
   "displayName",
+  "gender",
   "bio",
   "city",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
   "lesson45PriceIls",
+  "lesson75PriceIls",
+  "lesson90PriceIls",
   "lessonLengthMinutes",
   "averageRating",
   "ratingCount",
@@ -211,12 +220,15 @@ export const DISCOVERABLE_TUTOR_PUBLIC_KEYS = Object.freeze([
 export interface TutorProfileForOwner {
   userId: string;
   displayName: string;
+  gender: "male" | "female";
   bio: string | null;
   city: string | null;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
-  hourlyPriceIls: number;
+  hourlyPriceIls: number | null;
   lesson45PriceIls: number | null;
+  lesson75PriceIls: number | null;
+  lesson90PriceIls: number | null;
   lessonLengthMinutes: number;
   vettingStatus: "pending" | "approved" | "rejected" | "paused";
   isActive: boolean;
@@ -225,12 +237,15 @@ export interface TutorProfileForOwner {
 const OWNER_PROFILE_COLUMNS = {
   userId: tutorProfiles.userId,
   displayName: tutorProfiles.displayName,
+  gender: tutorProfiles.gender,
   bio: tutorProfiles.bio,
   city: tutorProfiles.city,
   introVideoR2Key: tutorProfiles.introVideoR2Key,
   profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
   hourlyPriceIls: tutorProfiles.hourlyPriceIls,
   lesson45PriceIls: tutorProfiles.lesson45PriceIls,
+  lesson75PriceIls: tutorProfiles.lesson75PriceIls,
+  lesson90PriceIls: tutorProfiles.lesson90PriceIls,
   lessonLengthMinutes: tutorProfiles.lessonLengthMinutes,
   vettingStatus: tutorProfiles.vettingStatus,
   isActive: tutorProfiles.isActive,
@@ -239,12 +254,15 @@ const OWNER_PROFILE_COLUMNS = {
 export const OWNER_PROFILE_KEYS = Object.freeze([
   "userId",
   "displayName",
+  "gender",
   "bio",
   "city",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
   "lesson45PriceIls",
+  "lesson75PriceIls",
+  "lesson90PriceIls",
   "lessonLengthMinutes",
   "vettingStatus",
   "isActive",

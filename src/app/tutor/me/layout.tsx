@@ -55,7 +55,9 @@ export default async function TutorMeLayout({
         </div>
       </div>
       <TutorTabNav />
-      <div className="mx-auto w-full max-w-7xl px-6 py-6">{children}</div>
+      <div className="mx-auto w-full max-w-7xl px-6 py-6 pb-10">{children}</div>
+      {/* Logout lives on the Profile tab only (founder direction
+          2026-05-18) — see `_components/ProfileTabClient.tsx`. */}
     </AppShell>
   );
 }

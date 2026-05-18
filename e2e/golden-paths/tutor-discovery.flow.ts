@@ -89,12 +89,15 @@ export async function provisionInactiveTutor(
 
   // Provision a tutor_profiles row in the "fresh submit" state: is_active=false,
   // vetting_status='pending'. Idempotent — if a prior test landed an approved
-  // state, reset to pending here.
+  // state, reset to pending here. `gender: 'female'` matches "ד״ר מיכל לוי"
+  // (Michal = female), so the verified-badge spec assertion ("מורה מאומתת")
+  // gender-agrees with the fixture identity.
   await db
     .insert(tutorProfiles)
     .values({
       userId,
       displayName: "ד״ר מיכל לוי (E2E)",
+      gender: "female",
       bio: "מורה למתמטיקה — שיעורים פרטיים לבגרות.",
       city: "תל אביב",
       introVideoR2Key: `intros/${userId}/e2e-fixture.mp4`,

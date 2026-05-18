@@ -31,6 +31,7 @@ const EXISTING_PROFILE = {
   vettingStatus: "approved" as const,
   isActive: true,
   displayName: "ד״ר ישראלה ישראלי",
+  gender: "female" as const,
   bio:
     "מורה למתמטיקה וטכנולוגיה עם תואר ד״ר מאוניברסיטת תל אביב. מלמדת מעל 8 שנים, מהתיכון ועד הכנה לפסיכומטרי. גישה ידידותית, סבלנית, ויעילה.",
   city: "תל אביב",
@@ -38,6 +39,8 @@ const EXISTING_PROFILE = {
   profilePhotoR2Key: `photos/${TUTOR_ID}/v1.png`,
   hourlyPriceIls: 180,
   lesson45PriceIls: 140,
+  lesson75PriceIls: null,
+  lesson90PriceIls: null,
 };
 
 const EXISTING_SUBJECT_ROWS = [
@@ -48,10 +51,15 @@ const EXISTING_SUBJECT_ROWS = [
 
 const UNCHANGED_INPUT = {
   displayName: EXISTING_PROFILE.displayName,
+  gender: EXISTING_PROFILE.gender,
   bio: EXISTING_PROFILE.bio,
   subjects: ["mathematics", "english", "psychometric"],
-  price45Ils: EXISTING_PROFILE.lesson45PriceIls,
-  price60Ils: EXISTING_PROFILE.hourlyPriceIls,
+  prices: {
+    45: EXISTING_PROFILE.lesson45PriceIls,
+    60: EXISTING_PROFILE.hourlyPriceIls,
+    75: null,
+    90: null,
+  },
   city: EXISTING_PROFILE.city,
   photoR2Key: EXISTING_PROFILE.profilePhotoR2Key,
   introVideoR2Key: EXISTING_PROFILE.introVideoR2Key,
@@ -138,7 +146,7 @@ describe("runEditProfile — save preserves discoverability (AC2)", () => {
   it("price change → single UPDATE + ONE audit row, NO gate flip", async () => {
     const { db, deps } = makeDeps();
     const result = await runEditProfile(
-      { ...UNCHANGED_INPUT, price60Ils: 220 },
+      { ...UNCHANGED_INPUT, prices: { ...UNCHANGED_INPUT.prices, 60: 220 } },
       deps,
     );
 
@@ -217,7 +225,7 @@ it("mixed trigger + non-trigger change → ONE UPDATE + ONE audit row with combi
     const result = await runEditProfile(
       {
         ...UNCHANGED_INPUT,
-        price60Ils: 220,
+        prices: { ...UNCHANGED_INPUT.prices, 60: 220 },
         bio: `${UNCHANGED_INPUT.bio} עוד טקסט.`,
       },
       deps,
@@ -248,7 +256,7 @@ it("mixed trigger + non-trigger change → ONE UPDATE + ONE audit row with combi
     // branching (trigger → /dashboard, non-trigger → /tutor/<userId>).
     const cases = [
       { ...UNCHANGED_INPUT, bio: `${UNCHANGED_INPUT.bio} edit.` },
-      { ...UNCHANGED_INPUT, price60Ils: 220 },
+      { ...UNCHANGED_INPUT, prices: { ...UNCHANGED_INPUT.prices, 60: 220 } },
       { ...UNCHANGED_INPUT, subjects: ["mathematics"] },
     ];
     for (const input of cases) {
