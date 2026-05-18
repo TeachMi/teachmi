@@ -21,7 +21,7 @@ import {
   getTutorSubjects,
 } from "@/lib/db/queries/tutor-queries";
 import { getFilesProvider } from "@/lib/providers/files";
-import { AvailabilityCalendar } from "./_components/AvailabilityCalendar";
+import { BookingSidebar } from "./_components/BookingSidebar";
 import { Hero } from "./_components/Hero";
 import { RatingWidget } from "./_components/RatingWidget";
 import { SubjectChips } from "./_components/SubjectChips";
@@ -271,36 +271,69 @@ export default async function PublicTutorProfilePage({
 
   const isSignedIn = !!session?.user?.id;
 
+  const prices = {
+    45: tutor.lesson45PriceIls,
+    60: tutor.hourlyPriceIls,
+    75: tutor.lesson75PriceIls,
+    90: tutor.lesson90PriceIls,
+  } as const;
+
+  // Closed-beta UX rule (founder 2026-05-18): show the rating widget on
+  // the public profile only once the tutor has at least one real review.
+  // Until then, the histogram is misleading (a 0-of-0 average looks bad).
+  const showRatingWidget = rating !== null && rating.total > 0;
+
+  // "Has anything bookable" — toggles the sidebar CTA between active and
+  // disabled. Cheaper than recomputing inside the BookingSidebar.
+  const hasAnyAvailability = Array.from(slotStates.values()).some((slots) =>
+    slots.some((s) => s.status === "available"),
+  );
+
   return (
     <AppShell mainClassName="flex-1 bg-linen">
       <div className="mx-auto w-full max-w-7xl px-6 py-8">
-        <Hero
-          tutor={{ ...tutor, bio: tutor.bio ? stripBidiOverrides(tutor.bio) : tutor.bio }}
-          subjects={subjects}
-          rating={rating}
-          introVideoUrl={introVideoUrl}
-          profilePhotoUrl={profilePhotoUrl}
-        />
+        {/* Two-column layout: profile content (main) + sticky booking
+            sidebar. On lg+ the sidebar is fixed via lg:sticky, so it
+            stays in view as the student scrolls the bio and reviews. */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <section className="lg:col-span-2 min-w-0">
+            <Hero
+              tutor={{
+                ...tutor,
+                bio: tutor.bio ? stripBidiOverrides(tutor.bio) : tutor.bio,
+              }}
+              subjects={subjects}
+              rating={rating}
+              introVideoUrl={introVideoUrl}
+              profilePhotoUrl={profilePhotoUrl}
+            />
 
-        <AvailabilityCalendar
-          tutorUserId={tutor.userId}
-          slotStates={slotStates}
-          prices={{
-            45: tutor.lesson45PriceIls,
-            60: tutor.hourlyPriceIls,
-            75: tutor.lesson75PriceIls,
-            90: tutor.lesson90PriceIls,
-          }}
-          selectedDuration={selectedDuration}
-          isSignedIn={isSignedIn}
-          weekStartUtc={weekStart}
-        />
+            {showRatingWidget && (
+              <div className="mb-12">
+                <RatingWidget histogram={rating!} />
+              </div>
+            )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-12">
-          {rating !== null && <RatingWidget histogram={rating} />}
+            <SubjectChips subjects={subjects} withSectionHeader />
+          </section>
+
+          <div className="lg:col-span-1">
+            <BookingSidebar
+              tutorUserId={tutor.userId}
+              displayName={tutor.displayName}
+              profilePhotoUrl={profilePhotoUrl}
+              prices={prices}
+              ratingAverage={rating?.average ?? null}
+              ratingCount={rating?.total ?? 0}
+              totalLessonsCompleted={tutor.totalLessonsCompleted}
+              slotStates={slotStates}
+              weekStartUtc={weekStart}
+              isSignedIn={isSignedIn}
+              hasAnyAvailability={hasAnyAvailability}
+              initialDuration={selectedDuration}
+            />
+          </div>
         </div>
-
-        <SubjectChips subjects={subjects} withSectionHeader />
       </div>
     </AppShell>
   );

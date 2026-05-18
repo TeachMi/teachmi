@@ -49,14 +49,14 @@ vi.mock("@/lib/availability/compute-slots", () => ({
 // the top of the file by vitest's transformer).
 const componentSpies = vi.hoisted(() => ({
   hero: vi.fn(() => null),
-  calendar: vi.fn(() => null),
+  bookingSidebar: vi.fn(() => null),
   rating: vi.fn(() => null),
   subjects: vi.fn(() => null),
 }));
 
 vi.mock("../_components/Hero", () => ({ Hero: componentSpies.hero }));
-vi.mock("../_components/AvailabilityCalendar", () => ({
-  AvailabilityCalendar: componentSpies.calendar,
+vi.mock("../_components/BookingSidebar", () => ({
+  BookingSidebar: componentSpies.bookingSidebar,
 }));
 vi.mock("../_components/RatingWidget", () => ({
   RatingWidget: componentSpies.rating,
@@ -119,6 +119,8 @@ const FULL_TUTOR = {
   profilePhotoR2Key: `photos/${TUTOR_UUID}/abc.jpg`,
   hourlyPriceIls: 180,
   lesson45PriceIls: 140,
+  lesson75PriceIls: null,
+  lesson90PriceIls: null,
   lessonLengthMinutes: 60,
   averageRating: "4.90",
   ratingCount: 124,
@@ -136,7 +138,7 @@ beforeEach(() => {
   );
   mockAuth.mockReset().mockResolvedValue(null);
   componentSpies.hero.mockClear();
-  componentSpies.calendar.mockClear();
+  componentSpies.bookingSidebar.mockClear();
   componentSpies.rating.mockClear();
   componentSpies.subjects.mockClear();
 });
@@ -226,7 +228,7 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
     );
   });
 
-  it("passes empty slotStates to AvailabilityCalendar when tutor has no rows", async () => {
+  it("passes empty slotStates to BookingSidebar when tutor has no rows", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
     mockGetAvailability.mockResolvedValue([]);
 
@@ -235,9 +237,13 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({}),
     });
 
-    const calProps = lastPropsTo(componentSpies.calendar) as { slotStates: Map<unknown, unknown> };
-    expect(calProps).not.toBeNull();
-    expect(calProps.slotStates).toBeInstanceOf(Map);
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      slotStates: Map<unknown, unknown>;
+      hasAnyAvailability: boolean;
+    };
+    expect(sidebarProps).not.toBeNull();
+    expect(sidebarProps.slotStates).toBeInstanceOf(Map);
+    expect(sidebarProps.hasAnyAvailability).toBe(false);
   });
 
   it("does NOT render RatingWidget when histogram is null", async () => {
@@ -252,7 +258,27 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
     expect(lastPropsTo(componentSpies.rating)).toBeNull();
   });
 
-  it("renders RatingWidget with the histogram when it's non-null", async () => {
+  it("does NOT render RatingWidget when histogram has zero reviews (closed-beta guard)", async () => {
+    mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
+    mockGetRating.mockResolvedValue({
+      score1: 0,
+      score2: 0,
+      score3: 0,
+      score4: 0,
+      score5: 0,
+      total: 0,
+      average: 0,
+    });
+
+    lastRendered = await PublicTutorProfilePage({
+      params: Promise.resolve({ slug: TUTOR_UUID }),
+      searchParams: Promise.resolve({}),
+    });
+
+    expect(lastPropsTo(componentSpies.rating)).toBeNull();
+  });
+
+  it("renders RatingWidget with the histogram when total > 0", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
     const histogram = {
       score1: 0,
@@ -312,7 +338,7 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
     expect(heroProps?.tutor?.bio).toBe(FULL_TUTOR.bio);
   });
 
-  it("defaults selectedDuration to 60 when ?duration= is absent", async () => {
+  it("defaults initialDuration to 60 on BookingSidebar when ?duration= is absent", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
 
     lastRendered = await PublicTutorProfilePage({
@@ -320,11 +346,13 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({}),
     });
 
-    const calProps = lastPropsTo(componentSpies.calendar) as { selectedDuration: 45 | 60 };
-    expect(calProps?.selectedDuration).toBe(60);
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      initialDuration: 45 | 60 | 75 | 90;
+    };
+    expect(sidebarProps?.initialDuration).toBe(60);
   });
 
-  it("uses ?duration=45 when query param is set", async () => {
+  it("threads ?duration=45 from URL into BookingSidebar.initialDuration", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
 
     lastRendered = await PublicTutorProfilePage({
@@ -332,11 +360,13 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({ duration: "45" }),
     });
 
-    const calProps = lastPropsTo(componentSpies.calendar) as { selectedDuration: 45 | 60 };
-    expect(calProps?.selectedDuration).toBe(45);
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      initialDuration: 45 | 60 | 75 | 90;
+    };
+    expect(sidebarProps?.initialDuration).toBe(45);
   });
 
-  it("passes isSignedIn=false to AvailabilityCalendar when auth returns null", async () => {
+  it("passes isSignedIn=false to BookingSidebar when auth returns null", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
     mockAuth.mockResolvedValue(null);
 
@@ -345,11 +375,13 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({}),
     });
 
-    const calProps = lastPropsTo(componentSpies.calendar) as { isSignedIn: boolean };
-    expect(calProps?.isSignedIn).toBe(false);
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      isSignedIn: boolean;
+    };
+    expect(sidebarProps?.isSignedIn).toBe(false);
   });
 
-  it("passes isSignedIn=true to AvailabilityCalendar when auth returns a session", async () => {
+  it("passes isSignedIn=true to BookingSidebar when auth returns a session", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
     mockAuth.mockResolvedValue({ user: { id: "u-1" } });
 
@@ -358,8 +390,29 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({}),
     });
 
-    const calProps = lastPropsTo(componentSpies.calendar) as { isSignedIn: boolean };
-    expect(calProps?.isSignedIn).toBe(true);
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      isSignedIn: boolean;
+    };
+    expect(sidebarProps?.isSignedIn).toBe(true);
+  });
+
+  it("passes the four-length prices map (with nulls for un-offered lengths) to BookingSidebar", async () => {
+    mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
+
+    lastRendered = await PublicTutorProfilePage({
+      params: Promise.resolve({ slug: TUTOR_UUID }),
+      searchParams: Promise.resolve({}),
+    });
+
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      prices: Record<45 | 60 | 75 | 90, number | null>;
+    };
+    expect(sidebarProps?.prices).toEqual({
+      45: 140,
+      60: 180,
+      75: null,
+      90: null,
+    });
   });
 });
 

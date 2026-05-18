@@ -16,7 +16,6 @@ import type { DiscoverableTutorPublic } from "@/lib/db/queries/tutor-queries";
 import type { TutorSubjectPublic } from "@/lib/db/queries/tutor-queries";
 import type { RatingHistogram } from "@/lib/db/queries/tutor-queries";
 import { IntroVideoPlayer } from "./IntroVideoPlayer";
-import { PriceBlock } from "./PriceBlock";
 
 interface HeroProps {
   tutor: DiscoverableTutorPublic;
@@ -61,10 +60,11 @@ export function Hero({
   return (
     <section
       aria-label="פרופיל המורה"
-      className="grid grid-cols-1 lg:grid-cols-5 gap-8 mb-10 items-start"
+      className="grid grid-cols-1 xl:grid-cols-5 gap-8 mb-10 items-start"
     >
-      {/* Info column — rightmost in RTL via DOM order */}
-      <div className="lg:col-span-3 text-start">
+      {/* Info column — full width on lg (sidebar already steals the
+          right column), side-by-side with the video only at xl+. */}
+      <div className="xl:col-span-3 text-start">
         <div className="flex items-start gap-5 mb-5">
           <Avatar
             src={profilePhotoUrl ?? undefined}
@@ -139,22 +139,14 @@ export function Hero({
           </div>
         )}
 
-        {/* Two-price summary — delegated to the standalone PriceBlock
-            component so the same JSX powers the hero, future browse cards,
-            and Storybook's "Composition — tutor price block" story. */}
-        <div className="mb-5">
-          <PriceBlock
-            hourlyPriceIls={tutor.hourlyPriceIls}
-            lesson45PriceIls={tutor.lesson45PriceIls}
-            lesson75PriceIls={tutor.lesson75PriceIls}
-            lesson90PriceIls={tutor.lesson90PriceIls}
-          />
-        </div>
+        {/* PriceBlock removed 2026-05-18 — pricing now lives in the
+            sticky `BookingSidebar` to the left (in RTL). Hero stays
+            focused on identity / bio / headline. */}
       </div>
 
       {/* Video column */}
       {introVideoUrl && (
-        <div className="lg:col-span-2">
+        <div className="xl:col-span-2">
           <IntroVideoPlayer
             src={introVideoUrl}
             poster={profilePhotoUrl ?? undefined}
