@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { StudentSubNav } from "@/components/layout/StudentSubNav";
+import { AddAllUpcomingButton } from "@/components/booking/AddAllUpcomingButton";
 import { requireAuth } from "@/lib/auth/guards";
 import { getDb } from "@/lib/db/client";
 import { getUpcomingBookingsForStudent } from "@/lib/db/queries/booking-queries";
@@ -48,6 +49,19 @@ export default async function DashboardPage() {
   const upcoming = await getUpcomingBookingsForStudent(user.id, { now });
   const hasUpcomingLessons = upcoming.length > 0;
 
+  // Serialize the upcoming bookings for the "add all to calendar" button.
+  // Student view: counterpart is the tutor.
+  const upcomingForCalendar = upcoming.map((b) => ({
+    id: b.id,
+    startIso: b.startsAt.toISOString(),
+    endIso: new Date(
+      b.startsAt.getTime() + b.durationMinutes * 60 * 1000,
+    ).toISOString(),
+    counterpartName: b.tutorDisplayName ?? "המורה",
+    subjectNameHe: b.subjectNameHe,
+    durationMinutes: b.durationMinutes,
+  }));
+
   return (
     <AppShell activeHref="/dashboard" mainClassName="flex flex-1 flex-col">
       <StudentSubNav activeTab="schedule" />
@@ -62,6 +76,11 @@ export default async function DashboardPage() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="space-y-6 lg:col-span-2">
             {hasUpcomingLessons ? <UpcomingLessonsSlot upcoming={upcoming} /> : <EmptyStateHero />}
+            {hasUpcomingLessons && (
+              <div className="flex justify-start">
+                <AddAllUpcomingButton bookings={upcomingForCalendar} />
+              </div>
+            )}
           </div>
           <aside className="space-y-6">
             <WeeklySummary />

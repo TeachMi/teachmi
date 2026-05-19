@@ -12,6 +12,7 @@
 
 import { Card, CardBody } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { CancelLessonModal } from "@/components/booking/CancelLessonModal";
 import { formatHebrewDate, formatHebrewWeekday } from "@/lib/hebrew/format";
 import type { UpcomingBookingRow } from "@/lib/db/queries/booking-queries";
 
@@ -59,10 +60,27 @@ function NextLessonHero({ booking }: { booking: UpcomingBookingRow }) {
             </p>
           </div>
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <Button disabled size="lg" title="הצטרפות לשיעור תפעל בקרוב">
             הצטרפות לשיעור (בקרוב)
           </Button>
+          <CancelLessonModal
+            bookingId={booking.id}
+            viewerRole="student"
+            counterpartName={tutorName}
+            startsAt={booking.startsAt}
+            durationMinutes={booking.durationMinutes}
+            subjectNameHe={booking.subjectNameHe}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="md"
+              className="text-danger hover:text-red-700 hover:bg-danger/5"
+            >
+              ביטול שיעור
+            </Button>
+          </CancelLessonModal>
           <p className="self-center text-xs text-secondary">
             בדיקת מצלמה ומיקרופון תופיע 5 דקות לפני השיעור.
           </p>
@@ -78,24 +96,52 @@ function UpcomingStrip({ bookings }: { bookings: UpcomingBookingRow[] }) {
       <h3 className="mb-3 font-display text-base font-bold text-primary-container">
         השיעורים הבאים
       </h3>
+      {/*
+        Founder feedback 2026-05-19 r3: the prior `.slice(0, 3)` capped the
+        visible strip at 3 cards, leaving future lessons #5+ uncancellable
+        from the dashboard. Drop the slice so every upcoming lesson (up to
+        the query's MAX=10 cap) shows with a cancel link. Closed-beta scale
+        — 10 cards is acceptable; if it grows past that, a paginated
+        "all my lessons" page becomes the right answer.
+      */}
       <ul className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        {bookings.slice(0, 3).map((b) => (
-          <li key={b.id}>
-            <Card padding="sm" className="text-start">
-              <p className="text-xs font-bold text-secondary">
-                {formatHebrewWeekday(b.startsAt)} ·{" "}
-                {formatHebrewDate(b.startsAt)}
-              </p>
-              <p className="mt-1 font-display text-sm font-bold text-on-surface">
-                {b.tutorDisplayName ?? "מורה"}
-              </p>
-              <p className="text-xs text-secondary">
-                {b.subjectNameHe ? `${b.subjectNameHe} · ` : ""}
-                {b.durationMinutes} דק׳
-              </p>
-            </Card>
-          </li>
-        ))}
+        {bookings.map((b) => {
+          const tutorName = b.tutorDisplayName ?? "מורה";
+          return (
+            <li key={b.id}>
+              <Card padding="sm" className="text-start">
+                <p className="text-xs font-bold text-secondary">
+                  {formatHebrewWeekday(b.startsAt)} ·{" "}
+                  {formatHebrewDate(b.startsAt)}
+                </p>
+                <p className="mt-1 font-display text-sm font-bold text-on-surface">
+                  {tutorName}
+                </p>
+                <p className="text-xs text-secondary">
+                  {b.subjectNameHe ? `${b.subjectNameHe} · ` : ""}
+                  {b.durationMinutes} דק׳
+                </p>
+                <div className="mt-2 flex justify-start">
+                  <CancelLessonModal
+                    bookingId={b.id}
+                    viewerRole="student"
+                    counterpartName={tutorName}
+                    startsAt={b.startsAt}
+                    durationMinutes={b.durationMinutes}
+                    subjectNameHe={b.subjectNameHe}
+                  >
+                    <button
+                      type="button"
+                      className="text-xs font-bold text-danger hover:underline cursor-pointer"
+                    >
+                      ביטול שיעור
+                    </button>
+                  </CancelLessonModal>
+                </div>
+              </Card>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

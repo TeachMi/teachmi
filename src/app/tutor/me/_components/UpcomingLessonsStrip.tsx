@@ -4,11 +4,18 @@
 // without hunting through tab content. Closed-beta scale: ≤10 upcoming
 // rows is the expectation.
 //
-// Per the founder direction, view-only — no Join, no Cancel, no
-// Reschedule in this story.
+// Area 1 (2026-05-19): the strip rows are now wrapped in
+// `<BookingPeekModal>` — the canonical "I tapped a booking" interaction
+// across the tutor surface (calendar + strip). Per John's call, one
+// grammar for one object — not nav-on-click in the strip + peek-on-click
+// in the calendar. The "next lesson" hero card keeps its
+// `לפרטי השיעור ←` link as a secondary affordance, but the card itself
+// is also tap-to-peek so the gesture is consistent with the smaller rows.
 
-import Link from "next/link";
+"use client";
+
 import { Card, CardBody } from "@/components/ui/card";
+import { BookingPeekModal } from "@/components/booking/BookingPeekModal";
 import {
   formatHebrewDate,
   formatHebrewWeekday,
@@ -37,38 +44,46 @@ export function UpcomingLessonsStrip({ upcoming }: UpcomingLessonsStripProps) {
 function NextLessonHero({ booking }: { booking: UpcomingTutorBookingRow }) {
   const studentName = booking.studentDisplayName ?? "תלמיד/ה";
   return (
-    <Card tone="highlighted" padding="lg" className="text-start">
-      <CardBody className="space-y-3">
-        <div className="flex items-start gap-3">
-          <span
-            aria-hidden="true"
-            className="material-symbols-outlined text-3xl text-primary-container"
-          >
-            videocam
-          </span>
-          <div className="flex-1 space-y-1">
-            <p className="text-xs font-bold uppercase tracking-wide text-on-tertiary-fixed-variant">
-              השיעור הבא שלך
-            </p>
-            <h2 className="font-display text-xl font-extrabold text-primary-container">
-              {studentName}
-              {booking.subjectNameHe ? ` · ${booking.subjectNameHe}` : ""}
-            </h2>
-            <p className="text-sm text-on-surface-variant">
-              {formatHebrewWeekday(booking.startsAt)} ·{" "}
-              {formatHebrewDate(booking.startsAt)} · {booking.durationMinutes} דק׳ ·{" "}
-              {formatIlsCurrency(booking.tutorPayoutIls)} לתשלום
-            </p>
-          </div>
-        </div>
-        <Link
-          href={`/booking/${booking.id}/confirmed`}
-          className="inline-block text-sm font-bold text-primary-container hover:underline"
-        >
-          לפרטי השיעור ←
-        </Link>
-      </CardBody>
-    </Card>
+    <BookingPeekModal
+      bookingId={booking.id}
+      studentUserId={booking.studentUserId}
+      studentName={studentName}
+      startsAt={booking.startsAt}
+      durationMinutes={booking.durationMinutes}
+      subjectNameHe={booking.subjectNameHe}
+    >
+      <button
+        type="button"
+        className="block w-full text-start focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-fixed-dim rounded-2xl cursor-pointer"
+      >
+        <Card tone="highlighted" padding="lg" className="text-start hover:border-primary-fixed-dim transition-colors">
+          <CardBody className="space-y-3">
+            <div className="flex items-start gap-3">
+              <span
+                aria-hidden="true"
+                className="material-symbols-outlined text-3xl text-primary-container"
+              >
+                videocam
+              </span>
+              <div className="flex-1 space-y-1">
+                <p className="text-xs font-bold uppercase tracking-wide text-on-tertiary-fixed-variant">
+                  השיעור הבא שלך
+                </p>
+                <h2 className="font-display text-xl font-extrabold text-primary-container">
+                  {studentName}
+                  {booking.subjectNameHe ? ` · ${booking.subjectNameHe}` : ""}
+                </h2>
+                <p className="text-sm text-on-surface-variant">
+                  {formatHebrewWeekday(booking.startsAt)} ·{" "}
+                  {formatHebrewDate(booking.startsAt)} · {booking.durationMinutes} דק׳ ·{" "}
+                  {formatIlsCurrency(booking.tutorPayoutIls)} לתשלום
+                </p>
+              </div>
+            </div>
+          </CardBody>
+        </Card>
+      </button>
+    </BookingPeekModal>
   );
 }
 
@@ -81,24 +96,33 @@ function UpcomingList({ bookings }: { bookings: UpcomingTutorBookingRow[] }) {
       <ul className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {bookings.map((b) => (
           <li key={b.id}>
-            <Link
-              href={`/booking/${b.id}/confirmed`}
-              className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-fixed-dim rounded-xl"
+            <BookingPeekModal
+              bookingId={b.id}
+              studentUserId={b.studentUserId}
+              studentName={b.studentDisplayName ?? "תלמיד/ה"}
+              startsAt={b.startsAt}
+              durationMinutes={b.durationMinutes}
+              subjectNameHe={b.subjectNameHe}
             >
-              <Card padding="sm" className="text-start hover:border-primary-fixed-dim transition-colors">
-                <p className="text-xs font-bold text-secondary">
-                  {formatHebrewWeekday(b.startsAt)} ·{" "}
-                  {formatHebrewDate(b.startsAt)}
-                </p>
-                <p className="mt-1 font-display text-sm font-bold text-on-surface">
-                  {b.studentDisplayName ?? "תלמיד/ה"}
-                </p>
-                <p className="text-xs text-secondary">
-                  {b.subjectNameHe ? `${b.subjectNameHe} · ` : ""}
-                  {b.durationMinutes} דק׳
-                </p>
-              </Card>
-            </Link>
+              <button
+                type="button"
+                className="block w-full text-start focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-fixed-dim rounded-xl cursor-pointer"
+              >
+                <Card padding="sm" className="text-start hover:border-primary-fixed-dim transition-colors">
+                  <p className="text-xs font-bold text-secondary">
+                    {formatHebrewWeekday(b.startsAt)} ·{" "}
+                    {formatHebrewDate(b.startsAt)}
+                  </p>
+                  <p className="mt-1 font-display text-sm font-bold text-on-surface">
+                    {b.studentDisplayName ?? "תלמיד/ה"}
+                  </p>
+                  <p className="text-xs text-secondary">
+                    {b.subjectNameHe ? `${b.subjectNameHe} · ` : ""}
+                    {b.durationMinutes} דק׳
+                  </p>
+                </Card>
+              </button>
+            </BookingPeekModal>
           </li>
         ))}
       </ul>

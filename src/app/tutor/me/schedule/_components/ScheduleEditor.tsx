@@ -37,9 +37,24 @@ interface ExceptionRule {
   endTime: string;
 }
 
+/**
+ * Active-booking row shape for the calendar overlay. Serialized from the
+ * page's server-side query as JSON-safe primitives — startsAt is an ISO
+ * string so it survives the RSC → client island handoff.
+ */
+export interface CalendarBookingRow {
+  id: string;
+  startsAtIso: string;
+  durationMinutes: number;
+  studentUserId: string;
+  studentDisplayName: string | null;
+  subjectNameHe: string | null;
+}
+
 interface ScheduleEditorProps {
   recurringRules: RecurringRule[];
   exceptionRules: ExceptionRule[];
+  bookings: CalendarBookingRow[];
 }
 
 type Tab = "recurring" | "calendar";
@@ -96,6 +111,7 @@ function diffSets(
 export function ScheduleEditor({
   recurringRules,
   exceptionRules,
+  bookings,
 }: ScheduleEditorProps) {
   const [tab, setTab] = useState<Tab>("recurring");
   const [pending, startTransition] = useTransition();
@@ -278,6 +294,7 @@ export function ScheduleEditor({
         <CalendarTab
           recurringRules={recurringRules}
           exceptionRules={exceptionRules}
+          bookings={bookings}
         />
       )}
     </div>

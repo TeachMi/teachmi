@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildIcs } from "../ics";
+import { buildIcs, buildIcsMulti } from "../ics";
 
 describe("buildIcs", () => {
   const baseInput = {
@@ -49,5 +49,51 @@ describe("buildIcs", () => {
   it("includes the supplied UID", () => {
     const ics = buildIcs(baseInput);
     expect(ics).toContain("UID:booking-abc123@teachme.co.il");
+  });
+});
+
+describe("buildIcsMulti", () => {
+  const evt1 = {
+    uid: "booking-aaa@teachme.co.il",
+    startUtc: new Date("2026-05-20T11:00:00.000Z"),
+    endUtc: new Date("2026-05-20T12:00:00.000Z"),
+    summary: "שיעור עם מיכל",
+    description: "1",
+    location: "אונליין",
+  };
+  const evt2 = {
+    uid: "booking-bbb@teachme.co.il",
+    startUtc: new Date("2026-05-22T15:00:00.000Z"),
+    endUtc: new Date("2026-05-22T15:45:00.000Z"),
+    summary: "שיעור עם דניאל",
+    description: "2",
+    location: "אונליין",
+  };
+
+  it("emits one VCALENDAR wrapping N VEVENT blocks", () => {
+    const ics = buildIcsMulti([evt1, evt2]);
+    // Single envelope.
+    expect(ics.match(/BEGIN:VCALENDAR/g)).toHaveLength(1);
+    expect(ics.match(/END:VCALENDAR/g)).toHaveLength(1);
+    // N VEVENTs.
+    expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(2);
+    expect(ics.match(/END:VEVENT/g)).toHaveLength(2);
+    // Both UIDs present.
+    expect(ics).toContain("UID:booking-aaa@teachme.co.il");
+    expect(ics).toContain("UID:booking-bbb@teachme.co.il");
+  });
+
+  it("empty array → valid VCALENDAR with zero VEVENTs", () => {
+    const ics = buildIcsMulti([]);
+    expect(ics).toContain("BEGIN:VCALENDAR");
+    expect(ics).toContain("END:VCALENDAR");
+    expect(ics).not.toContain("BEGIN:VEVENT");
+  });
+
+  it("buildIcs(single) and buildIcsMulti([single]) produce identical output (modulo DTSTAMP)", () => {
+    // DTSTAMP is `new Date()` at build time — separate calls produce
+    // different timestamps. Strip it for the comparison.
+    const stripStamp = (s: string) => s.replace(/DTSTAMP:[^\r]+\r\n/g, "");
+    expect(stripStamp(buildIcs(evt1))).toBe(stripStamp(buildIcsMulti([evt1])));
   });
 });

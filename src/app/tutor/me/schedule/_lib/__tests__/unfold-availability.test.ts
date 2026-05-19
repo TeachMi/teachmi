@@ -113,3 +113,143 @@ describe("unfoldAvailability — date range coverage", () => {
     expect(out.has("2026-05-23")).toBe(true);
   });
 });
+
+describe("unfoldAvailability — booked overlay (Area 1 2026-05-19)", () => {
+  // Asia/Jerusalem is UTC+03:00 standard / UTC+03:00 daylight (IDT). 2026-05
+  // is in IDT; "14:00 IL" = 11:00 UTC. Tests use UTC instants and assert IL
+  // slot placement.
+  const MON_14_IL_UTC = new Date("2026-05-18T11:00:00.000Z"); // 14:00 IL Mon
+
+  it("60-min booking covers 2 contiguous slots", () => {
+    const out = unfoldAvailability({
+      recurringRules: [],
+      exceptionRules: [],
+      bookings: [
+        { id: "b1", startsAt: MON_14_IL_UTC, durationMinutes: 60 },
+      ],
+      dateRange: { from: MON, to: MON },
+    });
+    // 14:00 = slot 12 (08:00 base, 30-min steps). 60min = 2 slots → 12, 13.
+    expect(out.get(MON)?.get(12)).toEqual({ kind: "booked", bookingId: "b1" });
+    expect(out.get(MON)?.get(13)).toEqual({ kind: "booked", bookingId: "b1" });
+    expect(out.get(MON)?.get(14)).toBeUndefined();
+  });
+
+  it("45-min booking covers 2 slots (second is partial overlap)", () => {
+    const out = unfoldAvailability({
+      recurringRules: [],
+      exceptionRules: [],
+      bookings: [
+        { id: "b1", startsAt: MON_14_IL_UTC, durationMinutes: 45 },
+      ],
+      dateRange: { from: MON, to: MON },
+    });
+    expect(out.get(MON)?.get(12)?.kind).toBe("booked");
+    expect(out.get(MON)?.get(13)?.kind).toBe("booked");
+    expect(out.get(MON)?.get(14)).toBeUndefined();
+  });
+
+  it("90-min booking covers 3 slots", () => {
+    const out = unfoldAvailability({
+      recurringRules: [],
+      exceptionRules: [],
+      bookings: [
+        { id: "b1", startsAt: MON_14_IL_UTC, durationMinutes: 90 },
+      ],
+      dateRange: { from: MON, to: MON },
+    });
+    expect(out.get(MON)?.get(12)?.kind).toBe("booked");
+    expect(out.get(MON)?.get(13)?.kind).toBe("booked");
+    expect(out.get(MON)?.get(14)?.kind).toBe("booked");
+    expect(out.get(MON)?.get(15)).toBeUndefined();
+  });
+
+  it("booked overlay wins over a recurring-available rule", () => {
+    const out = unfoldAvailability({
+      recurringRules: [
+        { weekday: 1, startTime: "14:00:00", endTime: "14:30:00" },
+      ],
+      exceptionRules: [],
+      bookings: [
+        { id: "b1", startsAt: MON_14_IL_UTC, durationMinutes: 60 },
+      ],
+      dateRange: { from: MON, to: MON },
+    });
+    expect(out.get(MON)?.get(12)).toEqual({ kind: "booked", bookingId: "b1" });
+  });
+
+  it("booked overlay wins over an exception_blocked (orphan-and-leave case)", () => {
+    // Tutor removed the rule but the existing booking persists as an orphan.
+    // The cell underneath would render as 'blocked' or 'not-available'; the
+    // booked overlay must show through regardless.
+    const out = unfoldAvailability({
+      recurringRules: [],
+      exceptionRules: [
+        {
+          kind: "exception_blocked",
+          date: MON,
+          startTime: "14:00:00",
+          endTime: "14:30:00",
+        },
+      ],
+      bookings: [
+        { id: "b1", startsAt: MON_14_IL_UTC, durationMinutes: 60 },
+      ],
+      dateRange: { from: MON, to: MON },
+    });
+    expect(out.get(MON)?.get(12)).toEqual({ kind: "booked", bookingId: "b1" });
+  });
+
+  it("omitting bookings (or empty array) produces no booked cells (Tab 1 contract)", () => {
+    const noBookingsField = unfoldAvailability({
+      recurringRules: [{ weekday: 1, startTime: "14:00:00", endTime: "14:30:00" }],
+      exceptionRules: [],
+      dateRange: { from: MON, to: MON },
+    });
+    expect(noBookingsField.get(MON)?.get(12)?.kind).toBe("available");
+
+    const emptyBookingsArr = unfoldAvailability({
+      recurringRules: [{ weekday: 1, startTime: "14:00:00", endTime: "14:30:00" }],
+      exceptionRules: [],
+      bookings: [],
+      dateRange: { from: MON, to: MON },
+    });
+    expect(emptyBookingsArr.get(MON)?.get(12)?.kind).toBe("available");
+  });
+
+  it("booking outside the rendered date range is ignored", () => {
+    const out = unfoldAvailability({
+      recurringRules: [],
+      exceptionRules: [],
+      bookings: [
+        { id: "b1", startsAt: MON_14_IL_UTC, durationMinutes: 60 },
+      ],
+      dateRange: { from: TUE, to: TUE },
+    });
+    expect(out.get(TUE)?.size ?? 0).toBe(0);
+  });
+
+  it("booking entirely outside grid window (e.g. 06:00 IL) produces no cells", () => {
+    const earlyMorning = new Date("2026-05-18T03:00:00.000Z"); // 06:00 IL Mon
+    const out = unfoldAvailability({
+      recurringRules: [],
+      exceptionRules: [],
+      bookings: [{ id: "b1", startsAt: earlyMorning, durationMinutes: 60 }],
+      dateRange: { from: MON, to: MON },
+    });
+    expect(out.get(MON)?.size ?? 0).toBe(0);
+  });
+
+  it("booking straddling the grid start clips to the grid (08:00 onwards)", () => {
+    // 07:30 IL + 60min → 07:30–08:30. Only the 08:00 slot is in-range.
+    const straddleStart = new Date("2026-05-18T04:30:00.000Z"); // 07:30 IL Mon
+    const out = unfoldAvailability({
+      recurringRules: [],
+      exceptionRules: [],
+      bookings: [{ id: "b1", startsAt: straddleStart, durationMinutes: 60 }],
+      dateRange: { from: MON, to: MON },
+    });
+    expect(out.get(MON)?.get(0)?.kind).toBe("booked"); // 08:00 slot
+    expect(out.get(MON)?.get(1)).toBeUndefined();
+  });
+});

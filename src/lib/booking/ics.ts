@@ -39,25 +39,44 @@ function formatIcsDate(d: Date): string {
 }
 
 export function buildIcs(input: IcsInput): string {
+  return buildIcsMulti([input]);
+}
+
+/**
+ * Multi-event variant. Area 1 (2026-05-19) — the dashboards' "Add all my
+ * upcoming lessons to calendar" button bundles every active booking into
+ * one .ics file with N VEVENTs. A single VCALENDAR wrapper is the right
+ * shape; importing apps (Google / Apple / Outlook) treat each VEVENT as
+ * a discrete event and create them all from one import action.
+ *
+ * Empty array → returns a valid VCALENDAR with zero VEVENTs (importable
+ * but inert). Callers should hide the button when the array is empty so
+ * users don't trigger an empty download.
+ */
+export function buildIcsMulti(inputs: IcsInput[]): string {
   const dtstamp = formatIcsDate(new Date());
-  const lines = [
+  const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//TeachMe//Booking//HE",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
-    "BEGIN:VEVENT",
-    `UID:${input.uid}`,
-    `DTSTAMP:${dtstamp}`,
-    `DTSTART:${formatIcsDate(input.startUtc)}`,
-    `DTEND:${formatIcsDate(input.endUtc)}`,
-    `SUMMARY:${escapeIcsText(input.summary)}`,
-    `DESCRIPTION:${escapeIcsText(input.description)}`,
-    `LOCATION:${escapeIcsText(input.location)}`,
-    "STATUS:CONFIRMED",
-    "END:VEVENT",
-    "END:VCALENDAR",
   ];
+  for (const input of inputs) {
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${input.uid}`,
+      `DTSTAMP:${dtstamp}`,
+      `DTSTART:${formatIcsDate(input.startUtc)}`,
+      `DTEND:${formatIcsDate(input.endUtc)}`,
+      `SUMMARY:${escapeIcsText(input.summary)}`,
+      `DESCRIPTION:${escapeIcsText(input.description)}`,
+      `LOCATION:${escapeIcsText(input.location)}`,
+      "STATUS:CONFIRMED",
+      "END:VEVENT",
+    );
+  }
+  lines.push("END:VCALENDAR");
   // RFC-5545 line-fold at 75 octets (we use chars — close enough for ASCII
   // / Hebrew UTF-8 in practice; pedantically wrong for combining chars).
   return lines.map(foldLine).join("\r\n");
