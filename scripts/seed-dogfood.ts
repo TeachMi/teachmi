@@ -79,6 +79,9 @@ async function main() {
 
   let inserted = 0;
   let updated = 0;
+  // Email → user_id. Populated as we seed users. Used by `seedSampleBookings`
+  // below to wire student ↔ tutor pairs without a second SELECT round-trip.
+  const userIdByEmail = new Map<string, string>();
   for (const account of ACCOUNTS) {
     // ON CONFLICT DO UPDATE — idempotent. Re-runs refresh the password_hash
     // + email_verified (the latter matters if a previous run somehow left
@@ -118,6 +121,7 @@ async function main() {
       updated += 1;
       console.log(`  ~ ${row.email} updated (${row.id})`);
     }
+    userIdByEmail.set(account.email, row.id);
 
     // Story 2.10: seed an approved tutor_profiles + tutor_subjects rows for
     // each tutor account so signing in lands them on /tutor/me directly
@@ -127,6 +131,13 @@ async function main() {
       await seedTutorProfile(sql, row.id, account);
     }
   }
+
+  // Story 4.3 follow-up 2026-05-19: seed sample bookings so the student
+  // dashboard + the tutor's upcoming-strip show realistic content the
+  // moment the seed completes. Without this, every fresh Neon branch has
+  // students staring at an "אין שיעורים מתוכננים" empty state until
+  // someone manually books a slot through the UI.
+  await seedSampleBookings(sql, userIdByEmail);
 
   console.log("");
   console.log(`Done. ${inserted} inserted, ${updated} updated.`);
@@ -304,6 +315,219 @@ async function seedTutorProfile(
   console.log(
     `    profile + ${subjectRows.length} subject(s)${availabilityRowsInserted > 0 ? ` + ${availabilityRowsInserted} availability rows (Sun-Thu 14:00-22:00)` : " (availability preserved)"} for ${account.email}`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Sample bookings — Story 4.3 follow-up 2026-05-19
+// ---------------------------------------------------------------------------
+//
+// Mirror what `runCreateBooking` would write if the founder clicked through
+// the booking flow manually: bookings row (status='confirmed') +
+// lesson_sessions row + payments row (mock_payment=true, status='settled').
+// Skip the audit row — this isn't a real user action.
+//
+// Each (student, tutor, startsAt) tuple is guarded by the partial UNIQUE
+// `uq_bookings_active_slot` so re-runs naturally skip. Belt-and-suspenders:
+// we also pre-check via SELECT so a re-seed doesn't log "duplicate" errors.
+
+interface SampleBookingSpec {
+  studentEmail: string;
+  tutorEmail: string;
+  /** Day-of-week (0=Sun … 6=Sat) for the lesson, in IL local time. */
+  weekday: number;
+  /** Hour of the lesson start (24h, IL local). Must be in the tutor's 14-22 window. */
+  hourIL: number;
+  durationMinutes: number;
+  /** Subject slug to attach. Must be in the tutor's offered list. */
+  subjectSlug: string;
+  priceIls: number;
+}
+
+const SAMPLE_BOOKINGS: SampleBookingSpec[] = [
+  {
+    studentEmail: "ofer-student@teachme.co.il",
+    tutorEmail: "ofer-tutor@teachme.co.il",
+    weekday: 0, // Sunday
+    hourIL: 16,
+    durationMinutes: 60,
+    subjectSlug: "mathematics",
+    priceIls: 180,
+  },
+  {
+    studentEmail: "ofer-student@teachme.co.il",
+    tutorEmail: "aviel-tutor@teachme.co.il",
+    weekday: 3, // Wednesday
+    hourIL: 18,
+    durationMinutes: 60,
+    subjectSlug: "english",
+    priceIls: 180,
+  },
+  {
+    studentEmail: "aviel-student@teachme.co.il",
+    tutorEmail: "ofer-tutor@teachme.co.il",
+    weekday: 2, // Tuesday
+    hourIL: 15,
+    durationMinutes: 60,
+    subjectSlug: "mathematics",
+    priceIls: 180,
+  },
+];
+
+/**
+ * Find the next occurrence of `(weekday, hourIL:00)` in Asia/Jerusalem,
+ * strictly in the future. Returns the UTC instant for storage.
+ *
+ * Uses Intl.DateTimeFormat to extract the current IL date components so the
+ * math handles DST automatically. Same approach as `compute-slots.ts`
+ * (in the app code), kept inline here to avoid a cross-package import from
+ * the standalone seed script.
+ */
+function nextWeekdayInIL(weekday: number, hourIL: number): Date {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jerusalem",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour12: false,
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const year = parseInt(get("year"), 10);
+  const month = parseInt(get("month"), 10);
+  const day = parseInt(get("day"), 10);
+  const weekdayMap: Record<string, number> = {
+    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+  };
+  const currentWeekday = weekdayMap[get("weekday")] ?? 0;
+
+  // Days to advance — always strictly forward (at least 1 day) so "next
+  // Sunday" from today=Sunday lands on next week, not today.
+  let advance = (weekday - currentWeekday + 7) % 7;
+  if (advance === 0) advance = 7;
+
+  // Compute "Y-M-(D+advance) hourIL:00 in Asia/Jerusalem" → UTC instant.
+  // Naive UTC then adjust by IL offset at that instant.
+  const naive = new Date(Date.UTC(year, month - 1, day + advance, hourIL, 0, 0));
+  const naiveIlHour = parseInt(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Jerusalem",
+      hour: "2-digit",
+      hour12: false,
+    }).format(naive),
+    10,
+  );
+  // The IL projection of `naive` is whatever the offset produces. Shift so
+  // that projection matches the intended `hourIL`.
+  let diffHours = naiveIlHour - hourIL;
+  if (diffHours > 12) diffHours -= 24;
+  if (diffHours < -12) diffHours += 24;
+  return new Date(naive.getTime() - diffHours * 60 * 60 * 1000);
+}
+
+async function seedSampleBookings(
+  sql: ReturnType<typeof neon<false, false>>,
+  userIdByEmail: Map<string, string>,
+): Promise<void> {
+  // Commission split mirrors `computeCommissionSplit` in booking-flow.ts:
+  // 15% platform commission, payout = priceIls − commission.
+  const COMMISSION_RATE = 0.15;
+  let createdCount = 0;
+  let skippedCount = 0;
+
+  for (const spec of SAMPLE_BOOKINGS) {
+    const studentUserId = userIdByEmail.get(spec.studentEmail);
+    const tutorUserId = userIdByEmail.get(spec.tutorEmail);
+    if (!studentUserId || !tutorUserId) {
+      console.warn(
+        `  ? skipping sample booking: ${spec.studentEmail} → ${spec.tutorEmail} (user not found)`,
+      );
+      continue;
+    }
+
+    const startsAt = nextWeekdayInIL(spec.weekday, spec.hourIL);
+
+    // Idempotency: if an active booking already exists for this
+    // (tutor, startsAt) tuple AND the same student, skip. The partial
+    // UNIQUE would catch it at INSERT time, but pre-checking avoids
+    // duplicate-key log noise.
+    const existing = (await sql`
+      SELECT id FROM bookings
+      WHERE tutor_user_id = ${tutorUserId}
+        AND student_user_id = ${studentUserId}
+        AND starts_at = ${startsAt.toISOString()}
+        AND status IN ('pending_payment', 'confirmed')
+      LIMIT 1
+    `) as Array<{ id: string }>;
+    if (existing.length > 0) {
+      skippedCount++;
+      continue;
+    }
+
+    // Resolve subject_id from the slug.
+    const subjectRows = (await sql`
+      SELECT id FROM subjects WHERE slug = ${spec.subjectSlug} LIMIT 1
+    `) as Array<{ id: string }>;
+    const subjectId = subjectRows[0]?.id ?? null;
+
+    const platformCommissionIls = Math.round(spec.priceIls * COMMISSION_RATE);
+    const tutorPayoutIls = spec.priceIls - platformCommissionIls;
+
+    // INSERT bookings row.
+    const bookingRows = (await sql`
+      INSERT INTO bookings (
+        student_user_id, payer_user_id, tutor_user_id, subject_id,
+        starts_at, duration_minutes, status,
+        price_ils, platform_commission_ils, tutor_payout_ils,
+        created_by_kind, created_by_actor
+      )
+      VALUES (
+        ${studentUserId}, ${studentUserId}, ${tutorUserId}, ${subjectId},
+        ${startsAt.toISOString()}, ${spec.durationMinutes}, ${"confirmed"},
+        ${spec.priceIls}, ${platformCommissionIls}, ${tutorPayoutIls},
+        ${"system"}, ${"dogfood-seed"}
+      )
+      RETURNING id
+    `) as Array<{ id: string }>;
+    const bookingId = bookingRows[0]?.id;
+    if (!bookingId) continue;
+
+    // INSERT lesson_sessions row (1:1 with booking, stub provider).
+    await sql`
+      INSERT INTO lesson_sessions (
+        booking_id, room_provider, status,
+        created_by_kind, created_by_actor
+      )
+      VALUES (
+        ${bookingId}, ${"stub"}, ${"scheduled"},
+        ${"system"}, ${"dogfood-seed"}
+      )
+    `;
+
+    // INSERT payments row (mock_payment=true, status='settled').
+    await sql`
+      INSERT INTO payments (
+        booking_id, payme_transaction_id, amount_ils,
+        platform_commission_ils, tutor_payout_ils,
+        status, settled_at, mock_payment,
+        created_by_kind, created_by_actor
+      )
+      VALUES (
+        ${bookingId}, ${null}, ${spec.priceIls},
+        ${platformCommissionIls}, ${tutorPayoutIls},
+        ${"settled"}, now(), ${true},
+        ${"system"}, ${"dogfood-seed"}
+      )
+    `;
+
+    createdCount++;
+  }
+
+  if (createdCount > 0 || skippedCount > 0) {
+    console.log(
+      `\n  Sample bookings: ${createdCount} created, ${skippedCount} preserved (already existed)`,
+    );
+  }
 }
 
 main().catch((err) => {
