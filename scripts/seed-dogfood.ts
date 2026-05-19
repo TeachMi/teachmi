@@ -133,18 +133,47 @@ async function main() {
   console.log(`Sign in at: /signin with any of the above emails + password "${DOGFOOD_PASSWORD}"`);
 }
 
-// Hebrew bios are deliberately distinct per tutor so the dogfood marketplace
-// shows two recognizable cards instead of a duplicate pair.
-const TUTOR_PROFILE_OVERRIDES: Record<string, { bio: string; subjectSlugs: string[] }> = {
+// Hebrew profile content per tutor — Story 2.11 (2026-05-18) rewrote the
+// fields from a single `bio` into tagline + short_bio + long_bio + highlights
+// + recommendation. The seeded content here drives the closed-beta dogfood
+// marketplace so the discoverableTutorWhere() predicate (which requires
+// tagline/short_bio/long_bio to be non-empty) doesn't quietly hide the
+// seeded tutors.
+interface TutorProfileOverride {
+  tagline: string;
+  shortBio: string;
+  longBio: string;
+  highlights: string[];
+  recommendationVisible: boolean;
+  recommendationHeadline: string | null;
+  recommendationSub: string | null;
+  subjectSlugs: string[];
+}
+
+const TUTOR_PROFILE_OVERRIDES: Record<string, TutorProfileOverride> = {
   "ofer-tutor@teachme.co.il": {
-    bio:
-      "מורה למתמטיקה ומדעי המחשב עם 8 שנות ניסיון, מתכניות הכשרה במכון וייצמן ועד הכנה לבגרות. גישה ידידותית, סבלנית, ויעילה — מתאים לתלמידי תיכון ומכינות.",
+    tagline: "מורה למתמטיקה ומדעי המחשב",
+    shortBio:
+      "מורה למתמטיקה עם 8 שנות ניסיון. מומחה בהכנה לבגרות 5 יחידות ולפסיכומטרי.",
+    longBio:
+      "שלום, אני עפר. מלמד מתמטיקה ומדעי המחשב כבר 8 שנים — מבית הספר התיכון ועד הכנה לפסיכומטרי. אני מאמין שמתמטיקה היא שפה שכל אחד יכול ללמוד, וההצלחה תלויה בעיקר בשיטה הנכונה ובקצב שמתאים לתלמיד.\n\nבשיעורים אצלי תקבלו: גישה אישית, חומרי לימוד מקוריים, ומעקב שבועי אחרי ההתקדמות. 87% מהתלמידים שלי השנה השיגו 90+ בבגרות 5 יח״ל.",
+    highlights: ["accessible", "patient", "results-driven", "experienced"],
+    recommendationVisible: true,
+    recommendationHeadline: "מומלץ במיוחד להכנה לבגרות 5 יח״ל",
+    recommendationSub: "מדורג גבוה במיוחד על-ידי תלמידי תיכון",
     subjectSlugs: ["mathematics", "psychometric"],
   },
   "aviel-tutor@teachme.co.il": {
-    bio:
-      "מורה לאנגלית וללשון עברית עם תואר שני בבלשנות. מלמדת לבגרות ב-5 יחידות כבר 6 שנים, אוהבת לעבוד עם תלמידים שמתקשים בכתיבה — שיטה ברורה, ללא לחץ.",
-    subjectSlugs: ["english", "lashon"],
+    tagline: "מורה לאנגלית וללשון עברית",
+    shortBio:
+      "מורה לאנגלית וללשון עברית, תואר שני בבלשנות, 6 שנות ניסיון בהכנה לבגרות.",
+    longBio:
+      "שלום, אני אביאל. מלמד אנגלית ולשון כבר 6 שנים, רוב הזמן עם תלמידי תיכון שמתכוננים לבגרות ב-5 יחידות. תואר שני בבלשנות מאוניברסיטת תל אביב.\n\nאני אוהב לעבוד עם תלמידים שמתקשים בכתיבה — שיטה ברורה, ללא לחץ, ועם המון תרגול אישי שמותאם לרמה. תלמידים שעובדים איתי לאורך זמן עולים בממוצע 15 נקודות בציון הבגרות.",
+    highlights: ["supportive", "creative", "patient", "dynamic"],
+    recommendationVisible: false,
+    recommendationHeadline: null,
+    recommendationSub: null,
+    subjectSlugs: ["english", "hebrew-lashon"],
   },
 };
 
@@ -163,17 +192,22 @@ async function seedTutorProfile(
   // UPSERT the profile row. Both seeded tutors (עפר המורה, אביאל המורה) have
   // masculine Hebrew names, so default to gender='male' — Hebrew grammar
   // requires gender agreement on copy like "מורה מאומת" / "מורה מאומתת"
-  // (Story 2.10 follow-up).
+  // (Story 2.10 follow-up). `bio` is still written as a safety mirror of
+  // `long_bio` for the one-deploy transition window (Story 2.11).
   await sql`
     INSERT INTO tutor_profiles (
-      user_id, display_name, gender, bio, city,
+      user_id, display_name, gender, bio,
+      tagline, short_bio, long_bio, highlights,
+      recommendation_visible, recommendation_headline, recommendation_sub,
       hourly_price_ils, lesson_45_price_ils, lesson_length_minutes,
       vetting_status, is_active,
       intro_video_r2_key, profile_photo_r2_key,
       created_by_kind, created_by_actor
     )
     VALUES (
-      ${userId}, ${account.name}, ${"male"}, ${override.bio}, ${"תל אביב"},
+      ${userId}, ${account.name}, ${"male"}, ${override.longBio},
+      ${override.tagline}, ${override.shortBio}, ${override.longBio}, ${override.highlights},
+      ${override.recommendationVisible}, ${override.recommendationHeadline}, ${override.recommendationSub},
       ${180}, ${140}, ${60},
       ${"approved"}, ${true},
       ${null}, ${null},
@@ -186,7 +220,13 @@ async function seedTutorProfile(
       display_name = EXCLUDED.display_name,
       gender = EXCLUDED.gender,
       bio = EXCLUDED.bio,
-      city = EXCLUDED.city,
+      tagline = EXCLUDED.tagline,
+      short_bio = EXCLUDED.short_bio,
+      long_bio = EXCLUDED.long_bio,
+      highlights = EXCLUDED.highlights,
+      recommendation_visible = EXCLUDED.recommendation_visible,
+      recommendation_headline = EXCLUDED.recommendation_headline,
+      recommendation_sub = EXCLUDED.recommendation_sub,
       hourly_price_ils = EXCLUDED.hourly_price_ils,
       lesson_45_price_ils = EXCLUDED.lesson_45_price_ils,
       intro_video_r2_key = EXCLUDED.intro_video_r2_key,

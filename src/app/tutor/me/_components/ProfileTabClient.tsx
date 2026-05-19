@@ -7,15 +7,13 @@ import type { TutorGender } from "../../onboarding/profile/profile-form-schema";
 import { editProfileAction } from "../_lib/actions";
 import { ProfileView } from "./ProfileView";
 
-// Story 2.10 amendment 2026-05-16: the Profile tab now renders a READ-ONLY
-// view by default. The tutor explicitly toggles into edit mode via the
-// "ערוך פרופיל" button. While viewing, nothing is editable — no save button
-// in the layout, no input fields. Save only exists in edit mode (the
-// ProfileForm's own "שמרו" CTA).
+// Story 2.10 amendment 2026-05-16: the Profile tab renders a READ-ONLY view
+// by default. The tutor explicitly toggles into edit mode via the
+// "ערוך פרופיל" button.
 //
-// On successful save, `editProfileAction` redirects to /tutor/me which
-// reloads this client component fresh — `isEditing` defaults back to false
-// and the view re-renders with the updated values pulled from the DB.
+// Story 2.11 (2026-05-18): updated FormInitialValues to mirror the new field
+// set (tagline / shortBio / longBio / highlights / recommendation*).
+// Dropped `bio` + `city`.
 
 interface SubjectChoice {
   slug: string;
@@ -25,10 +23,15 @@ interface SubjectChoice {
 interface FormInitialValues {
   displayName: string;
   gender: TutorGender;
-  bio: string;
+  tagline: string;
+  shortBio: string;
+  longBio: string;
+  highlights: string[];
+  recommendationVisible: boolean;
+  recommendationHeadline: string;
+  recommendationSub: string;
   subjects: string[];
   prices: Record<45 | 60 | 75 | 90, number | null>;
-  city: string;
   photoR2Key: string | null;
   introVideoR2Key: string | null;
 }
@@ -65,9 +68,7 @@ export function ProfileTabClient({
     );
   }
 
-  // Translate subject SLUGS back to Hebrew display names for the read-only
-  // view. The lookup is O(n*m) but n=11 (launch subjects) and m≤11 so it's
-  // trivial.
+  // Translate subject SLUGS back to Hebrew display names for the read-only view.
   const subjectsHe = initialValues.subjects
     .map((slug) => availableSubjects.find((s) => s.slug === slug)?.displayNameHe)
     .filter((label): label is string => typeof label === "string");
@@ -76,8 +77,13 @@ export function ProfileTabClient({
     <div className="space-y-5">
       <ProfileView
         displayName={initialValues.displayName}
-        bio={initialValues.bio}
-        city={initialValues.city}
+        tagline={initialValues.tagline}
+        shortBio={initialValues.shortBio}
+        longBio={initialValues.longBio}
+        highlights={initialValues.highlights}
+        recommendationVisible={initialValues.recommendationVisible}
+        recommendationHeadline={initialValues.recommendationHeadline}
+        recommendationSub={initialValues.recommendationSub}
         subjectsHe={subjectsHe}
         prices={initialValues.prices}
         photoUrl={initialPreviews.photoUrl}

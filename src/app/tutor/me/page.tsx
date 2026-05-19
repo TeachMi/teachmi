@@ -75,7 +75,13 @@ export default async function TutorMeProfilePage() {
   const initialValues = {
     displayName: profile.displayName,
     gender: profile.gender,
-    bio: profile.bio ?? "",
+    tagline: profile.tagline ?? "",
+    shortBio: profile.shortBio ?? "",
+    longBio: profile.longBio ?? "",
+    highlights: profile.highlights ?? [],
+    recommendationHeadline: profile.recommendationHeadline ?? "",
+    recommendationSub: profile.recommendationSub ?? "",
+    recommendationVisible: profile.recommendationVisible,
     subjects: currentSubjectSlugs,
     prices: {
       45: profile.lesson45PriceIls,
@@ -83,7 +89,6 @@ export default async function TutorMeProfilePage() {
       75: profile.lesson75PriceIls,
       90: profile.lesson90PriceIls,
     },
-    city: profile.city ?? "",
     photoR2Key: profile.profilePhotoR2Key,
     introVideoR2Key: profile.introVideoR2Key,
   };

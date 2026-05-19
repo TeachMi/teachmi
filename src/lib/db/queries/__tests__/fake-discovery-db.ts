@@ -19,8 +19,13 @@ export interface FakeTutorRow {
   userId: string;
   displayName: string;
   gender: "male" | "female";
-  bio: string | null;
-  city: string | null;
+  tagline: string | null;
+  shortBio: string | null;
+  longBio: string | null;
+  highlights: string[] | null;
+  recommendationHeadline: string | null;
+  recommendationSub: string | null;
+  recommendationVisible: boolean;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
   hourlyPriceIls: number | null;
@@ -41,8 +46,13 @@ const PUBLIC_KEYS: Array<keyof DiscoverableTutorPublic> = [
   "userId",
   "displayName",
   "gender",
-  "bio",
-  "city",
+  "tagline",
+  "shortBio",
+  "longBio",
+  "highlights",
+  "recommendationHeadline",
+  "recommendationSub",
+  "recommendationVisible",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
@@ -165,8 +175,13 @@ const OWNER_KEYS: Array<keyof TutorProfileForOwner> = [
   "userId",
   "displayName",
   "gender",
-  "bio",
-  "city",
+  "tagline",
+  "shortBio",
+  "longBio",
+  "highlights",
+  "recommendationHeadline",
+  "recommendationSub",
+  "recommendationVisible",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
@@ -191,8 +206,13 @@ export function buildFakeRow(overrides: Partial<FakeTutorRow> = {}): FakeTutorRo
     userId: "00000000-0000-0000-0000-000000000001",
     displayName: "ד״ר מיכל לוי",
     gender: "female",
-    bio: "מורה למתמטיקה עם 8 שנות ניסיון.",
-    city: "תל אביב",
+    tagline: "מורה למתמטיקה",
+    shortBio: "מורה פרטי מנוסה במתמטיקה עם 8 שנות ניסיון.",
+    longBio: "מלמדת מתמטיקה כבר 8 שנים, מבית ספר התיכון ועד הכנה לפסיכומטרי. גישה אישית, חומרי לימוד מקוריים, ומעקב שבועי.",
+    highlights: null,
+    recommendationHeadline: null,
+    recommendationSub: null,
+    recommendationVisible: false,
     introVideoR2Key: "intros/00000000-0000-0000-0000-000000000001/abc.mp4",
     profilePhotoR2Key: "photos/00000000-0000-0000-0000-000000000001/abc.jpg",
     hourlyPriceIls: 180,

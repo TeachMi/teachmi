@@ -186,8 +186,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     return { title: "TeachMe" };
   }
 
-  const description = tutor.bio
-    ? stripBidiOverrides(truncateForDescription(tutor.bio))
+  // OG description prefers the short bio (1-2 sentence summary). Falls back
+  // to a generic line so closed-beta tutors who haven't filled the form yet
+  // still get sharable metadata.
+  const description = tutor.shortBio
+    ? stripBidiOverrides(truncateForDescription(tutor.shortBio))
     : `${tutor.displayName} — מורה ב-TeachMe`;
   // OG image is served via a stable proxy route that re-signs the R2 URL
   // per request. Social-media scrapers (Slack/FB/Twitter) cache the
@@ -270,6 +273,12 @@ export default async function PublicTutorProfilePage({
   });
 
   const isSignedIn = !!session?.user?.id;
+  // Story 4.3 (PM round 2026-05-18): tutors viewing their own public
+  // profile see an "owner" sidebar with a back-link to /tutor/me, no
+  // CTA. The server's `runCreateBooking` enforces the same guard, so a
+  // tampered request still 404-ish bounces back.
+  const viewerIsOwner =
+    session?.user?.id !== undefined && session.user.id === tutor.userId;
 
   const prices = {
     45: tutor.lesson45PriceIls,
@@ -300,10 +309,22 @@ export default async function PublicTutorProfilePage({
             <Hero
               tutor={{
                 ...tutor,
-                bio: tutor.bio ? stripBidiOverrides(tutor.bio) : tutor.bio,
+                // Strip Unicode bidi-override control codes from EVERY tutor-
+                // authored text field rendered on the public profile. The
+                // codes are invisible but reflow surrounding RTL UI; only
+                // the page (which loads the raw row) is positioned to clean
+                // them before the Hero / About / chip renderers consume them.
+                tagline: tutor.tagline
+                  ? stripBidiOverrides(tutor.tagline)
+                  : tutor.tagline,
+                shortBio: tutor.shortBio
+                  ? stripBidiOverrides(tutor.shortBio)
+                  : tutor.shortBio,
+                longBio: tutor.longBio
+                  ? stripBidiOverrides(tutor.longBio)
+                  : tutor.longBio,
               }}
               subjects={subjects}
-              rating={rating}
               introVideoUrl={introVideoUrl}
               profilePhotoUrl={profilePhotoUrl}
             />
@@ -330,6 +351,7 @@ export default async function PublicTutorProfilePage({
               weekStartUtc={weekStart}
               isSignedIn={isSignedIn}
               hasAnyAvailability={hasAnyAvailability}
+              viewerIsOwner={viewerIsOwner}
               initialDuration={selectedDuration}
             />
           </div>

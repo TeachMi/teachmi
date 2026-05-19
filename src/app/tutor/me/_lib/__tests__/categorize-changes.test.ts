@@ -4,10 +4,15 @@ import { categorizeChanges, type ProfileValues } from "../categorize-changes";
 const BASE: ProfileValues = {
   displayName: "ד״ר מיכל לוי",
   gender: "female",
+  tagline: "מורה למתמטיקה",
+  shortBio: "מורה פרטי מנוסה במתמטיקה עם 8 שנות ניסיון.",
+  longBio: "מלמדת מתמטיקה כבר 8 שנים, מבית ספר התיכון ועד הכנה לפסיכומטרי. גישה אישית, חומרי לימוד מקוריים, ומעקב שבועי.",
+  highlights: [],
+  recommendationHeadline: "",
+  recommendationSub: "",
+  recommendationVisible: false,
   lesson75PriceIls: null,
   lesson90PriceIls: null,
-  bio: "מורה למתמטיקה עם 8 שנות ניסיון.",
-  city: "תל אביב",
   profilePhotoR2Key: "photos/00000000-0000-0000-0000-000000000001/abc.jpg",
   introVideoR2Key: "intros/00000000-0000-0000-0000-000000000001/abc.mp4",
   hourlyPriceIls: 180,
@@ -16,10 +21,13 @@ const BASE: ProfileValues = {
 };
 
 describe("categorizeChanges — non-trigger only", () => {
-  it("bio change only → nonTrigger=[bio]", () => {
-    const out = categorizeChanges(BASE, { ...BASE, bio: "ביוגרפיה חדשה לגמרי, עם פרטים נוספים על הניסיון." });
+  it("long_bio change only → nonTrigger=[long_bio]", () => {
+    const out = categorizeChanges(BASE, {
+      ...BASE,
+      longBio: "ביוגרפיה חדשה לגמרי, עם פרטים נוספים על הניסיון ועל גישת ההוראה.",
+    });
     expect(out.triggerChanges).toEqual([]);
-    expect(out.nonTriggerChanges).toEqual(["bio"]);
+    expect(out.nonTriggerChanges).toEqual(["long_bio"]);
     expect(out.hasAnyChange).toBe(true);
   });
 
@@ -36,10 +44,10 @@ describe("categorizeChanges — non-trigger only", () => {
     expect(out.hasAnyChange).toBe(true);
   });
 
-  it("city change only → nonTrigger=[city]", () => {
-    const out = categorizeChanges(BASE, { ...BASE, city: "ירושלים" });
+  it("tagline change only → nonTrigger=[tagline]", () => {
+    const out = categorizeChanges(BASE, { ...BASE, tagline: "מורה למתמטיקה ופיזיקה" });
     expect(out.triggerChanges).toEqual([]);
-    expect(out.nonTriggerChanges).toEqual(["city"]);
+    expect(out.nonTriggerChanges).toEqual(["tagline"]);
   });
 
   it("profile photo replacement only → nonTrigger=[profile_photo]", () => {
@@ -103,16 +111,16 @@ describe("categorizeChanges — mixed + idempotency edge cases", () => {
   it("mixed trigger + non-trigger → both categorized", () => {
     const out = categorizeChanges(BASE, {
       ...BASE,
-      bio: "ביוגרפיה חדשה לגמרי עם תוכן רב יותר",
+      longBio: "ביוגרפיה חדשה לגמרי עם תוכן רב יותר ופירוט על שיטת ההוראה.",
       hourlyPriceIls: 200,
     });
     expect(out.triggerChanges).toEqual(["hourly_price"]);
-    expect(out.nonTriggerChanges).toEqual(["bio"]);
+    expect(out.nonTriggerChanges).toEqual(["long_bio"]);
     expect(out.hasAnyChange).toBe(true);
   });
 
-  it("bio whitespace-only change → no change", () => {
-    const out = categorizeChanges(BASE, { ...BASE, bio: `  ${BASE.bio}  ` });
+  it("long_bio whitespace-only change → no change", () => {
+    const out = categorizeChanges(BASE, { ...BASE, longBio: `  ${BASE.longBio}  ` });
     expect(out.triggerChanges).toEqual([]);
     expect(out.nonTriggerChanges).toEqual([]);
     expect(out.hasAnyChange).toBe(false);
@@ -120,8 +128,8 @@ describe("categorizeChanges — mixed + idempotency edge cases", () => {
 
   it("empty string treated equal to null for text fields", () => {
     const out = categorizeChanges(
-      { ...BASE, city: "" },
-      { ...BASE, city: "" },
+      { ...BASE, tagline: "" },
+      { ...BASE, tagline: "" },
     );
     expect(out.hasAnyChange).toBe(false);
   });

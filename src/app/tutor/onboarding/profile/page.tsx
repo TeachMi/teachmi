@@ -20,10 +20,17 @@ type SubjectRow = { id: string; slug: string; displayNameHe: string };
 interface DraftSnapshot {
   displayName?: string;
   gender?: TutorGender;
+  /** Deprecated single-text field. Kept for transitional reads from older drafts. */
   bio?: string;
+  tagline?: string;
+  shortBio?: string;
+  longBio?: string;
+  highlights?: string[];
+  recommendationHeadline?: string;
+  recommendationSub?: string;
+  recommendationVisible?: boolean;
   subjects?: string[];
   prices?: Partial<Record<45 | 60 | 75 | 90, number | null>>;
-  city?: string;
   photoR2Key?: string;
   introVideoR2Key?: string;
 }
@@ -40,8 +47,16 @@ async function tryReadInitialState(userId: string) {
         .select({
           displayName: tutorProfiles.displayName,
           gender: tutorProfiles.gender,
+          // `bio` is deprecated but kept as a fallback source for shortBio/longBio
+          // when only the legacy field is present in the wizard draft / older row.
           bio: tutorProfiles.bio,
-          city: tutorProfiles.city,
+          tagline: tutorProfiles.tagline,
+          shortBio: tutorProfiles.shortBio,
+          longBio: tutorProfiles.longBio,
+          highlights: tutorProfiles.highlights,
+          recommendationHeadline: tutorProfiles.recommendationHeadline,
+          recommendationSub: tutorProfiles.recommendationSub,
+          recommendationVisible: tutorProfiles.recommendationVisible,
           introVideoR2Key: tutorProfiles.introVideoR2Key,
           profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
           hourlyPriceIls: tutorProfiles.hourlyPriceIls,
@@ -84,10 +99,21 @@ export default async function TutorOnboardingProfilePage() {
   // gender is the DB-side authoritative source once submitted.
   const profileGender = (profile?.gender as TutorGender | undefined) ?? null;
   const draftPrices = draft.prices ?? {};
+  // Deprecated `bio` is the last-resort fallback for shortBio / longBio when an
+  // older wizard draft or DB row only has the legacy field populated.
+  const legacyBio = draft.bio ?? profile?.bio ?? "";
   const initialValues = {
     displayName: draft.displayName ?? profile?.displayName ?? user.name ?? "",
     gender: draft.gender ?? profileGender ?? null,
-    bio: draft.bio ?? profile?.bio ?? "",
+    tagline: draft.tagline ?? profile?.tagline ?? "",
+    shortBio: draft.shortBio ?? profile?.shortBio ?? legacyBio,
+    longBio: draft.longBio ?? profile?.longBio ?? legacyBio,
+    highlights: draft.highlights ?? profile?.highlights ?? [],
+    recommendationVisible:
+      draft.recommendationVisible ?? profile?.recommendationVisible ?? false,
+    recommendationHeadline:
+      draft.recommendationHeadline ?? profile?.recommendationHeadline ?? "",
+    recommendationSub: draft.recommendationSub ?? profile?.recommendationSub ?? "",
     subjects: draft.subjects ?? [],
     prices: {
       45: draftPrices[45] ?? profile?.lesson45PriceIls ?? null,
@@ -95,7 +121,6 @@ export default async function TutorOnboardingProfilePage() {
       75: draftPrices[75] ?? profile?.lesson75PriceIls ?? null,
       90: draftPrices[90] ?? profile?.lesson90PriceIls ?? null,
     },
-    city: draft.city ?? profile?.city ?? "",
     photoR2Key: draft.photoR2Key ?? profile?.profilePhotoR2Key ?? null,
     introVideoR2Key: draft.introVideoR2Key ?? profile?.introVideoR2Key ?? null,
   };
@@ -144,10 +169,21 @@ function readDraftFromWizard(data: unknown): DraftSnapshot {
   return {
     displayName: stringField(record.displayName),
     gender: rawGender !== undefined && isTutorGender(rawGender) ? rawGender : undefined,
+    // Older drafts may still carry `bio`; we read it as a fallback source for
+    // the new shortBio/longBio fields above.
     bio: stringField(record.bio),
+    tagline: stringField(record.tagline),
+    shortBio: stringField(record.shortBio),
+    longBio: stringField(record.longBio),
+    highlights: stringArrayField(record.highlights),
+    recommendationHeadline: stringField(record.recommendationHeadline),
+    recommendationSub: stringField(record.recommendationSub),
+    recommendationVisible:
+      typeof record.recommendationVisible === "boolean"
+        ? record.recommendationVisible
+        : undefined,
     subjects: stringArrayField(record.subjects),
     prices: readDraftPrices(record.prices),
-    city: stringField(record.city),
     photoR2Key: stringField(record.photoR2Key),
     introVideoR2Key: stringField(record.introVideoR2Key),
   };

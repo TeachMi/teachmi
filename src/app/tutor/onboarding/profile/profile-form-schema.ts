@@ -7,11 +7,30 @@
  * inconsistent with 1.13/1.14.
  */
 
+import {
+  type HighlightSlug,
+  sanitizeHighlights,
+} from "@/lib/highlights";
+
 export const PROFILE_FORM_LIMITS = {
   PRICE_MIN_ILS: 1,
   PRICE_MAX_ILS: 10_000,
+  /**
+   * `bio` is the deprecated single-text field. `BIO_MIN_CHARS` /
+   * `BIO_MAX_CHARS` are kept exported so existing imports compile during
+   * the Story 2.11 transition; new code should reference
+   * `LONG_BIO_MIN_CHARS` / `LONG_BIO_MAX_CHARS` instead.
+   */
   BIO_MIN_CHARS: 50,
   BIO_MAX_CHARS: 1000,
+  TAGLINE_MIN_CHARS: 4,
+  TAGLINE_MAX_CHARS: 60,
+  SHORT_BIO_MIN_CHARS: 30,
+  SHORT_BIO_MAX_CHARS: 220,
+  LONG_BIO_MIN_CHARS: 50,
+  LONG_BIO_MAX_CHARS: 1000,
+  RECOMMENDATION_HEADLINE_MAX_CHARS: 80,
+  RECOMMENDATION_SUB_MAX_CHARS: 100,
   DISPLAY_NAME_MIN_CHARS: 2,
   DISPLAY_NAME_MAX_CHARS: 200,
   SUBJECTS_MIN: 1,
@@ -101,11 +120,19 @@ export type LessonLengthMinutes = (typeof LESSON_LENGTH_MINUTES)[number];
 export interface ProfileDraftInput {
   displayName?: string;
   gender?: string;
+  /** DEPRECATED — kept as a draft-side passthrough during Story 2.11 transition. */
   bio?: string;
+  tagline?: string;
+  shortBio?: string;
+  longBio?: string;
+  /** Slug array from `src/lib/highlights.ts`. Cap of 4 enforced at parse. */
+  highlights?: string[];
+  recommendationVisible?: boolean;
+  recommendationHeadline?: string;
+  recommendationSub?: string;
   subjects?: string[];
   /** Per-length price in whole shekels. `null` = length not offered. */
   prices?: Partial<Record<LessonLengthMinutes, number | null>>;
-  city?: string;
   photoR2Key?: string;
   introVideoR2Key?: string;
 }
@@ -113,19 +140,35 @@ export interface ProfileDraftInput {
 export interface ProfileSubmitInput {
   displayName: string;
   gender: TutorGender;
-  bio: string;
+  tagline: string;
+  shortBio: string;
+  longBio: string;
+  highlights: import("@/lib/highlights").HighlightSlug[];
+  /** Always tracked; when `false`, headline/sub may be empty strings. */
+  recommendationVisible: boolean;
+  /** Required (non-empty) only when `recommendationVisible` is true. */
+  recommendationHeadline: string;
+  recommendationSub: string;
   subjects: string[];
   /** Per-length price in whole shekels. `null` = length not offered. */
   prices: Record<LessonLengthMinutes, number | null>;
-  city: string | null;
-  photoR2Key: string | null;
-  introVideoR2Key: string;
+  /** Photo is required at submit. */
+  photoR2Key: string;
+  /** Intro video stays OPTIONAL per founder direction. */
+  introVideoR2Key: string | null;
 }
 
 export type ProfileFieldErrors = Partial<{
   displayName: string;
   gender: string;
+  /** Legacy field — retained for API compatibility during Story 2.11. */
   bio: string;
+  tagline: string;
+  shortBio: string;
+  longBio: string;
+  highlights: string;
+  recommendationHeadline: string;
+  recommendationSub: string;
   subjects: string;
   /** Field-level error for a specific lesson length, keyed by minutes. */
   price45Ils: string;
@@ -135,7 +178,6 @@ export type ProfileFieldErrors = Partial<{
   /** Cross-cutting "at least one length" error. */
   prices: string;
   introVideoR2Key: string;
-  city: string;
   photoR2Key: string;
 }>;
 
@@ -163,11 +205,68 @@ export function parseSubmitInput(raw: ProfileDraftInput): ProfileSubmitParseResu
     gender = genderRaw;
   }
 
-  const bio = (raw.bio ?? "").trim();
-  if (bio.length < PROFILE_FORM_LIMITS.BIO_MIN_CHARS) {
-    fieldErrors.bio = `ביוגרפיה חייבת להכיל לפחות ${PROFILE_FORM_LIMITS.BIO_MIN_CHARS} תווים.`;
-  } else if (bio.length > PROFILE_FORM_LIMITS.BIO_MAX_CHARS) {
-    fieldErrors.bio = `ביוגרפיה לא יכולה לעלות על ${PROFILE_FORM_LIMITS.BIO_MAX_CHARS} תווים.`;
+  // Story 2.11 — tagline / short_bio / long_bio all required.
+  const tagline = (raw.tagline ?? "").trim();
+  if (tagline.length < PROFILE_FORM_LIMITS.TAGLINE_MIN_CHARS) {
+    fieldErrors.tagline = `הכותרת קצרה מדי (לפחות ${PROFILE_FORM_LIMITS.TAGLINE_MIN_CHARS} תווים).`;
+  } else if (tagline.length > PROFILE_FORM_LIMITS.TAGLINE_MAX_CHARS) {
+    fieldErrors.tagline = `הכותרת ארוכה מדי (עד ${PROFILE_FORM_LIMITS.TAGLINE_MAX_CHARS} תווים).`;
+  }
+
+  const shortBio = (raw.shortBio ?? "").trim();
+  if (shortBio.length < PROFILE_FORM_LIMITS.SHORT_BIO_MIN_CHARS) {
+    fieldErrors.shortBio = `התיאור הקצר חייב להכיל לפחות ${PROFILE_FORM_LIMITS.SHORT_BIO_MIN_CHARS} תווים.`;
+  } else if (shortBio.length > PROFILE_FORM_LIMITS.SHORT_BIO_MAX_CHARS) {
+    fieldErrors.shortBio = `התיאור הקצר לא יכול לעלות על ${PROFILE_FORM_LIMITS.SHORT_BIO_MAX_CHARS} תווים.`;
+  }
+
+  const longBio = (raw.longBio ?? "").trim();
+  if (longBio.length < PROFILE_FORM_LIMITS.LONG_BIO_MIN_CHARS) {
+    fieldErrors.longBio = `אודות חייב להכיל לפחות ${PROFILE_FORM_LIMITS.LONG_BIO_MIN_CHARS} תווים.`;
+  } else if (longBio.length > PROFILE_FORM_LIMITS.LONG_BIO_MAX_CHARS) {
+    fieldErrors.longBio = `אודות לא יכול לעלות על ${PROFILE_FORM_LIMITS.LONG_BIO_MAX_CHARS} תווים.`;
+  }
+
+  // Highlights — OPTIONAL chip group, capped at 4. Tampered values silently
+  // drop via `sanitizeHighlights`. Skip-empty is fine (no error).
+  const highlights = sanitizeHighlights(raw.highlights);
+
+  // Recommendation card — toggle plus 2 conditional fields. When toggle is
+  // ON, both fields must be non-empty (within their caps). When OFF, the
+  // copy may be stored as-is (we keep it so re-enabling doesn't lose work).
+  const recommendationVisible = !!raw.recommendationVisible;
+  const recommendationHeadline = (raw.recommendationHeadline ?? "").trim();
+  const recommendationSub = (raw.recommendationSub ?? "").trim();
+  if (recommendationVisible) {
+    if (recommendationHeadline.length === 0) {
+      fieldErrors.recommendationHeadline = "כותרת ההמלצה חובה כשהקופסה מוצגת.";
+    } else if (
+      recommendationHeadline.length > PROFILE_FORM_LIMITS.RECOMMENDATION_HEADLINE_MAX_CHARS
+    ) {
+      fieldErrors.recommendationHeadline = `הכותרת ארוכה מדי (עד ${PROFILE_FORM_LIMITS.RECOMMENDATION_HEADLINE_MAX_CHARS} תווים).`;
+    }
+    if (recommendationSub.length === 0) {
+      fieldErrors.recommendationSub = "תיאור משלים חובה כשהקופסה מוצגת.";
+    } else if (
+      recommendationSub.length > PROFILE_FORM_LIMITS.RECOMMENDATION_SUB_MAX_CHARS
+    ) {
+      fieldErrors.recommendationSub = `התיאור ארוך מדי (עד ${PROFILE_FORM_LIMITS.RECOMMENDATION_SUB_MAX_CHARS} תווים).`;
+    }
+  } else {
+    // When hidden, still cap stored copy so a tampered field can't blow
+    // past the column-sized limits we'll add in a future migration.
+    if (
+      recommendationHeadline.length >
+      PROFILE_FORM_LIMITS.RECOMMENDATION_HEADLINE_MAX_CHARS
+    ) {
+      fieldErrors.recommendationHeadline = `הכותרת ארוכה מדי.`;
+    }
+    if (
+      recommendationSub.length >
+      PROFILE_FORM_LIMITS.RECOMMENDATION_SUB_MAX_CHARS
+    ) {
+      fieldErrors.recommendationSub = `התיאור ארוך מדי.`;
+    }
   }
 
   // Code-review patch (2026-05-12, patch #10): dedupe slugs before the
@@ -219,21 +318,23 @@ export function parseSubmitInput(raw: ProfileDraftInput): ProfileSubmitParseResu
     fieldErrors.prices = "יש להגדיר מחיר עבור לפחות אורך שיעור אחד.";
   }
 
+  // Story 2.11 (2026-05-18): intro video is now OPTIONAL. Founder direction
+  // "all required except video and highlights".
   const introVideoR2Key = (raw.introVideoR2Key ?? "").trim();
-  if (introVideoR2Key.length === 0) {
-    fieldErrors.introVideoR2Key = "סרטון היכרות חובה לפני שליחה לבדיקה.";
-  } else if (introVideoR2Key.length > PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS) {
+  if (
+    introVideoR2Key.length > 0 &&
+    introVideoR2Key.length > PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS
+  ) {
     fieldErrors.introVideoR2Key = "מפתח סרטון לא תקין.";
   }
 
+  // Story 2.11 (2026-05-18): profile photo is REQUIRED at submit. Previously
+  // optional. The editor + Hero render the photo as a primary identity element.
   const photoR2Key = (raw.photoR2Key ?? "").trim();
-  if (photoR2Key.length > PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS) {
+  if (photoR2Key.length === 0) {
+    fieldErrors.photoR2Key = "תמונת פרופיל חובה.";
+  } else if (photoR2Key.length > PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS) {
     fieldErrors.photoR2Key = "מפתח תמונה לא תקין.";
-  }
-
-  const city = (raw.city ?? "").trim();
-  if (city.length > 80) {
-    fieldErrors.city = "שם העיר ארוך מדי.";
   }
 
   if (Object.keys(fieldErrors).length > 0) {
@@ -245,12 +346,17 @@ export function parseSubmitInput(raw: ProfileDraftInput): ProfileSubmitParseResu
     value: {
       displayName,
       gender: gender as TutorGender,
-      bio,
+      tagline,
+      shortBio,
+      longBio,
+      highlights,
+      recommendationVisible,
+      recommendationHeadline,
+      recommendationSub,
       subjects,
       prices: cleanedPrices,
-      city: city.length > 0 ? city : null,
-      photoR2Key: photoR2Key.length > 0 ? photoR2Key : null,
-      introVideoR2Key,
+      photoR2Key,
+      introVideoR2Key: introVideoR2Key.length > 0 ? introVideoR2Key : null,
     },
   };
 }
@@ -260,12 +366,19 @@ function priceFieldErrorKey(len: LessonLengthMinutes): keyof ProfileFieldErrors 
 }
 
 /**
- * Convert a flat FormData into a draft input. Subjects come in as a single
- * comma-separated string (the form serializer); we split, trim, and drop empties.
+ * Convert a flat FormData into a draft input. Subjects + highlights come in
+ * as comma-separated strings (the form serializer); we split, trim, and
+ * drop empties.
  */
 export function parseFormDataIntoDraftInput(formData: FormData): ProfileDraftInput {
   const subjectsRaw = String(formData.get("subjects") ?? "");
   const subjects = subjectsRaw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  const highlightsRaw = String(formData.get("highlights") ?? "");
+  const highlights = highlightsRaw
     .split(",")
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
@@ -280,13 +393,22 @@ export function parseFormDataIntoDraftInput(formData: FormData): ProfileDraftInp
     if (value !== undefined) prices[len] = value;
   }
 
+  const recommendationVisible =
+    formData.get("recommendationVisible") === "on" ||
+    formData.get("recommendationVisible") === "true";
+
   return {
     displayName: optionalString(formData.get("displayName")),
     gender: optionalString(formData.get("gender")),
-    bio: optionalString(formData.get("bio")),
+    tagline: optionalString(formData.get("tagline")),
+    shortBio: optionalString(formData.get("shortBio")),
+    longBio: optionalString(formData.get("longBio")),
+    highlights: highlights.length > 0 ? highlights : undefined,
+    recommendationVisible,
+    recommendationHeadline: optionalString(formData.get("recommendationHeadline")),
+    recommendationSub: optionalString(formData.get("recommendationSub")),
     subjects: subjects.length > 0 ? subjects : undefined,
     prices: Object.keys(prices).length > 0 ? prices : undefined,
-    city: optionalString(formData.get("city")),
     photoR2Key: optionalString(formData.get("photoR2Key")),
     introVideoR2Key: optionalString(formData.get("introVideoR2Key")),
   };

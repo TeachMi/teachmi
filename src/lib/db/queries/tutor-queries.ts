@@ -10,7 +10,7 @@
 // `is_active` exists to handle correctly: an invisible-but-approved tutor is
 // the safe failure mode, not visible-with-unvetted-content.
 
-import { and, asc, eq, gte, inArray, isNull, lt, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, ne, sql, type SQL } from "drizzle-orm";
 import {
   bookings,
   ratings,
@@ -50,8 +50,17 @@ export interface DiscoverableTutorPublic {
   userId: string;
   displayName: string;
   gender: "male" | "female";
-  bio: string | null;
-  city: string | null;
+  /** Story 2.11 — short headline shown under display name. */
+  tagline: string | null;
+  /** Story 2.11 — 1-2 sentence intro under the identity row. */
+  shortBio: string | null;
+  /** Story 2.11 — 2-3 paragraph "אודות" section. */
+  longBio: string | null;
+  /** Story 2.11 — slugs from `src/lib/highlights.ts`, up to 4. */
+  highlights: string[] | null;
+  recommendationHeadline: string | null;
+  recommendationSub: string | null;
+  recommendationVisible: boolean;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
   hourlyPriceIls: number | null;
@@ -119,7 +128,23 @@ export interface DbForExtendedTutorQueries {
  * is solid.
  */
 export function discoverableTutorWhere(): SQL {
-  return and(eq(tutorProfiles.isActive, true), isNull(tutorProfiles.deletedAt))!;
+  // Story 2.11 (2026-05-18): tighten to require the new content fields are
+  // non-empty. The 0013 migration backfills tagline + short_bio + long_bio
+  // for existing approved rows, so this predicate doesn't silently
+  // de-discover anyone at deploy time. Empty-string is treated as missing
+  // (same as NULL) — tutors with `''` after backfill still pass once they
+  // re-edit. The dogfood seed in `seed/dogfood.ts` rewrites these to real
+  // Hebrew content for the seeded tutors.
+  return and(
+    eq(tutorProfiles.isActive, true),
+    isNull(tutorProfiles.deletedAt),
+    isNotNull(tutorProfiles.tagline),
+    ne(tutorProfiles.tagline, ""),
+    isNotNull(tutorProfiles.shortBio),
+    ne(tutorProfiles.shortBio, ""),
+    isNotNull(tutorProfiles.longBio),
+    ne(tutorProfiles.longBio, ""),
+  )!;
 }
 
 // --- Single-tutor lookup ---------------------------------------------------
@@ -132,8 +157,13 @@ const PUBLIC_COLUMNS = {
   userId: tutorProfiles.userId,
   displayName: tutorProfiles.displayName,
   gender: tutorProfiles.gender,
-  bio: tutorProfiles.bio,
-  city: tutorProfiles.city,
+  tagline: tutorProfiles.tagline,
+  shortBio: tutorProfiles.shortBio,
+  longBio: tutorProfiles.longBio,
+  highlights: tutorProfiles.highlights,
+  recommendationHeadline: tutorProfiles.recommendationHeadline,
+  recommendationSub: tutorProfiles.recommendationSub,
+  recommendationVisible: tutorProfiles.recommendationVisible,
   introVideoR2Key: tutorProfiles.introVideoR2Key,
   profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
   hourlyPriceIls: tutorProfiles.hourlyPriceIls,
@@ -188,8 +218,13 @@ export const DISCOVERABLE_TUTOR_PUBLIC_KEYS = Object.freeze([
   "userId",
   "displayName",
   "gender",
-  "bio",
-  "city",
+  "tagline",
+  "shortBio",
+  "longBio",
+  "highlights",
+  "recommendationHeadline",
+  "recommendationSub",
+  "recommendationVisible",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
@@ -221,8 +256,13 @@ export interface TutorProfileForOwner {
   userId: string;
   displayName: string;
   gender: "male" | "female";
-  bio: string | null;
-  city: string | null;
+  tagline: string | null;
+  shortBio: string | null;
+  longBio: string | null;
+  highlights: string[] | null;
+  recommendationHeadline: string | null;
+  recommendationSub: string | null;
+  recommendationVisible: boolean;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
   hourlyPriceIls: number | null;
@@ -238,8 +278,13 @@ const OWNER_PROFILE_COLUMNS = {
   userId: tutorProfiles.userId,
   displayName: tutorProfiles.displayName,
   gender: tutorProfiles.gender,
-  bio: tutorProfiles.bio,
-  city: tutorProfiles.city,
+  tagline: tutorProfiles.tagline,
+  shortBio: tutorProfiles.shortBio,
+  longBio: tutorProfiles.longBio,
+  highlights: tutorProfiles.highlights,
+  recommendationHeadline: tutorProfiles.recommendationHeadline,
+  recommendationSub: tutorProfiles.recommendationSub,
+  recommendationVisible: tutorProfiles.recommendationVisible,
   introVideoR2Key: tutorProfiles.introVideoR2Key,
   profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
   hourlyPriceIls: tutorProfiles.hourlyPriceIls,
@@ -255,8 +300,13 @@ export const OWNER_PROFILE_KEYS = Object.freeze([
   "userId",
   "displayName",
   "gender",
-  "bio",
-  "city",
+  "tagline",
+  "shortBio",
+  "longBio",
+  "highlights",
+  "recommendationHeadline",
+  "recommendationSub",
+  "recommendationVisible",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",

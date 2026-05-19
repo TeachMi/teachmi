@@ -38,6 +38,15 @@ import {
   type CategorizedChanges,
   type ProfileValues,
 } from "./categorize-changes";
+import { isHighlightSlug, type HighlightSlug } from "@/lib/highlights";
+
+// Defensive coercion at the boundary — if a tutor's stored `highlights`
+// column contains a slug that's been retired from the taxonomy, drop it
+// silently rather than throw. The form schema's `sanitizeHighlights`
+// already filters incoming values; this guards the OUTBOUND comparison.
+function isHighlightSlugSafe(v: string): v is HighlightSlug {
+  return isHighlightSlug(v);
+}
 
 // --- Result type -----------------------------------------------------------
 
@@ -69,8 +78,13 @@ interface ExistingProfileLookup {
   isActive: boolean;
   displayName: string;
   gender: "male" | "female";
-  bio: string | null;
-  city: string | null;
+  tagline: string | null;
+  shortBio: string | null;
+  longBio: string | null;
+  highlights: string[] | null;
+  recommendationHeadline: string | null;
+  recommendationSub: string | null;
+  recommendationVisible: boolean;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
   hourlyPriceIls: number | null;
@@ -103,21 +117,29 @@ export async function runEditProfile(
   // Defense-in-depth R2-key ownership check. The action layer also guards;
   // refusing here means a misbehaving client cannot smuggle another tutor's
   // r2Key through the edit flow either.
-  if (!input.introVideoR2Key.startsWith(`intros/${deps.tutorUserId}/`)) {
+  // Story 2.11 (2026-05-18): intro video is now OPTIONAL; the prefix check
+  // only runs when the tutor actually attached one.
+  if (
+    input.introVideoR2Key !== null &&
+    !input.introVideoR2Key.startsWith(`intros/${deps.tutorUserId}/`)
+  ) {
     log.error(
       `[runEditProfile] intro_video r2Key does not match tutor prefix: ${input.introVideoR2Key}`,
     );
     return { ok: false, formError: "מפתח R2 של סרטון לא תקין." };
   }
-  if (input.photoR2Key !== null && !input.photoR2Key.startsWith(`photos/${deps.tutorUserId}/`)) {
+  if (!input.photoR2Key.startsWith(`photos/${deps.tutorUserId}/`)) {
     log.error(
       `[runEditProfile] photo r2Key does not match tutor prefix: ${input.photoR2Key}`,
     );
     return { ok: false, formError: "מפתח R2 של תמונה לא תקין." };
   }
 
-  if (input.bio.trim().length > PROFILE_FORM_LIMITS.BIO_MAX_CHARS) {
-    return { ok: false, fieldErrors: { bio: "ביוגרפיה ארוכה מדי." } };
+  // Long-bio cap defense-in-depth (the form schema's parse layer already
+  // checks this — this is a second line of defense if the parse layer is
+  // ever relaxed).
+  if (input.longBio.trim().length > PROFILE_FORM_LIMITS.LONG_BIO_MAX_CHARS) {
+    return { ok: false, fieldErrors: { longBio: "אודות ארוך מדי." } };
   }
 
   let subjectIds: Map<string, string>;
@@ -144,8 +166,13 @@ export async function runEditProfile(
         isActive: tutorProfiles.isActive,
         displayName: tutorProfiles.displayName,
         gender: tutorProfiles.gender,
-        bio: tutorProfiles.bio,
-        city: tutorProfiles.city,
+        tagline: tutorProfiles.tagline,
+        shortBio: tutorProfiles.shortBio,
+        longBio: tutorProfiles.longBio,
+        highlights: tutorProfiles.highlights,
+        recommendationHeadline: tutorProfiles.recommendationHeadline,
+        recommendationSub: tutorProfiles.recommendationSub,
+        recommendationVisible: tutorProfiles.recommendationVisible,
         introVideoR2Key: tutorProfiles.introVideoR2Key,
         profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
         hourlyPriceIls: tutorProfiles.hourlyPriceIls,
@@ -188,8 +215,13 @@ export async function runEditProfile(
     const oldValues: ProfileValues = {
       displayName: existing.displayName,
       gender: existing.gender,
-      bio: existing.bio ?? "",
-      city: existing.city ?? "",
+      tagline: existing.tagline ?? "",
+      shortBio: existing.shortBio ?? "",
+      longBio: existing.longBio ?? "",
+      highlights: (existing.highlights ?? []).filter(isHighlightSlugSafe),
+      recommendationHeadline: existing.recommendationHeadline ?? "",
+      recommendationSub: existing.recommendationSub ?? "",
+      recommendationVisible: existing.recommendationVisible,
       profilePhotoR2Key: existing.profilePhotoR2Key,
       introVideoR2Key: existing.introVideoR2Key,
       hourlyPriceIls: existing.hourlyPriceIls,
@@ -201,8 +233,13 @@ export async function runEditProfile(
     const newValues: ProfileValues = {
       displayName: input.displayName,
       gender: input.gender,
-      bio: input.bio,
-      city: input.city ?? "",
+      tagline: input.tagline,
+      shortBio: input.shortBio,
+      longBio: input.longBio,
+      highlights: input.highlights,
+      recommendationHeadline: input.recommendationHeadline,
+      recommendationSub: input.recommendationSub,
+      recommendationVisible: input.recommendationVisible,
       profilePhotoR2Key: input.photoR2Key,
       introVideoR2Key: input.introVideoR2Key,
       hourlyPriceIls: input.prices[60],
@@ -232,8 +269,20 @@ export async function runEditProfile(
     ];
     if (allChanges.includes("display_name")) profileUpdateSet.displayName = input.displayName;
     if (allChanges.includes("gender")) profileUpdateSet.gender = input.gender;
-    if (allChanges.includes("bio")) profileUpdateSet.bio = input.bio;
-    if (allChanges.includes("city")) profileUpdateSet.city = input.city;
+    if (allChanges.includes("tagline")) profileUpdateSet.tagline = input.tagline;
+    if (allChanges.includes("short_bio")) profileUpdateSet.shortBio = input.shortBio;
+    if (allChanges.includes("long_bio")) {
+      profileUpdateSet.longBio = input.longBio;
+      // Mirror to deprecated `bio` for the one-deploy safety window.
+      profileUpdateSet.bio = input.longBio;
+    }
+    if (allChanges.includes("highlights")) profileUpdateSet.highlights = input.highlights;
+    if (allChanges.includes("recommendation_headline"))
+      profileUpdateSet.recommendationHeadline = input.recommendationHeadline;
+    if (allChanges.includes("recommendation_sub"))
+      profileUpdateSet.recommendationSub = input.recommendationSub;
+    if (allChanges.includes("recommendation_visible"))
+      profileUpdateSet.recommendationVisible = input.recommendationVisible;
     if (allChanges.includes("profile_photo")) profileUpdateSet.profilePhotoR2Key = input.photoR2Key;
     if (allChanges.includes("intro_video")) profileUpdateSet.introVideoR2Key = input.introVideoR2Key;
     if (allChanges.includes("hourly_price")) profileUpdateSet.hourlyPriceIls = input.prices[60];
@@ -277,7 +326,12 @@ export async function runEditProfile(
     //    for review. Story 2.10's "no gate" model still keeps this signal
     //    intact so a future gate restoration (deferred-work.md) doesn't
     //    have to re-thread the document state.
-    if (allChanges.includes("intro_video")) {
+    //
+    // Story 2.11 (2026-05-18): intro video is OPTIONAL. The doc flip only
+    // runs when the tutor actually attached a video (the key is non-null).
+    // Switching from "has video" → "no video" is a content-removal edit
+    // tracked in the audit row; no document row to re-vet.
+    if (allChanges.includes("intro_video") && input.introVideoR2Key !== null) {
       const documentsUpdated = (await db
         .update(tutorDocuments)
         .set({

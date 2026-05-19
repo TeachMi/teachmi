@@ -14,6 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
 import { isStubUrl } from "@/lib/providers/files";
+import {
+  HIGHLIGHT_DEFS,
+  HIGHLIGHT_MAX_SELECTED,
+  type HighlightSlug,
+} from "@/lib/highlights";
 import { profileFormAction } from "./actions";
 // PhotoCropModal moved to a shared location so the student /account/profile
 // surface can reuse the same crop UX without a cross-feature import.
@@ -47,11 +52,16 @@ interface FormInitialValues {
    * gender agreement (see `verifiedTutorLabel` in profile-form-schema.ts).
    */
   gender: TutorGender | null;
-  bio: string;
+  tagline: string;
+  shortBio: string;
+  longBio: string;
+  highlights: string[];
+  recommendationVisible: boolean;
+  recommendationHeadline: string;
+  recommendationSub: string;
   subjects: string[];
   /** Per-length pricing. `null` per length = "not offered." Story 2.10 follow-up 2026-05-17. */
   prices: Record<45 | 60 | 75 | 90, number | null>;
-  city: string;
   photoR2Key: string | null;
   introVideoR2Key: string | null;
 }
@@ -136,14 +146,25 @@ export function ProfileForm({
 
   // Client-mirrored copies of the text fields. Two purposes:
   //  (#5) preserve what the user typed when the submit action returns an error.
-  //  (#4) recompute "bio too short" / "name too short" client-side so the
-  //       server-returned error dismisses live as the user types past the bound.
-  // Code-review patch M10 (2026-05-13): `?? ""` everywhere — `initialValues.bio`
-  // can be null/undefined when the tutor's draft is empty, and `bio.trim()`
-  // on undefined would crash the form on first render.
-  const [bio, setBio] = useState(initialValues.bio ?? "");
+  //  (#4) recompute client-side bounds so the server-returned error dismisses
+  //       live as the user types past the bound.
   const [displayName, setDisplayName] = useState(initialValues.displayName ?? "");
   const [gender, setGender] = useState<TutorGender | "">(initialValues.gender ?? "");
+  const [tagline, setTagline] = useState(initialValues.tagline ?? "");
+  const [shortBio, setShortBio] = useState(initialValues.shortBio ?? "");
+  const [longBio, setLongBio] = useState(initialValues.longBio ?? "");
+  const [selectedHighlights, setSelectedHighlights] = useState<string[]>(
+    initialValues.highlights ?? [],
+  );
+  const [recommendationVisible, setRecommendationVisible] = useState<boolean>(
+    initialValues.recommendationVisible ?? false,
+  );
+  const [recommendationHeadline, setRecommendationHeadline] = useState(
+    initialValues.recommendationHeadline ?? "",
+  );
+  const [recommendationSub, setRecommendationSub] = useState(
+    initialValues.recommendationSub ?? "",
+  );
   // Per-length pricing — one editable string per supported length. Empty
   // string = "length not offered" (the submit parser treats it as undefined
   // and the row's column stays NULL).
@@ -162,11 +183,7 @@ export function ProfileForm({
   const debounceTimerRef = useRef<number | null>(null);
 
   // Code-review patch H6 (2026-05-13): revoke blob: URLs from a useEffect
-  // cleanup rather than inside a setState callback. React state updaters may
-  // run multiple times (StrictMode dev, concurrent rendering) — revoking
-  // inside the setter can free the URL while another render still references
-  // it via `photoState.previewUrl`. The effect ties revocation to the URL's
-  // lifetime: it revokes the previous URL only after a new URL is committed.
+  // cleanup rather than inside a setState callback.
   useEffect(() => {
     const url = photoState.previewUrl;
     if (!url?.startsWith("blob:")) return;
@@ -181,21 +198,9 @@ export function ProfileForm({
   /**
    * Fire a save-draft action right now (not on the 30s debounce). Used after
    * uploads so the R2 key reaches `tutor_wizard_state` before the user can
-   * reload. Overrides pass directly into FormData since React state setters
-   * are async and `new FormData(formEl)` would still see the pre-set value.
-   *
-   * Code-review patch H5 (2026-05-13): gate on `pending` AND clear any armed
-   * debounce timer before firing. Without this, the immediate-save and a
-   * still-pending debounced save can interleave; the second one's stale
-   * FormData snapshot would overwrite the fresh R2 key.
+   * reload.
    */
   function persistDraftImmediately(overrides: Record<string, string>) {
-    // Story 2.10 amendment 2026-05-16: in edit mode, the user explicitly
-    // clicks "שמרו" to save. Auto-saving on every upload would (a) bypass
-    // the explicit-save UX contract, (b) trigger the redirect-to-/tutor/me
-    // before the user has finished editing other fields. The r2Key still
-    // lives in client state (`photoState.r2Key` / `videoState.r2Key`) and
-    // ships via the hidden form input on the explicit submit.
     if (mode === "edit") return;
     if (pending) return;
     const formEl = formRef.current;
@@ -212,11 +217,7 @@ export function ProfileForm({
     startTransition(() => formAction(fd));
   }
 
-  // Debounced auto-save on any field change. Story 2.10 amendment 2026-05-16:
-  // disabled in edit mode — the user explicitly clicks "שמרו" in /tutor/me
-  // and we don't want background saves bypassing that contract. The auto-save
-  // remains active in create mode (Story 2.1 onboarding wizard) so the draft
-  // doesn't get lost mid-wizard.
+  // Debounced auto-save on any field change. Disabled in edit mode.
   useEffect(() => {
     if (mode === "edit") return;
     if (pending) return;
@@ -235,7 +236,6 @@ export function ProfileForm({
         debounceTimerRef.current = null;
       }
     };
-    // Track keystroke changes via a tick state. Subjects toggles also re-arm.
   }, [mode, selectedSubjects, photoState.r2Key, videoState.r2Key, pending, formAction]);
 
   const submitFieldErrors =
@@ -247,22 +247,40 @@ export function ProfileForm({
   const lastSavedAt =
     state.intent === "save" && state.ok ? state.savedAt : undefined;
 
-  // (#4) Dismiss server-returned errors as the user fixes the underlying value
-  // client-side. Without this, the "bio under 50 chars" error stays visible
-  // even after the user types past the threshold — they'd have to submit again
-  // to see it disappear.
-  const bioTrimmedLen = bio.trim().length;
-  const showBioError =
-    submitFieldErrors.bio !== undefined &&
-    (bioTrimmedLen < PROFILE_FORM_LIMITS.BIO_MIN_CHARS ||
-      bioTrimmedLen > PROFILE_FORM_LIMITS.BIO_MAX_CHARS);
+  // Dismiss server-returned errors as the user fixes the underlying value
+  // client-side, using the new Story 2.11 limits.
+  const taglineTrimmedLen = tagline.trim().length;
+  const showTaglineError =
+    submitFieldErrors.tagline !== undefined &&
+    (taglineTrimmedLen < PROFILE_FORM_LIMITS.TAGLINE_MIN_CHARS ||
+      taglineTrimmedLen > PROFILE_FORM_LIMITS.TAGLINE_MAX_CHARS);
+  const shortBioTrimmedLen = shortBio.trim().length;
+  const showShortBioError =
+    submitFieldErrors.shortBio !== undefined &&
+    (shortBioTrimmedLen < PROFILE_FORM_LIMITS.SHORT_BIO_MIN_CHARS ||
+      shortBioTrimmedLen > PROFILE_FORM_LIMITS.SHORT_BIO_MAX_CHARS);
+  const longBioTrimmedLen = longBio.trim().length;
+  const showLongBioError =
+    submitFieldErrors.longBio !== undefined &&
+    (longBioTrimmedLen < PROFILE_FORM_LIMITS.LONG_BIO_MIN_CHARS ||
+      longBioTrimmedLen > PROFILE_FORM_LIMITS.LONG_BIO_MAX_CHARS);
+  const recoHeadlineTrimmedLen = recommendationHeadline.trim().length;
+  const showRecoHeadlineError =
+    submitFieldErrors.recommendationHeadline !== undefined &&
+    recommendationVisible &&
+    (recoHeadlineTrimmedLen === 0 ||
+      recoHeadlineTrimmedLen > PROFILE_FORM_LIMITS.RECOMMENDATION_HEADLINE_MAX_CHARS);
+  const recoSubTrimmedLen = recommendationSub.trim().length;
+  const showRecoSubError =
+    submitFieldErrors.recommendationSub !== undefined &&
+    recommendationVisible &&
+    (recoSubTrimmedLen === 0 ||
+      recoSubTrimmedLen > PROFILE_FORM_LIMITS.RECOMMENDATION_SUB_MAX_CHARS);
   const showDisplayNameError =
     submitFieldErrors.displayName !== undefined &&
     displayName.trim().length < PROFILE_FORM_LIMITS.DISPLAY_NAME_MIN_CHARS;
-  // Per-length price dismissal — show the server-returned error only if
-  // the field's value still doesn't parse as a positive price. The
-  // cross-length consistency invariant ("price45 < price60") was dropped
-  // per founder direction 2026-05-17 (relaxed pricing model).
+  // Per-length price dismissal — show server-returned error only if the
+  // field's value still doesn't parse as a positive price.
   const showPriceError: Record<LessonLengthMinutes, boolean> = {
     45: submitFieldErrors.price45Ils !== undefined && !isValidPrice(prices[45]),
     60: submitFieldErrors.price60Ils !== undefined && !isValidPrice(prices[60]),
@@ -270,29 +288,31 @@ export function ProfileForm({
     90: submitFieldErrors.price90Ils !== undefined && !isValidPrice(prices[90]),
   };
 
-  // Collect a flat list of remaining (post-client-dismissal) error messages so
-  // we can surface them at the top of the form. Without this, a submit click
-  // that fails validation on a field below the fold (intro video, subjects)
-  // looks like the button "did nothing".
+  // Collect a flat list of remaining (post-client-dismissal) error messages.
   const submitFieldErrorList: string[] = [];
   if (state.intent === "submit" && !state.ok) {
     if (showDisplayNameError && submitFieldErrors.displayName) submitFieldErrorList.push(submitFieldErrors.displayName);
     if (submitFieldErrors.gender) submitFieldErrorList.push(submitFieldErrors.gender);
-    if (showBioError && submitFieldErrors.bio) submitFieldErrorList.push(submitFieldErrors.bio);
+    if (showTaglineError && submitFieldErrors.tagline) submitFieldErrorList.push(submitFieldErrors.tagline);
+    if (showShortBioError && submitFieldErrors.shortBio) submitFieldErrorList.push(submitFieldErrors.shortBio);
+    if (showLongBioError && submitFieldErrors.longBio) submitFieldErrorList.push(submitFieldErrors.longBio);
+    if (submitFieldErrors.highlights) submitFieldErrorList.push(submitFieldErrors.highlights);
+    if (showRecoHeadlineError && submitFieldErrors.recommendationHeadline) submitFieldErrorList.push(submitFieldErrors.recommendationHeadline);
+    if (showRecoSubError && submitFieldErrors.recommendationSub) submitFieldErrorList.push(submitFieldErrors.recommendationSub);
     if (submitFieldErrors.subjects) submitFieldErrorList.push(submitFieldErrors.subjects);
     if (submitFieldErrors.prices) submitFieldErrorList.push(submitFieldErrors.prices);
     if (showPriceError[45] && submitFieldErrors.price45Ils) submitFieldErrorList.push(submitFieldErrors.price45Ils);
     if (showPriceError[60] && submitFieldErrors.price60Ils) submitFieldErrorList.push(submitFieldErrors.price60Ils);
     if (showPriceError[75] && submitFieldErrors.price75Ils) submitFieldErrorList.push(submitFieldErrors.price75Ils);
     if (showPriceError[90] && submitFieldErrors.price90Ils) submitFieldErrorList.push(submitFieldErrors.price90Ils);
+    if (submitFieldErrors.photoR2Key) submitFieldErrorList.push(submitFieldErrors.photoR2Key);
     if (submitFieldErrors.introVideoR2Key) submitFieldErrorList.push(submitFieldErrors.introVideoR2Key);
   }
   const submitHasErrors =
     state.intent === "submit" && !state.ok &&
     (submitFormError !== undefined || submitFieldErrorList.length > 0);
 
-  // Scroll the error summary into view after a failed submit so the user
-  // sees what's wrong instead of thinking the button did nothing.
+  // Scroll the error summary into view after a failed submit.
   useEffect(() => {
     if (submitHasErrors && formRef.current) {
       formRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -305,28 +325,35 @@ export function ProfileForm({
     );
   }
 
+  function toggleHighlight(slug: HighlightSlug) {
+    setSelectedHighlights((prev) => {
+      if (prev.includes(slug)) {
+        return prev.filter((s) => s !== slug);
+      }
+      // At cap — silently refuse (UX is: the unselected chips are visually
+      // disabled, but defensive guard here too in case keyboard activation
+      // bypasses the disabled attribute).
+      if (prev.length >= HIGHLIGHT_MAX_SELECTED) return prev;
+      return [...prev, slug];
+    });
+  }
+
   function handlePhotoPicked(file: File) {
     setPhotoError(null);
     if (!(ALLOWED_PHOTO_MIME_TYPES as readonly string[]).includes(file.type)) {
       setPhotoError(`סוג קובץ לא נתמך. בחרו ${ALLOWED_PHOTO_MIME_TYPES.join(" / ")}.`);
       return;
     }
-    // Photo size check runs on the ORIGINAL pick — crop output is 400×400 JPEG
-    // (~50KB) so the 5MB limit is really only a sanity guard against
-    // multi-megapixel uploads tying up the browser's canvas memory.
     if (file.size > PROFILE_FORM_LIMITS.PHOTO_MAX_BYTES) {
       setPhotoError("התמונה גדולה מ-5MB.");
       return;
     }
-    // Open the crop modal; uploading happens after the user confirms the crop.
     setPhotoToCrop(file);
   }
 
   async function handleCroppedPhoto(croppedBlob: Blob) {
     setPhotoToCrop(null);
     setPhotoError(null);
-    // The crop output is always image/jpeg (see PhotoCropModal.tsx). Wrap as a
-    // File so the upload-init action's MIME validation accepts it.
     const file = new File([croppedBlob], "profile.jpg", {
       type: "image/jpeg",
       lastModified: Date.now(),
@@ -348,15 +375,12 @@ export function ProfileForm({
         body: file,
       });
       if (!putRes.ok && isStubUrl(init.uploadUrl)) {
-        // Stub endpoint isn't a real server; PUT will resolve as network error
-        // in the browser but the form's contract is purely metadata-tracking
-        // at MVP 1. Treat stub URLs as success regardless of fetch result.
+        // stub provider — treat as success
       } else if (!putRes.ok) {
         setPhotoError(`העלאה נכשלה (${putRes.status}).`);
         return;
       }
     } catch {
-      // Same stub-URL allowance as above.
       if (!isStubUrl(init.uploadUrl)) {
         setPhotoError("העלאה נכשלה. נסו שוב.");
         return;
@@ -368,18 +392,10 @@ export function ProfileForm({
       setPhotoError(confirm.formError);
       return;
     }
-    // Use the LOCAL object URL for preview when the server returned a stub URL.
-    // The stub provider returns `https://stub.r2.local/...` which isn't a
-    // real server — the browser would render the broken-image alt text
-    // instead of the photo the user just chose. Real R2 (MVP 2) returns a
-    // usable presigned GET URL; that path passes through unchanged.
-    // Blob-URL lifecycle (revocation) lives in the useEffect above (H6).
     const previewUrl = isStubUrl(confirm.previewUrl)
       ? URL.createObjectURL(file)
       : confirm.previewUrl;
     setPhotoState({ r2Key: confirm.r2Key, previewUrl });
-    // Persist the new R2 key into the wizard_state draft immediately — the
-    // 30s auto-save debounce would lose this key if the user reloaded sooner.
     persistDraftImmediately({ photoR2Key: confirm.r2Key });
   }
 
@@ -449,8 +465,6 @@ export function ProfileForm({
       }));
       return;
     }
-    // Same stub-URL handling as the photo path. Blob-URL revocation lives in
-    // the useEffect above (H6).
     const previewUrl = isStubUrl(confirm.previewUrl)
       ? URL.createObjectURL(file)
       : confirm.previewUrl;
@@ -461,16 +475,16 @@ export function ProfileForm({
       progressPercent: 100,
       error: null,
     });
-    // Persist the new R2 key into the wizard_state draft immediately.
     persistDraftImmediately({ introVideoR2Key: confirm.r2Key });
   }
 
   const isEditMode = mode === "edit";
 
-  // CTA copy: create mode → "המשך לחתימת הסכם ←" (Story 2.1 wizard cap).
-  // Edit mode → static "שמרו" (Story 2.10 — re-approval gate dropped; the
-  // dynamic copy variant Story 2.5 introduced is removed).
+  // CTA copy: create mode → "המשך לחתימת הסכם ←". Edit mode → "שמרו".
   const ctaCopy = isEditMode ? "שמרו" : "המשך לחתימת הסכם ←";
+
+  const highlightsAtCap =
+    selectedHighlights.length >= HIGHLIGHT_MAX_SELECTED;
 
   return (
     <form ref={formRef} action={formAction} className="space-y-5" noValidate>
@@ -479,6 +493,11 @@ export function ProfileForm({
         type="hidden"
         name="subjects"
         value={selectedSubjects.join(",")}
+      />
+      <input
+        type="hidden"
+        name="highlights"
+        value={selectedHighlights.join(",")}
       />
       <input
         type="hidden"
@@ -514,17 +533,72 @@ export function ProfileForm({
         </Card>
       )}
 
-      {/* ===== Photo + bio ===== */}
+      {/* ===== 1. Identity (photo + name + tagline) ===== */}
       <Card padding="md" className="text-start">
-        <h3 className="mb-4 font-display text-lg font-bold text-primary-container">
-          תמונה וביוגרפיה
+        <h3 className="mb-4 flex items-center gap-2 font-display text-lg font-bold text-primary-container">
+          <span className="material-symbols-outlined" aria-hidden="true">
+            account_circle
+          </span>
+          תמונה וזהות
         </h3>
-        {/* Display name (#2 resolution, 2026-05-13). The hidden input was */}
-        {/* sending the session.user.name unchanged with no way to fix it; */}
-        {/* tutors whose signup name was empty/short couldn't ever submit. */}
-        {/* Now a real input — and this is the name students will see on */}
-        {/* marketplace browse cards, so they should be able to refine it. */}
-        <div className="mb-4">
+
+        {/* Photo block (square, rounded-xl per mock) */}
+        <div className="mb-5 flex items-center gap-5">
+          <div className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-linen-border bg-surface-container shadow-sm ring-2 ring-white">
+            {photoState.previewUrl ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={photoState.previewUrl}
+                alt=""
+                className="h-full w-full object-cover"
+              />
+            ) : photoState.r2Key ? (
+              <div className="flex h-full w-full flex-col items-center justify-center text-primary-container">
+                <span aria-hidden="true" className="text-2xl leading-none">✓</span>
+                <span className="mt-1 text-[10px] font-bold">הועלתה</span>
+              </div>
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-on-surface-variant">
+                ללא
+              </div>
+            )}
+          </div>
+          <div className="flex-1">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-primary-fixed-dim px-4 py-2 text-sm font-bold text-primary-container transition-colors hover:bg-primary-fixed/30">
+              <span className="material-symbols-outlined text-base" aria-hidden="true">
+                upload
+              </span>
+              {photoState.r2Key ? "החליפו תמונה" : "העלו תמונה"}
+              <input
+                type="file"
+                accept={ALLOWED_PHOTO_MIME_TYPES.join(",")}
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handlePhotoPicked(file);
+                  // Reset input so picking the SAME file again still fires onChange.
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <p className="mt-2 text-[11px] leading-relaxed text-secondary">
+              JPG או PNG · ריבועית · עד 5MB
+            </p>
+            {photoError && (
+              <p role="alert" className="mt-1 text-xs font-bold text-danger">
+                {photoError}
+              </p>
+            )}
+            {submitFieldErrors.photoR2Key && !photoState.r2Key && (
+              <p role="alert" className="mt-1 text-xs font-bold text-danger">
+                {submitFieldErrors.photoR2Key}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Display name + tagline stacked */}
+        <div className="space-y-4">
           <Input
             name="displayName"
             label="שם תצוגה"
@@ -535,207 +609,84 @@ export function ProfileForm({
             surface="linen"
             minLength={PROFILE_FORM_LIMITS.DISPLAY_NAME_MIN_CHARS}
             maxLength={PROFILE_FORM_LIMITS.DISPLAY_NAME_MAX_CHARS}
-            placeholder=""
             autoComplete="name"
           />
-        </div>
-        {/* Grammatical gender. Founder direction 2026-05-17: gender is set
-            ONCE at onboarding (create mode), never re-surfaced in edit
-            mode. In edit mode the value is preserved via a hidden input so
-            the diff in `runEditProfile` sees no change. Drives gender-
-            agreeing Hebrew copy on the public profile (verified badge
-            "מורה מאומת" vs "מורה מאומתת"). Native radios — no Radix
-            primitive needed for two-option agreement. */}
-        {isEditMode ? (
-          <input type="hidden" name="gender" value={gender} />
-        ) : (
-          <fieldset className="mb-4">
-            <legend className="mb-1 text-sm font-bold text-on-surface">מין</legend>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2 text-sm text-on-surface">
-                <input
-                  type="radio"
-                  name="gender"
-                  value="male"
-                  checked={gender === "male"}
-                  onChange={() => setGender("male")}
-                  className="h-4 w-4 accent-primary-container"
-                />
-                זכר
-              </label>
-              <label className="flex items-center gap-2 text-sm text-on-surface">
-                <input
-                  type="radio"
-                  name="gender"
-                  value="female"
-                  checked={gender === "female"}
-                  onChange={() => setGender("female")}
-                  className="h-4 w-4 accent-primary-container"
-                />
-                נקבה
-              </label>
-            </div>
-            {submitFieldErrors.gender && (
-              <p className="mt-1 text-xs text-error" role="alert">
-                {submitFieldErrors.gender}
-              </p>
-            )}
-          </fieldset>
-        )}
-        {/* Single shared row of labels above the two input columns. This is */}
-        {/* the cleanest way to top-align the avatar with the textarea: both */}
-        {/* columns start at the SAME baseline, and the labels live above. In */}
-        {/* RTL the first child of `flex` is on the right. */}
-        <div className="mb-1.5 flex items-baseline gap-5">
-          <div className="w-24 shrink-0 text-center">
-            <span className="text-xs font-bold text-on-surface">תמונת פרופיל</span>
-          </div>
-          <div className="flex-1">
-            <span className="text-sm font-bold text-on-surface">ביוגרפיה קצרה</span>
-          </div>
-        </div>
-        <div className="flex items-start gap-5">
-          <div className="flex w-24 shrink-0 flex-col items-center">
-            <div className="h-24 w-24 overflow-hidden rounded-full border-2 border-linen-border bg-surface-container">
-              {photoState.previewUrl ? (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img
-                  src={photoState.previewUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
-              ) : photoState.r2Key ? (
-                // R2 key on file but no fetchable preview URL (stub mode, or
-                // the user reloaded after upload). Acknowledge the upload
-                // visually instead of showing the empty placeholder.
-                <div className="flex h-full w-full flex-col items-center justify-center text-primary-container">
-                  <span aria-hidden="true" className="text-2xl leading-none">✓</span>
-                  <span className="mt-1 text-[10px] font-bold">הועלתה</span>
-                </div>
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-on-surface-variant">
-                  ללא
-                </div>
+
+          {/* Gender. Set once at onboarding (create mode); hidden in edit
+              mode. Code review 2026-05-19 (F15): if the tutor's stored
+              gender is somehow null/empty (legacy row, manual DB poke), the
+              hidden input would post "" and the server validator would
+              reject without any UI to fix it. Fall back to the radio
+              fieldset in that case so the tutor can self-heal. */}
+          {isEditMode && gender !== "" ? (
+            <input type="hidden" name="gender" value={gender} />
+          ) : (
+            <fieldset>
+              <legend className="mb-1 text-sm font-bold text-on-surface">מין</legend>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm text-on-surface">
+                  <input
+                    type="radio"
+                    name="gender"
+                    value="male"
+                    checked={gender === "male"}
+                    onChange={() => setGender("male")}
+                    className="h-4 w-4 accent-primary-container"
+                  />
+                  זכר
+                </label>
+                <label className="flex items-center gap-2 text-sm text-on-surface">
+                  <input
+                    type="radio"
+                    name="gender"
+                    value="female"
+                    checked={gender === "female"}
+                    onChange={() => setGender("female")}
+                    className="h-4 w-4 accent-primary-container"
+                  />
+                  נקבה
+                </label>
+              </div>
+              {submitFieldErrors.gender && (
+                <p className="mt-1 text-xs text-error" role="alert">
+                  {submitFieldErrors.gender}
+                </p>
               )}
-            </div>
-            <label className="mt-2 inline-block cursor-pointer text-center border-b border-primary-container text-xs font-bold text-primary-container">
-              {photoState.r2Key ? "החליפו תמונה" : "העלו תמונה"}
-              <input
-                type="file"
-                accept={ALLOWED_PHOTO_MIME_TYPES.join(",")}
-                className="sr-only"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handlePhotoPicked(file);
-                  // Reset input so picking the SAME file again still fires onChange
-                  // (useful if the user cancels the crop and tries the same image).
-                  e.target.value = "";
-                }}
-              />
-            </label>
-            {photoError && (
-              <p role="alert" className="mt-1 text-center text-xs font-bold text-danger">
-                {photoError}
-              </p>
-            )}
-          </div>
-          <div className="flex-1">
-            <Textarea
-              name="bio"
-              rows={4}
-              hint="המלצה: 50-1000 תווים. הזכירו ניסיון, גישה, ועל מי תוכלו לעזור."
-              maxLength={PROFILE_FORM_LIMITS.BIO_MAX_CHARS}
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              error={showBioError ? submitFieldErrors.bio : undefined}
+            </fieldset>
+          )}
+
+          {/* Tagline */}
+          <div>
+            <Input
+              name="tagline"
+              label="כותרת קצרה"
+              hint="שורה אחת שמופיעה מתחת לשם — תחום ההוראה במילים פשוטות."
+              value={tagline}
+              onChange={(e) => setTagline(e.target.value)}
+              error={showTaglineError ? submitFieldErrors.tagline : undefined}
               surface="linen"
-              placeholder="ספרו על עצמכם בקצרה..."
+              maxLength={PROFILE_FORM_LIMITS.TAGLINE_MAX_CHARS}
             />
+            <div className="mt-1 flex justify-between text-[11px] text-secondary">
+              <span>מומלץ: 30-60 תווים</span>
+              <span className={cn("tabular-nums", tagline.length > PROFILE_FORM_LIMITS.TAGLINE_MAX_CHARS && "font-bold text-danger")}>
+                {tagline.length}/{PROFILE_FORM_LIMITS.TAGLINE_MAX_CHARS}
+              </span>
+            </div>
           </div>
         </div>
       </Card>
 
-      {/* ===== Subjects ===== */}
+      {/* ===== 2. Intro video (optional) ===== */}
       <Card padding="md" className="text-start">
-        <h3 className="mb-2 font-display text-lg font-bold text-primary-container">
-          מקצועות שאתם מלמדים
-        </h3>
-        <p className="mb-4 text-xs text-secondary">
-          בחרו את המקצועות שאתם מלמדים.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {availableSubjects.map((subject) => {
-            const isActive = selectedSubjects.includes(subject.slug);
-            return (
-              <button
-                type="button"
-                key={subject.slug}
-                onClick={() => toggleSubject(subject.slug)}
-                aria-pressed={isActive}
-                className={cn(
-                  "rounded-full border px-4 py-2 text-sm font-bold transition-colors",
-                  isActive
-                    ? "border-primary-container bg-primary-container text-on-primary"
-                    : "border-linen-border bg-surface-lowest text-on-surface-variant hover:border-primary-fixed-dim",
-                )}
-              >
-                {subject.displayNameHe}
-              </button>
-            );
-          })}
-        </div>
-        <p className="mt-4 text-xs text-secondary">
-          נבחרו:{" "}
-          <span className="font-bold text-primary-container">
-            {selectedSubjects.length}
-          </span>{" "}
-          מקצועות
-        </p>
-        {submitFieldErrors.subjects && (
-          <p role="alert" className="mt-2 text-xs font-bold text-danger">
-            {submitFieldErrors.subjects}
-          </p>
-        )}
-      </Card>
-
-      {/* ===== Pricing ===== */}
-      <Card padding="md" className="text-start">
-        <h3 className="mb-2 font-display text-lg font-bold text-primary-container">
-          תמחור — בחרו אורכי שיעור
-        </h3>
-        <p className="mb-4 text-xs text-secondary">
-          אתם קובעים את המחיר. סמנו רק את אורכי השיעור שאתם מציעים. הממוצע בתחום: ₪150-200 לשעה.
-        </p>
-        {submitFieldErrors.prices && (
-          <p role="alert" className="mb-3 text-xs font-bold text-danger">
-            {submitFieldErrors.prices}
-          </p>
-        )}
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {LESSON_LENGTH_MINUTES.map((len) => (
-            <PriceInput
-              key={len}
-              name={`price${len}Ils`}
-              label={`שיעור ${len} דק׳`}
-              value={prices[len]}
-              onChange={(v) => setPriceFor(len, v)}
-              error={
-                showPriceError[len]
-                  ? submitFieldErrors[`price${len}Ils` as `price${typeof len}Ils`]
-                  : undefined
-              }
-            />
-          ))}
-        </div>
-      </Card>
-
-      {/* ===== Intro video ===== */}
-      <Card padding="md" className="text-start">
-        <h3 className="mb-2 font-display text-lg font-bold text-primary-container">
+        <h3 className="mb-3 flex items-center gap-2 font-display text-lg font-bold text-primary-container">
+          <span className="material-symbols-outlined" aria-hidden="true">
+            videocam
+          </span>
           סרטון היכרות
         </h3>
-        <p className="mb-4 text-xs text-secondary">
-          סרטונים מקבלים פי 4 הזמנות. {PROFILE_FORM_LIMITS.INTRO_VIDEO_MIN_DURATION_SEC}-
+        <p className="mb-3 text-xs text-secondary">
+          אופציונלי. {PROFILE_FORM_LIMITS.INTRO_VIDEO_MIN_DURATION_SEC}-
           {PROFILE_FORM_LIMITS.INTRO_VIDEO_MAX_DURATION_SEC} שניות, עד 50MB.
         </p>
 
@@ -760,8 +711,6 @@ export function ProfileForm({
             </label>
           </div>
         ) : videoState.r2Key ? (
-          // R2 key recorded but no fetchable preview URL (stub mode, or page
-          // reload after upload). Acknowledge the upload + offer to replace.
           <Card tone="success" padding="md" className="text-start">
             <p className="mb-1 font-display font-bold text-primary-container">
               ✓ סרטון הועלה
@@ -845,6 +794,233 @@ export function ProfileForm({
         )}
       </Card>
 
+      {/* ===== 3. Short bio ===== */}
+      <Card padding="md" className="text-start">
+        <h3 className="mb-2 flex items-center gap-2 font-display text-lg font-bold text-primary-container">
+          <span className="material-symbols-outlined" aria-hidden="true">
+            short_text
+          </span>
+          תיאור קצר
+        </h3>
+        <p className="mb-3 text-xs text-secondary">
+          1-2 משפטים שמופיעים ישר מתחת לשם בפרופיל הציבורי. הזדמנות לתפוס את העין.
+        </p>
+        <Textarea
+          name="shortBio"
+          rows={3}
+          maxLength={PROFILE_FORM_LIMITS.SHORT_BIO_MAX_CHARS}
+          value={shortBio}
+          onChange={(e) => setShortBio(e.target.value)}
+          error={showShortBioError ? submitFieldErrors.shortBio : undefined}
+          surface="linen"
+          hint="מומלץ: 120-200 תווים"
+        />
+      </Card>
+
+      {/* ===== 4. Long bio (about) ===== */}
+      <Card padding="md" className="text-start">
+        <h3 className="mb-2 flex items-center gap-2 font-display text-lg font-bold text-primary-container">
+          <span className="material-symbols-outlined" aria-hidden="true">
+            article
+          </span>
+          אודות
+        </h3>
+        <p className="mb-3 text-xs text-secondary">
+          סיפור מלא יותר על השיטה, הניסיון והגישה האישית. 2-3 פסקאות.
+        </p>
+        <Textarea
+          name="longBio"
+          rows={8}
+          maxLength={PROFILE_FORM_LIMITS.LONG_BIO_MAX_CHARS}
+          value={longBio}
+          onChange={(e) => setLongBio(e.target.value)}
+          error={showLongBioError ? submitFieldErrors.longBio : undefined}
+          surface="linen"
+          hint="מומלץ: 400-800 תווים"
+        />
+      </Card>
+
+      {/* ===== 5. Highlights ===== */}
+      <Card padding="md" className="text-start">
+        <h3 className="mb-2 flex items-center gap-2 font-display text-lg font-bold text-primary-container">
+          <span className="material-symbols-outlined" aria-hidden="true">
+            auto_awesome
+          </span>
+          נקודות חוזק
+        </h3>
+        <p className="mb-3 text-xs text-secondary">
+          בחרו עד {HIGHLIGHT_MAX_SELECTED} תכונות שמייצגות אתכם. יוצגו בפרופיל הציבורי כתגיות.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {HIGHLIGHT_DEFS.map((def) => {
+            const isActive = selectedHighlights.includes(def.slug);
+            const disabled = !isActive && highlightsAtCap;
+            return (
+              <button
+                type="button"
+                key={def.slug}
+                onClick={() => toggleHighlight(def.slug)}
+                aria-pressed={isActive}
+                aria-disabled={disabled || undefined}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors",
+                  isActive
+                    ? "border-primary-fixed-dim bg-primary-fixed/40 text-primary-container"
+                    : "border-linen-border bg-surface-lowest text-on-surface-variant",
+                  !isActive && !disabled && "hover:border-primary-fixed-dim",
+                  disabled && "opacity-45",
+                )}
+              >
+                <span className="material-symbols-outlined text-base" aria-hidden="true">
+                  {def.icon}
+                </span>
+                {def.labelHe}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-3 text-[11px] text-secondary">
+          {selectedHighlights.length}/{HIGHLIGHT_MAX_SELECTED} נבחרו
+        </p>
+        {submitFieldErrors.highlights && (
+          <p role="alert" className="mt-2 text-xs font-bold text-danger">
+            {submitFieldErrors.highlights}
+          </p>
+        )}
+      </Card>
+
+      {/* ===== 6. Subjects ===== */}
+      <Card padding="md" className="text-start">
+        <h3 className="mb-2 flex items-center gap-2 font-display text-lg font-bold text-primary-container">
+          <span className="material-symbols-outlined" aria-hidden="true">
+            menu_book
+          </span>
+          מקצועות
+        </h3>
+        <p className="mb-4 text-xs text-secondary">
+          בחרו את המקצועות שאתם מלמדים.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {availableSubjects.map((subject) => {
+            const isActive = selectedSubjects.includes(subject.slug);
+            return (
+              <button
+                type="button"
+                key={subject.slug}
+                onClick={() => toggleSubject(subject.slug)}
+                aria-pressed={isActive}
+                className={cn(
+                  "rounded-full border px-4 py-2 text-sm font-bold transition-colors",
+                  isActive
+                    ? "border-primary-container bg-primary-container text-on-primary"
+                    : "border-linen-border bg-surface-lowest text-on-surface-variant hover:border-primary-fixed-dim",
+                )}
+              >
+                {subject.displayNameHe}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-4 text-xs text-secondary">
+          נבחרו:{" "}
+          <span className="font-bold text-primary-container">
+            {selectedSubjects.length}
+          </span>{" "}
+          מקצועות
+        </p>
+        {submitFieldErrors.subjects && (
+          <p role="alert" className="mt-2 text-xs font-bold text-danger">
+            {submitFieldErrors.subjects}
+          </p>
+        )}
+      </Card>
+
+      {/* ===== 7. Recommendation card ===== */}
+      <Card padding="md" className="text-start">
+        <div className="mb-2 flex items-start justify-between gap-3">
+          <h3 className="flex items-center gap-2 font-display text-lg font-bold text-primary-container">
+            <span className="material-symbols-outlined" aria-hidden="true">
+              trending_up
+            </span>
+            מומלצת במיוחד
+          </h3>
+          <label className="flex cursor-pointer select-none items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              name="recommendationVisible"
+              checked={recommendationVisible}
+              onChange={(e) => setRecommendationVisible(e.target.checked)}
+              className="rounded border-linen-border text-primary-container focus:ring-primary-container"
+            />
+            <span className="font-bold text-on-surface">הציגו בפרופיל</span>
+          </label>
+        </div>
+        <p className="mb-3 text-xs text-secondary">
+          קופסת המלצה שמופיעה בראש הפרופיל הציבורי. אופציונלי.
+        </p>
+        <div
+          className={cn(
+            "space-y-3 transition-opacity",
+            !recommendationVisible && "pointer-events-none opacity-45",
+          )}
+        >
+          <Input
+            name="recommendationHeadline"
+            label="כותרת"
+            value={recommendationHeadline}
+            onChange={(e) => setRecommendationHeadline(e.target.value)}
+            disabled={!recommendationVisible}
+            maxLength={PROFILE_FORM_LIMITS.RECOMMENDATION_HEADLINE_MAX_CHARS}
+            error={showRecoHeadlineError ? submitFieldErrors.recommendationHeadline : undefined}
+            surface="linen"
+          />
+          <Input
+            name="recommendationSub"
+            label="תיאור משלים"
+            value={recommendationSub}
+            onChange={(e) => setRecommendationSub(e.target.value)}
+            disabled={!recommendationVisible}
+            maxLength={PROFILE_FORM_LIMITS.RECOMMENDATION_SUB_MAX_CHARS}
+            error={showRecoSubError ? submitFieldErrors.recommendationSub : undefined}
+            surface="linen"
+          />
+        </div>
+      </Card>
+
+      {/* ===== 8. Pricing ===== */}
+      <Card padding="md" className="text-start">
+        <h3 className="mb-2 flex items-center gap-2 font-display text-lg font-bold text-primary-container">
+          <span className="material-symbols-outlined" aria-hidden="true">
+            payments
+          </span>
+          תמחור — בחרו אורכי שיעור
+        </h3>
+        <p className="mb-4 text-xs text-secondary">
+          אתם קובעים את המחיר. סמנו רק את אורכי השיעור שאתם מציעים. הממוצע בתחום: ₪150-200 לשעה.
+        </p>
+        {submitFieldErrors.prices && (
+          <p role="alert" className="mb-3 text-xs font-bold text-danger">
+            {submitFieldErrors.prices}
+          </p>
+        )}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {LESSON_LENGTH_MINUTES.map((len) => (
+            <PriceInput
+              key={len}
+              name={`price${len}Ils`}
+              label={`שיעור ${len} דק׳`}
+              value={prices[len]}
+              onChange={(v) => setPriceFor(len, v)}
+              error={
+                showPriceError[len]
+                  ? submitFieldErrors[`price${len}Ils` as `price${typeof len}Ils`]
+                  : undefined
+              }
+            />
+          ))}
+        </div>
+      </Card>
+
       {/* ===== CTAs ===== */}
       {isEditMode ? (
         <div className="flex items-center gap-3">
@@ -888,8 +1064,6 @@ export function ProfileForm({
             fullWidth
             loading={pending && state.intent === "submit"}
             onClick={() => {
-              // Reset intent on submit click so we can co-exist with the
-              // explicit "save draft" button.
               const formEl = formRef.current;
               const intentInput = formEl?.querySelector(
                 'input[name="intent"]',
@@ -991,12 +1165,6 @@ function probeVideoDuration(file: File): Promise<number> {
     video.preload = "metadata";
     video.onloadedmetadata = () => {
       URL.revokeObjectURL(url);
-      // Code-review patch (2026-05-12, patch #12): some containers report
-      // Infinity/NaN until the entire media is loaded; those values silently
-      // bypass the upper-bound check both client-side and on the server.
-      // Treat unreadable durations as 0 so the duration-bounds check fires.
-      // Floor (not round) so a 4.6s video doesn't round up to 5 and squeak
-      // past the minimum.
       const raw = video.duration;
       if (!Number.isFinite(raw) || raw <= 0) {
         reject(new Error("לא ניתן לקרוא את אורך הסרטון."));

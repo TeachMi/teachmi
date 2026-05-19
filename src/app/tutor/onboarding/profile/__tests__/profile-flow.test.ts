@@ -16,14 +16,22 @@ const SUBJECT_IDS = new Map([
   ["psychometric", "00000000-0000-0000-0000-000000000012"],
 ]);
 
+const VALID_LONG_BIO =
+  "מורה למתמטיקה וטכנולוגיה עם תואר ד״ר מאוניברסיטת תל אביב. מלמדת מעל 8 שנים, מהתיכון ועד הכנה לפסיכומטרי. גישה ידידותית, סבלנית, ויעילה.";
+
 const VALID_INPUT = {
   displayName: "ד״ר ישראלה ישראלי",
   gender: "female",
-  bio:
-    "מורה למתמטיקה וטכנולוגיה עם תואר ד״ר מאוניברסיטת תל אביב. מלמדת מעל 8 שנים, מהתיכון ועד הכנה לפסיכומטרי. גישה ידידותית, סבלנית, ויעילה.",
+  // Story 2.11 (2026-05-18): bio → tagline / shortBio / longBio split.
+  tagline: "מורה למתמטיקה ופיזיקה",
+  shortBio: "מורה למתמטיקה עם 8 שנות ניסיון, מהתיכון ועד הכנה לפסיכומטרי.",
+  longBio: VALID_LONG_BIO,
+  highlights: ["accessible", "patient"],
+  recommendationVisible: false,
+  recommendationHeadline: "",
+  recommendationSub: "",
   subjects: ["mathematics", "english", "psychometric"],
   prices: { 45: 140, 60: 180, 75: null, 90: null },
-  city: "תל אביב",
   photoR2Key: `photos/${TUTOR_ID}/01HQXY.png`,
   introVideoR2Key: `intros/${TUTOR_ID}/01HQXY.mp4`,
 };
@@ -162,15 +170,20 @@ describe("runSubmitProfile — validation failures", () => {
     // Story 2.10 amendment 2026-05-16: the upper-bound subject cap was
     // dropped (SUBJECTS_MAX raised to 100 acting as a guard rail) per
     // founder direction. Only the minimum-1 constraint stays.
-    ["bio under 50 chars", { bio: "קצר מדי" }, "bio"],
-    ["bio over 1000 chars", { bio: "x".repeat(1001) }, "bio"],
+    ["longBio under 50 chars", { longBio: "קצר מדי" }, "longBio"],
+    ["longBio over 1000 chars", { longBio: "x".repeat(1001) }, "longBio"],
+    ["shortBio under 30 chars", { shortBio: "קצר" }, "shortBio"],
+    ["tagline under 4 chars", { tagline: "אב" }, "tagline"],
+    ["tagline over 60 chars", { tagline: "x".repeat(61) }, "tagline"],
     ["price45 of 0", { prices: { 45: 0, 60: 180, 75: null, 90: null } }, "price45Ils"],
     ["price60 of 0", { prices: { 45: 140, 60: 0, 75: null, 90: null } }, "price60Ils"],
     ["price60 over cap", { prices: { 45: 140, 60: 50_000, 75: null, 90: null } }, "price60Ils"],
     // Story 2.10 follow-up 2026-05-17: cross-length consistency (price45 < price60) was dropped.
     // The previous "price45 ≥ price60 → error" test case no longer applies.
     ["no lengths offered at all", { prices: { 45: null, 60: null, 75: null, 90: null } }, "prices"],
-    ["missing intro video", { introVideoR2Key: undefined }, "introVideoR2Key"],
+    // Story 2.11 (2026-05-18): intro video is now OPTIONAL — no error when missing.
+    // Photo is now REQUIRED (was optional).
+    ["missing photo", { photoR2Key: undefined }, "photoR2Key"],
     ["display name under 2 chars", { displayName: "א" }, "displayName"],
   ])("rejects %s", async (_name, overrideInput, expectedField) => {
     const { db, deps } = makeDeps();
@@ -245,13 +258,13 @@ describe("runSaveDraft", () => {
     const { db, deps } = makeDeps();
     db.queueSelect([{ phase: 2 }]);
 
-    const result = await runSaveDraft({ bio: "עוד טיוטה" }, deps);
+    const result = await runSaveDraft({ longBio: "עוד טיוטה" }, deps);
 
     expect(result.ok).toBe(true);
     expect(db.insertedInto(tutorWizardState)).toHaveLength(0);
     expect(db.updatedAt(tutorWizardState)).toHaveLength(1);
     expect(db.updatedAt(tutorWizardState)[0]?.set).toMatchObject({
-      data: { bio: "עוד טיוטה" },
+      data: { longBio: "עוד טיוטה" },
     });
   });
 
@@ -259,7 +272,7 @@ describe("runSaveDraft", () => {
     const { db, deps } = makeDeps();
     db.failNext = new Error("simulated DB outage");
 
-    const result = await runSaveDraft({ bio: "טיוטה" }, deps);
+    const result = await runSaveDraft({ longBio: "טיוטה" }, deps);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;

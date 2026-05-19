@@ -1,6 +1,7 @@
 // src/lib/db/schema.ts
 import {
   pgTable,
+  pgView,
   uuid,
   text,
   integer,
@@ -202,6 +203,33 @@ export const accountDeletionSnapshots = pgTable(
 );
 
 // ------------------------------------------------------------------------------
+// billing_addresses - Story 4.3 (2026-05-18). 1:1 with users.
+// Pre-filled with mock data on first checkout in closed-beta; UPSERTed on
+// submit. The future invoice flow (Story 8.x) reads from here to populate
+// `customer_receipt` + `transaction_invoice` recipient fields. Kept as its
+// own table (not a JSON bag on user_profiles) so the Story 8.x schema can
+// extend it with multiple addresses if needed without a refactor.
+// ------------------------------------------------------------------------------
+export const billingAddresses = pgTable(
+  "billing_addresses",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    fullName: text("full_name").notNull(),
+    phone: text("phone").notNull(),
+    /** Israeli ID (ת"ז) — 9 digits typically, stored as string. Validation deferred to Story 8.x. */
+    nationalId: text("national_id").notNull(),
+    street: text("street").notNull(),
+    city: text("city").notNull(),
+    zip: text("zip").notNull(),
+    ...metaCols,
+  },
+  (t) => ({
+    userIdUnique: unique("uq_billing_addresses_user_id").on(t.userId),
+  }),
+);
+
+// ------------------------------------------------------------------------------
 // audit_events - append-only (NFR16 + concern #3)
 // Written same-tx with the action it audits via lib/db/audit.ts helper.
 // ------------------------------------------------------------------------------
@@ -268,8 +296,36 @@ export const tutorProfiles = pgTable(
     // to-say would still need a fallback for Hebrew agreement (default to
     // masculine, the unmarked form).
     gender: text("gender", { enum: ["male", "female"] }).notNull(),
+    // Story 2.11 (2026-05-18 founder direction) — profile content fields.
+    // `bio` is DEPRECATED: replaced by `short_bio` + `long_bio`. Kept this
+    // PR as a safety net during deploy window (Winston's call); dropped
+    // in a follow-up cleanup PR.
     bio: text("bio"),
+    // `city` is DEPRECATED — dropped from the public profile + editor per
+    // founder direction 2026-05-18. The column itself is NOT dropped in
+    // this PR. Code review 2026-05-19 (F1): the original drop migration
+    // (`0014_shallow_cloak.sql`) was DEFERRED to a follow-up PR because
+    // `migrate-prod` runs BEFORE Vercel cuts over, and any OLD app code
+    // still reading `tutor_profiles.city` during the ~60s deploy window
+    // would 500. This PR ships only the app-level removal; the column
+    // drop lands in a separate follow-up PR after this deploy settles.
     city: text("city"),
+    // Short headline (max 60) shown directly under display name.
+    tagline: text("tagline"),
+    // 1–2 sentences (max 220) under the identity row on the public profile.
+    shortBio: text("short_bio"),
+    // 2–3 paragraphs (max 1000) — the "אודות" section.
+    longBio: text("long_bio"),
+    // Up to 4 slug values from the fixed app-level taxonomy in
+    // `src/lib/highlights.ts`. Cap is enforced at the form + Server
+    // Action layer, not the DB — easier to relax later.
+    highlights: text("highlights").array(),
+    // Optional "מומלצת במיוחד" feature card. `recommendationVisible`
+    // toggles render without losing the underlying copy if the tutor
+    // hides then re-shows it.
+    recommendationHeadline: text("recommendation_headline"),
+    recommendationSub: text("recommendation_sub"),
+    recommendationVisible: boolean("recommendation_visible").notNull().default(false),
     introVideoR2Key: text("intro_video_r2_key"),                                // R2 object key; presigned URL for view
     profilePhotoR2Key: text("profile_photo_r2_key"),
     // Per-lesson-length pricing. Each is NULL unless the tutor offers that
@@ -303,6 +359,9 @@ export const tutorProfiles = pgTable(
     userIdUnique: unique("uq_tutor_profiles_user_id").on(t.userId),
     vettingStatusIdx: index("idx_tutor_profiles_vetting_status").on(t.vettingStatus),
     isActiveIdx: index("idx_tutor_profiles_is_active").on(t.isActive),
+    // `cityIdx` is retained alongside the deprecated `city` column —
+    // dropped in the same follow-up PR that drops the column itself
+    // (see Story 2.11 / F1 deferral note on the `city` column above).
     cityIdx: index("idx_tutor_profiles_city").on(t.city),
     priceIdx: index("idx_tutor_profiles_price").on(t.hourlyPriceIls),
     avgRatingIdx: index("idx_tutor_profiles_avg_rating").on(t.averageRating),  // nulls last for browse sort
@@ -676,13 +735,42 @@ export const payments = pgTable(
     }).notNull().default("pending"),
     failureReason: text("failure_reason"),
     settledAt: timestamp("settled_at", { withTimezone: true }),
+    // Story 4.3 (2026-05-18). True when the row was created by the closed-beta
+    // mock-payment flow (no real money moved). The `payments_real` view below
+    // filters these out so reporting / payout / invoicing code can never
+    // accidentally include beta rows. Real PayMe-settled rows have false.
+    mockPayment: boolean("mock_payment").notNull().default(false),
     ...metaCols,
   },
   (t) => ({
     paymeTxnUnique: unique("uq_payments_payme_transaction_id").on(t.paymeTransactionId),
     bookingIdx: index("idx_payments_booking").on(t.bookingId),
     statusIdx: index("idx_payments_status").on(t.status, t.createdAt),
+    // Partial UNIQUE: one PENDING-with-no-PayMe-txn row per booking. Closes
+    // the race where a student double-clicks "אישור הזמנה" before the first
+    // INSERT settles — Story 4.3's idempotent SELECT-then-INSERT can still
+    // catch this defensively, but the DB is the load-bearing gate. Mock
+    // (closed-beta) payments are inserted with status='settled' so they
+    // fall outside this index.
+    bookingPendingUnique: uniqueIndex("uq_payments_booking_pending")
+      .on(t.bookingId)
+      .where(sql`status = 'pending' AND payme_transaction_id IS NULL`),
   }),
+);
+
+// ------------------------------------------------------------------------------
+// payments_real - VIEW over payments WHERE mock_payment=false. Story 4.3.
+//
+// Winston's call: any downstream reporting / payout / invoicing / billing-
+// history query MUST go through this view, never the underlying `payments`
+// table. The `mock_payment` flag exists so the closed-beta can exercise the
+// full booking → payment → audit flow end-to-end, but those rows must never
+// leak into commission reports, payout files, or the 4-doc tax-invoice set.
+//
+// Single point of enforcement > N consumers each remembering to WHERE-filter.
+// ------------------------------------------------------------------------------
+export const paymentsReal = pgView("payments_real").as((qb) =>
+  qb.select().from(payments).where(sql`${payments.mockPayment} = false`),
 );
 
 // ------------------------------------------------------------------------------
@@ -1066,6 +1154,9 @@ export type NewDisputeMessage = typeof disputeMessages.$inferInsert;
 
 export type Payment = typeof payments.$inferSelect;
 export type NewPayment = typeof payments.$inferInsert;
+
+export type BillingAddress = typeof billingAddresses.$inferSelect;
+export type NewBillingAddress = typeof billingAddresses.$inferInsert;
 
 export type Invoice = typeof invoices.$inferSelect;
 export type NewInvoice = typeof invoices.$inferInsert;
