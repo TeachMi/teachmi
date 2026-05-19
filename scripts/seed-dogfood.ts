@@ -254,7 +254,56 @@ async function seedTutorProfile(
     `;
   }
 
-  console.log(`    profile + ${subjectRows.length} subject(s) seeded for ${account.email}`);
+  // Story 4.3 follow-up 2026-05-19: seed default recurring availability so
+  // the dogfood tutor is BOOKABLE end-to-end the moment the seed completes.
+  // Without this, the public profile renders the sidebar's disabled "אין
+  // זמינות כרגע" state and the founder can't smoke-test the booking flow.
+  //
+  // Default schedule: Sun–Thu (weekday 0–4), 14:00–22:00, in 30-min cells.
+  // This mirrors what the SCHEDULE_GRID editor would produce after a tutor
+  // selected the "afternoon + evening" Quick-Add chips for Sun-Thu — the
+  // most realistic "I'm a tutor, set me up for testing" default.
+  //
+  // Guarded: only seed availability when the tutor has ZERO existing
+  // recurring rows. Re-running the seed never wipes a tutor's manual edits.
+  const existingAvailability = (await sql`
+    SELECT COUNT(*)::int AS n FROM tutor_availability
+    WHERE tutor_user_id = ${userId} AND kind = 'recurring'
+  `) as Array<{ n: number }>;
+  const existingCount = existingAvailability[0]?.n ?? 0;
+  let availabilityRowsInserted = 0;
+  if (existingCount === 0) {
+    // 30-min cells from 14:00 to 22:00 → 16 cells per weekday.
+    const cells: Array<{ startTime: string; endTime: string }> = [];
+    for (let half = 0; half < 16; half++) {
+      const startMinutes = 14 * 60 + half * 30;
+      const endMinutes = startMinutes + 30;
+      const fmt = (m: number) =>
+        `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:00`;
+      cells.push({ startTime: fmt(startMinutes), endTime: fmt(endMinutes) });
+    }
+    // Weekday 0 = Sunday … 4 = Thursday.
+    const weekdays = [0, 1, 2, 3, 4];
+    for (const weekday of weekdays) {
+      for (const cell of cells) {
+        await sql`
+          INSERT INTO tutor_availability (
+            tutor_user_id, kind, weekday, start_time, end_time,
+            created_by_kind, created_by_actor
+          )
+          VALUES (
+            ${userId}, ${"recurring"}, ${weekday}, ${cell.startTime}, ${cell.endTime},
+            ${"system"}, ${"dogfood-seed"}
+          )
+        `;
+        availabilityRowsInserted++;
+      }
+    }
+  }
+
+  console.log(
+    `    profile + ${subjectRows.length} subject(s)${availabilityRowsInserted > 0 ? ` + ${availabilityRowsInserted} availability rows (Sun-Thu 14:00-22:00)` : " (availability preserved)"} for ${account.email}`,
+  );
 }
 
 main().catch((err) => {
