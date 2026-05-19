@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
+import { AddAllUpcomingButton } from "@/components/booking/AddAllUpcomingButton";
 import { getUpcomingBookingsForTutor } from "@/lib/db/queries/booking-queries";
 import { requireTutor } from "../onboarding/_lib/require-tutor";
 import { TutorTabNav } from "./_components/TutorTabNav";
@@ -40,6 +41,20 @@ export default async function TutorMeLayout({
   // empty so the page still renders if the query falters.
   const upcoming = await getUpcomingBookingsForTutor(user.id);
 
+  // Area 1.4 (2026-05-19): "Add all upcoming to calendar" — bundles every
+  // active booking into a multi-VEVENT .ics. Tutor view: counterpart is
+  // the student.
+  const upcomingForCalendar = upcoming.map((b) => ({
+    id: b.id,
+    startIso: b.startsAt.toISOString(),
+    endIso: new Date(
+      b.startsAt.getTime() + b.durationMinutes * 60 * 1000,
+    ).toISOString(),
+    counterpartName: b.studentDisplayName ?? "תלמיד/ה",
+    subjectNameHe: b.subjectNameHe,
+    durationMinutes: b.durationMinutes,
+  }));
+
   return (
     <AppShell mainClassName="flex-1 bg-surface">
       <div className="mx-auto w-full max-w-7xl px-6 pt-8">
@@ -60,6 +75,14 @@ export default async function TutorMeLayout({
           </Link>
         </div>
         <UpcomingLessonsStrip upcoming={upcoming} />
+        {upcoming.length > 0 && (
+          <div className="mb-6 flex justify-start">
+            <AddAllUpcomingButton
+              bookings={upcomingForCalendar}
+              filenameStem="teachme-tutor-lessons"
+            />
+          </div>
+        )}
       </div>
       <TutorTabNav />
       <div className="mx-auto w-full max-w-7xl px-6 py-6 pb-10">{children}</div>
