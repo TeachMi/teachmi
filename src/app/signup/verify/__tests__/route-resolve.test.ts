@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { signSlotPayload } from "../../../../lib/auth/slot-signing";
-import { buildBookingStubUrl } from "../../../../lib/booking/urls";
+import { buildCheckoutUrl } from "../../../../lib/booking/urls";
 import type { VerifyFlowResult } from "../../verify-flow";
 import { resolveVerifyRedirect } from "../route-resolve";
 
@@ -32,7 +32,7 @@ function gateUrl(): string {
     slotIso: SLOT_ISO,
     duration: 60,
   });
-  return buildBookingStubUrl({
+  return buildCheckoutUrl({
     tutorUserId: TUTOR_ID,
     slotIso: SLOT_ISO,
     duration: 60,
@@ -79,8 +79,8 @@ describe("resolveVerifyRedirect — ok (session created)", () => {
     expect(resolved.completionTutorUserId).toBeNull();
   });
 
-  it("does not fire completion when next is a booking-stub URL with a tampered sig", () => {
-    const tampered = `/booking-stub?tutor=${TUTOR_ID}&slot=${SLOT_ISO}&duration=60&sig=AAAAAAAAAAAAAAAAAAAAAA`;
+  it("does not fire completion when next is a checkout URL with a tampered sig", () => {
+    const tampered = `/checkout?tutor=${TUTOR_ID}&slot=${SLOT_ISO}&duration=60&sig=AAAAAAAAAAAAAAAAAAAAAA`;
     const resolved = resolveVerifyRedirect(okResult(), tampered);
     // The path is still followed (tampered URL was already getSafeCallbackUrl'd),
     // but no completion event because the sig doesn't verify.

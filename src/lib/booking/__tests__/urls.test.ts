@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { signSlotPayload } from "../../auth/slot-signing";
 import {
-  buildBookingStubUrl,
+  buildCheckoutUrl,
   buildGateSignupUrl,
-  buildSignedBookingStubUrl,
+  buildSignedCheckoutUrl,
   decomposeNextToGateParams,
   parseGateParams,
 } from "../urls";
@@ -87,29 +87,29 @@ describe("buildGateSignupUrl", () => {
   });
 });
 
-describe("buildBookingStubUrl", () => {
-  it("composes a /booking-stub URL with tutor, slot, duration, sig", () => {
+describe("buildCheckoutUrl", () => {
+  it("composes a /checkout URL with tutor, slot, duration, sig", () => {
     const sig = validSig();
-    const url = buildBookingStubUrl({
+    const url = buildCheckoutUrl({
       tutorUserId: TUTOR_ID,
       slotIso: SLOT_ISO,
       duration: 60,
       sig,
     });
     expect(url).toBe(
-      `/booking-stub?tutor=${TUTOR_ID}&slot=${encodeURIComponent(SLOT_ISO)}&duration=60&sig=${sig}`,
+      `/checkout?tutor=${TUTOR_ID}&slot=${encodeURIComponent(SLOT_ISO)}&duration=60&sig=${sig}`,
     );
   });
 });
 
-describe("buildSignedBookingStubUrl", () => {
-  it("signs + composes — output equals buildBookingStubUrl with the same sig", () => {
-    const signed = buildSignedBookingStubUrl({
+describe("buildSignedCheckoutUrl", () => {
+  it("signs + composes — output equals buildCheckoutUrl with the same sig", () => {
+    const signed = buildSignedCheckoutUrl({
       tutorUserId: TUTOR_ID,
       slotIso: SLOT_ISO,
       duration: 60,
     });
-    const composed = buildBookingStubUrl({
+    const composed = buildCheckoutUrl({
       tutorUserId: TUTOR_ID,
       slotIso: SLOT_ISO,
       duration: 60,
@@ -138,7 +138,7 @@ describe("parseGateParams — happy path", () => {
     expect(payload?.duration).toBe(60);
     expect(payload?.sig).toBe(sig);
     expect(payload?.next).toBe(
-      `/booking-stub?tutor=${TUTOR_ID}&slot=${encodeURIComponent(SLOT_ISO)}&duration=60&sig=${sig}`,
+      `/checkout?tutor=${TUTOR_ID}&slot=${encodeURIComponent(SLOT_ISO)}&duration=60&sig=${sig}`,
     );
   });
 
@@ -339,9 +339,9 @@ describe("parseGateParams — validation failures", () => {
 });
 
 describe("decomposeNextToGateParams", () => {
-  it("extracts gate params from a valid booking-stub URL", () => {
+  it("extracts gate params from a valid checkout URL", () => {
     const sig = validSig();
-    const next = buildBookingStubUrl({
+    const next = buildCheckoutUrl({
       tutorUserId: TUTOR_ID,
       slotIso: SLOT_ISO,
       duration: 60,
@@ -360,19 +360,19 @@ describe("decomposeNextToGateParams", () => {
     expect(decomposeNextToGateParams("")).toBeNull();
   });
 
-  it("returns null when the path is not /booking-stub", () => {
+  it("returns null when the path is not /checkout", () => {
     const sig = validSig();
     const fake = `/dashboard?tutor=${TUTOR_ID}&slot=${SLOT_ISO}&duration=60&sig=${sig}`;
     expect(decomposeNextToGateParams(fake)).toBeNull();
   });
 
   it("returns null when sig is missing from the embedded URL", () => {
-    const partial = `/booking-stub?tutor=${TUTOR_ID}&slot=${SLOT_ISO}&duration=60`;
+    const partial = `/checkout?tutor=${TUTOR_ID}&slot=${SLOT_ISO}&duration=60`;
     expect(decomposeNextToGateParams(partial)).toBeNull();
   });
 
   it("returns null when sig is tampered", () => {
-    const tampered = `/booking-stub?tutor=${TUTOR_ID}&slot=${SLOT_ISO}&duration=60&sig=AAAAAAAAAAAAAAAAAAAAAA`;
+    const tampered = `/checkout?tutor=${TUTOR_ID}&slot=${SLOT_ISO}&duration=60&sig=AAAAAAAAAAAAAAAAAAAAAA`;
     expect(decomposeNextToGateParams(tampered)).toBeNull();
   });
 
@@ -384,19 +384,19 @@ describe("decomposeNextToGateParams", () => {
     });
     // Even with a valid sig for duration=60, passing duration=30 in the URL
     // must fail (coerceDuration rejects).
-    const fake = `/booking-stub?tutor=${TUTOR_ID}&slot=${SLOT_ISO}&duration=30&sig=${sig}`;
+    const fake = `/checkout?tutor=${TUTOR_ID}&slot=${SLOT_ISO}&duration=30&sig=${sig}`;
     expect(decomposeNextToGateParams(fake)).toBeNull();
   });
 
   it("returns null when the embedded tutorUserId is not a UUID", () => {
     const sig = validSig();
-    const fake = `/booking-stub?tutor=not-a-uuid&slot=${SLOT_ISO}&duration=60&sig=${sig}`;
+    const fake = `/checkout?tutor=not-a-uuid&slot=${SLOT_ISO}&duration=60&sig=${sig}`;
     expect(decomposeNextToGateParams(fake)).toBeNull();
   });
 
   it("accepts an absolute URL form (defensive)", () => {
     const sig = validSig();
-    const next = `https://teachme.app/booking-stub?tutor=${TUTOR_ID}&slot=${encodeURIComponent(SLOT_ISO)}&duration=60&sig=${sig}`;
+    const next = `https://teachme.app/checkout?tutor=${TUTOR_ID}&slot=${encodeURIComponent(SLOT_ISO)}&duration=60&sig=${sig}`;
     const result = decomposeNextToGateParams(next);
     expect(result).not.toBeNull();
     expect(result?.tutorUserId).toBe(TUTOR_ID);

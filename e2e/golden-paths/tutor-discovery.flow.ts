@@ -89,14 +89,18 @@ export async function provisionInactiveTutor(
 
   // Provision a tutor_profiles row in the "fresh submit" state: is_active=false,
   // vetting_status='pending'. Idempotent — if a prior test landed an approved
-  // state, reset to pending here.
+  // state, reset to pending here. `gender: 'female'` matches "ד״ר מיכל לוי"
+  // (Michal = female), so the verified-badge spec assertion ("מורה מאומתת")
+  // gender-agrees with the fixture identity.
   await db
     .insert(tutorProfiles)
     .values({
       userId,
       displayName: "ד״ר מיכל לוי (E2E)",
-      bio: "מורה למתמטיקה — שיעורים פרטיים לבגרות.",
-      city: "תל אביב",
+      gender: "female",
+      tagline: "מורה למתמטיקה",
+      shortBio: "מורה פרטי מנוסה במתמטיקה עם 8 שנות ניסיון.",
+      longBio: "מלמד מתמטיקה כבר 8 שנים, מבית ספר התיכון ועד הכנה לפסיכומטרי. גישה אישית, חומרי לימוד מקוריים, ומעקב שבועי.",
       introVideoR2Key: `intros/${userId}/e2e-fixture.mp4`,
       profilePhotoR2Key: null,
       hourlyPriceIls: 180,

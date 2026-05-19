@@ -26,18 +26,30 @@ const SUBJECT_IDS = new Map([
   ["physics", "00000000-0000-0000-0000-000000000013"],
 ]);
 
+const EXISTING_LONG_BIO =
+  "מורה למתמטיקה וטכנולוגיה עם תואר ד״ר מאוניברסיטת תל אביב. מלמדת מעל 8 שנים, מהתיכון ועד הכנה לפסיכומטרי. גישה ידידותית, סבלנית, ויעילה.";
+
 const EXISTING_PROFILE = {
   id: PROFILE_ROW_ID,
   vettingStatus: "approved" as const,
   isActive: true,
   displayName: "ד״ר ישראלה ישראלי",
-  bio:
-    "מורה למתמטיקה וטכנולוגיה עם תואר ד״ר מאוניברסיטת תל אביב. מלמדת מעל 8 שנים, מהתיכון ועד הכנה לפסיכומטרי. גישה ידידותית, סבלנית, ויעילה.",
-  city: "תל אביב",
+  gender: "female" as const,
+  // Story 2.11 (2026-05-18): `bio` + `city` removed, replaced by the
+  // tagline / shortBio / longBio / highlights / recommendation fields.
+  tagline: "מורה למתמטיקה ופיזיקה",
+  shortBio: "מורה למתמטיקה עם 8 שנות ניסיון, מהתיכון ועד פסיכומטרי.",
+  longBio: EXISTING_LONG_BIO,
+  highlights: ["accessible", "patient"] as string[],
+  recommendationHeadline: null as string | null,
+  recommendationSub: null as string | null,
+  recommendationVisible: false,
   introVideoR2Key: `intros/${TUTOR_ID}/v1.mp4`,
   profilePhotoR2Key: `photos/${TUTOR_ID}/v1.png`,
   hourlyPriceIls: 180,
   lesson45PriceIls: 140,
+  lesson75PriceIls: null,
+  lesson90PriceIls: null,
 };
 
 const EXISTING_SUBJECT_ROWS = [
@@ -48,11 +60,21 @@ const EXISTING_SUBJECT_ROWS = [
 
 const UNCHANGED_INPUT = {
   displayName: EXISTING_PROFILE.displayName,
-  bio: EXISTING_PROFILE.bio,
+  gender: EXISTING_PROFILE.gender,
+  tagline: EXISTING_PROFILE.tagline,
+  shortBio: EXISTING_PROFILE.shortBio,
+  longBio: EXISTING_PROFILE.longBio,
+  highlights: EXISTING_PROFILE.highlights,
+  recommendationVisible: EXISTING_PROFILE.recommendationVisible,
+  recommendationHeadline: "",
+  recommendationSub: "",
   subjects: ["mathematics", "english", "psychometric"],
-  price45Ils: EXISTING_PROFILE.lesson45PriceIls,
-  price60Ils: EXISTING_PROFILE.hourlyPriceIls,
-  city: EXISTING_PROFILE.city,
+  prices: {
+    45: EXISTING_PROFILE.lesson45PriceIls,
+    60: EXISTING_PROFILE.hourlyPriceIls,
+    75: null,
+    90: null,
+  },
   photoR2Key: EXISTING_PROFILE.profilePhotoR2Key,
   introVideoR2Key: EXISTING_PROFILE.introVideoR2Key,
 };
@@ -109,7 +131,7 @@ describe("runEditProfile — save preserves discoverability (AC2)", () => {
   it("bio change → single UPDATE + ONE audit row, NO is_active or vetting_status touched", async () => {
     const { db, deps } = makeDeps();
     const result = await runEditProfile(
-      { ...UNCHANGED_INPUT, bio: `${UNCHANGED_INPUT.bio} עודכן ב-2026.` },
+      { ...UNCHANGED_INPUT, longBio: `${UNCHANGED_INPUT.longBio} עודכן ב-2026.` },
       deps,
     );
 
@@ -132,13 +154,13 @@ describe("runEditProfile — save preserves discoverability (AC2)", () => {
       payload: { changedFields: string[] };
     };
     expect(auditValue.eventType).toBe("tutor.profile_edited");
-    expect(auditValue.payload.changedFields).toEqual(["bio"]);
+    expect(auditValue.payload.changedFields).toEqual(["long_bio"]);
   });
 
   it("price change → single UPDATE + ONE audit row, NO gate flip", async () => {
     const { db, deps } = makeDeps();
     const result = await runEditProfile(
-      { ...UNCHANGED_INPUT, price60Ils: 220 },
+      { ...UNCHANGED_INPUT, prices: { ...UNCHANGED_INPUT.prices, 60: 220 } },
       deps,
     );
 
@@ -217,19 +239,19 @@ it("mixed trigger + non-trigger change → ONE UPDATE + ONE audit row with combi
     const result = await runEditProfile(
       {
         ...UNCHANGED_INPUT,
-        price60Ils: 220,
-        bio: `${UNCHANGED_INPUT.bio} עוד טקסט.`,
+        prices: { ...UNCHANGED_INPUT.prices, 60: 220 },
+        longBio: `${UNCHANGED_INPUT.longBio} עוד טקסט.`,
       },
       deps,
     );
 
     expect(result.ok).toBe(true);
-    // ONE profile UPDATE bundling both price + bio.
+    // ONE profile UPDATE bundling both price + long_bio.
     const profileUpdates = db.updatedAt(tutorProfiles);
     expect(profileUpdates).toHaveLength(1);
     const set = profileUpdates[0]!.set as Record<string, unknown>;
     expect(set.hourlyPriceIls).toBe(220);
-    expect(set.bio).toContain("עוד טקסט");
+    expect(set.longBio).toContain("עוד טקסט");
 
     // ONE audit row covering both fields.
     expect(db.insertedInto(auditEvents)).toHaveLength(1);
@@ -239,7 +261,7 @@ it("mixed trigger + non-trigger change → ONE UPDATE + ONE audit row with combi
     };
     expect(auditValue.eventType).toBe("tutor.profile_edited");
     expect(auditValue.payload.changedFields.sort()).toEqual(
-      ["bio", "hourly_price"].sort(),
+      ["hourly_price", "long_bio"].sort(),
     );
   });
 
@@ -247,8 +269,8 @@ it("mixed trigger + non-trigger change → ONE UPDATE + ONE audit row with combi
     // Sanity assertion: the unified redirect target replaces Story 2.5's
     // branching (trigger → /dashboard, non-trigger → /tutor/<userId>).
     const cases = [
-      { ...UNCHANGED_INPUT, bio: `${UNCHANGED_INPUT.bio} edit.` },
-      { ...UNCHANGED_INPUT, price60Ils: 220 },
+      { ...UNCHANGED_INPUT, longBio: `${UNCHANGED_INPUT.longBio} edit.` },
+      { ...UNCHANGED_INPUT, prices: { ...UNCHANGED_INPUT.prices, 60: 220 } },
       { ...UNCHANGED_INPUT, subjects: ["mathematics"] },
     ];
     for (const input of cases) {
@@ -265,15 +287,15 @@ it("mixed trigger + non-trigger change → ONE UPDATE + ONE audit row with combi
 // ---------------------------------------------------------------------------
 
 describe("runEditProfile — input validation", () => {
-  it("invalid bio (too short) → fieldErrors, no DB writes", async () => {
+  it("invalid longBio (too short) → fieldErrors, no DB writes", async () => {
     const { db, deps } = makeDeps();
     const result = await runEditProfile(
-      { ...UNCHANGED_INPUT, bio: "קצר" },
+      { ...UNCHANGED_INPUT, longBio: "קצר" },
       deps,
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.fieldErrors?.bio).toBeTruthy();
+    expect(result.fieldErrors?.longBio).toBeTruthy();
     expect(db.updates).toEqual([]);
     expect(db.inserts).toEqual([]);
   });

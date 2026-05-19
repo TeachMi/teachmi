@@ -139,7 +139,7 @@ describe("runResend — invalid email", () => {
 // AND the post-resend redirect so a SECOND resend retains intent.
 describe("runResend — Story 3.3 next threading", () => {
   const NEXT_URL =
-    "/booking-stub?tutor=11111111-2222-3333-4444-555555555555&slot=2026-05-20T11%3A00%3A00.000Z&duration=60&sig=abc";
+    "/checkout?tutor=11111111-2222-3333-4444-555555555555&slot=2026-05-20T11%3A00%3A00.000Z&duration=60&sig=abc";
 
   it("threads next into the regenerated verification URL", async () => {
     const { db, email, deps } = makeDeps({ next: NEXT_URL });

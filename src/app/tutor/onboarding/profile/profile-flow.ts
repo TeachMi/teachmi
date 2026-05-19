@@ -30,11 +30,22 @@ import {
 function clampDraftForPersistence(raw: ProfileDraftInput): ProfileDraftInput {
   return {
     displayName: raw.displayName?.slice(0, PROFILE_FORM_LIMITS.DISPLAY_NAME_MAX_CHARS),
-    bio: raw.bio?.slice(0, PROFILE_FORM_LIMITS.BIO_MAX_CHARS),
+    gender: raw.gender,
+    tagline: raw.tagline?.slice(0, PROFILE_FORM_LIMITS.TAGLINE_MAX_CHARS),
+    shortBio: raw.shortBio?.slice(0, PROFILE_FORM_LIMITS.SHORT_BIO_MAX_CHARS),
+    longBio: raw.longBio?.slice(0, PROFILE_FORM_LIMITS.LONG_BIO_MAX_CHARS),
+    highlights: raw.highlights?.slice(0, 4),
+    recommendationVisible: raw.recommendationVisible,
+    recommendationHeadline: raw.recommendationHeadline?.slice(
+      0,
+      PROFILE_FORM_LIMITS.RECOMMENDATION_HEADLINE_MAX_CHARS,
+    ),
+    recommendationSub: raw.recommendationSub?.slice(
+      0,
+      PROFILE_FORM_LIMITS.RECOMMENDATION_SUB_MAX_CHARS,
+    ),
     subjects: raw.subjects?.slice(0, PROFILE_FORM_LIMITS.SUBJECTS_MAX),
-    price45Ils: raw.price45Ils,
-    price60Ils: raw.price60Ils,
-    city: raw.city?.slice(0, 80),
+    prices: raw.prices,
     photoR2Key: raw.photoR2Key?.slice(0, PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS),
     introVideoR2Key: raw.introVideoR2Key?.slice(0, PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS),
   };
@@ -141,7 +152,12 @@ export async function runSubmitProfile(
   // client could skip the confirm step and submit FormData with another
   // tutor's r2Key directly. Refuse here as well so submit-without-confirm
   // can't claim foreign keys.
-  if (!input.introVideoR2Key.startsWith(`intros/${deps.tutorUserId}/`)) {
+  // Story 2.11 (2026-05-18): introVideoR2Key is now optional (nullable). Only
+  // validate the ownership prefix when the tutor supplied a video.
+  if (
+    input.introVideoR2Key !== null &&
+    !input.introVideoR2Key.startsWith(`intros/${deps.tutorUserId}/`)
+  ) {
     log.error(
       `[runSubmitProfile] intro_video r2Key does not match tutor prefix: ${input.introVideoR2Key}`,
     );
@@ -202,12 +218,23 @@ export async function runSubmitProfile(
         .values({
           userId: deps.tutorUserId,
           displayName: input.displayName,
-          bio: input.bio,
-          city: input.city,
+          gender: input.gender,
+          // Story 2.11 — write new content fields; `bio` (deprecated)
+          // mirrors `longBio` for one deploy as a safety net.
+          bio: input.longBio,
+          tagline: input.tagline,
+          shortBio: input.shortBio,
+          longBio: input.longBio,
+          highlights: input.highlights,
+          recommendationHeadline: input.recommendationHeadline,
+          recommendationSub: input.recommendationSub,
+          recommendationVisible: input.recommendationVisible,
           introVideoR2Key: input.introVideoR2Key,
           profilePhotoR2Key: input.photoR2Key,
-          hourlyPriceIls: input.price60Ils,
-          lesson45PriceIls: input.price45Ils,
+          hourlyPriceIls: input.prices[60],
+          lesson45PriceIls: input.prices[45],
+          lesson75PriceIls: input.prices[75],
+          lesson90PriceIls: input.prices[90],
           lessonLengthMinutes: 60,
           vettingStatus: "pending",
           isActive: false,
@@ -224,12 +251,23 @@ export async function runSubmitProfile(
         .update(tutorProfiles)
         .set({
           displayName: input.displayName,
-          bio: input.bio,
-          city: input.city,
+          gender: input.gender,
+          // Story 2.11 — write new content fields; `bio` mirrors `longBio`
+          // during the one-deploy safety window.
+          bio: input.longBio,
+          tagline: input.tagline,
+          shortBio: input.shortBio,
+          longBio: input.longBio,
+          highlights: input.highlights,
+          recommendationHeadline: input.recommendationHeadline,
+          recommendationSub: input.recommendationSub,
+          recommendationVisible: input.recommendationVisible,
           introVideoR2Key: input.introVideoR2Key,
           profilePhotoR2Key: input.photoR2Key,
-          hourlyPriceIls: input.price60Ils,
-          lesson45PriceIls: input.price45Ils,
+          hourlyPriceIls: input.prices[60],
+          lesson45PriceIls: input.prices[45],
+          lesson75PriceIls: input.prices[75],
+          lesson90PriceIls: input.prices[90],
           // Re-submitting after changes-requested flips us back to "pending"
           // for re-review (Story 2.4 owns the admin queue surface). Approved
           // profiles editing high-impact fields is Story 2.5's concern — this
@@ -283,25 +321,30 @@ export async function runSubmitProfile(
     //    no tutor_documents row — admin queue (Story 2.4) never surfaces
     //    the video for review. Throw so the orchestrator's catch returns
     //    a clear form error and the user re-uploads.
-    const documentsUpdated = (await db
-      .update(tutorDocuments)
-      .set({
-        vettingStatus: "pending",
-        updatedAt: deps.now(),
-        updatedByKind: "user",
-        updatedByActor: deps.tutorUserId,
-      })
-      .where(
-        and(
-          eq(tutorDocuments.r2Key, input.introVideoR2Key),
-          eq(tutorDocuments.tutorUserId, deps.tutorUserId),
-        ),
-      )
-      .returning({ id: tutorDocuments.id })) as { id: string }[];
-    if (documentsUpdated.length === 0) {
-      throw new Error(
-        "[runSubmitProfile] intro_video document not found — admin moved it or row was deleted",
-      );
+    //
+    //    Story 2.11 (2026-05-18): video is optional. Skip this step entirely
+    //    when the tutor did not supply one.
+    if (input.introVideoR2Key !== null) {
+      const documentsUpdated = (await db
+        .update(tutorDocuments)
+        .set({
+          vettingStatus: "pending",
+          updatedAt: deps.now(),
+          updatedByKind: "user",
+          updatedByActor: deps.tutorUserId,
+        })
+        .where(
+          and(
+            eq(tutorDocuments.r2Key, input.introVideoR2Key),
+            eq(tutorDocuments.tutorUserId, deps.tutorUserId),
+          ),
+        )
+        .returning({ id: tutorDocuments.id })) as { id: string }[];
+      if (documentsUpdated.length === 0) {
+        throw new Error(
+          "[runSubmitProfile] intro_video document not found — admin moved it or row was deleted",
+        );
+      }
     }
 
     // 5. Mark phase 2 complete on the wizard state. Filter UPDATE by both
@@ -351,8 +394,10 @@ export async function runSubmitProfile(
           phase: 2,
           isFirstSubmit,
           subjectCount: input.subjects.length,
-          hasIntroVideo: true,
-          hasPhoto: input.photoR2Key !== null,
+          hasIntroVideo: input.introVideoR2Key !== null,
+          hasPhoto: input.photoR2Key.length > 0,
+          highlightCount: input.highlights.length,
+          recommendationVisible: input.recommendationVisible,
         },
       }),
     );
@@ -364,11 +409,11 @@ export async function runSubmitProfile(
           event: "tutor_profile_created",
           tutorUserId: deps.tutorUserId,
           subjectCount: input.subjects.length,
-          has45MinPrice: true,
-          has60MinPrice: true,
-          hasIntroVideo: true,
-          hasPhoto: input.photoR2Key !== null,
-          bioLength: input.bio.length,
+          has45MinPrice: input.prices[45] !== null,
+          has60MinPrice: input.prices[60] !== null,
+          hasIntroVideo: input.introVideoR2Key !== null,
+          hasPhoto: input.photoR2Key.length > 0,
+          bioLength: input.longBio.length,
         });
       } catch (err) {
         // PostHog is fire-and-forget; never block the redirect on analytics.
@@ -464,11 +509,22 @@ function serializeDraftForPersistence(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (raw.displayName !== undefined && raw.displayName !== null) out.displayName = raw.displayName;
-  if (raw.bio !== undefined && raw.bio !== null) out.bio = raw.bio;
+  if (raw.gender !== undefined && raw.gender !== null) out.gender = raw.gender;
+  if (raw.tagline !== undefined && raw.tagline !== null) out.tagline = raw.tagline;
+  if (raw.shortBio !== undefined && raw.shortBio !== null) out.shortBio = raw.shortBio;
+  if (raw.longBio !== undefined && raw.longBio !== null) out.longBio = raw.longBio;
+  if (raw.highlights && raw.highlights.length > 0) out.highlights = raw.highlights;
+  if (raw.recommendationVisible !== undefined)
+    out.recommendationVisible = raw.recommendationVisible;
+  if (
+    raw.recommendationHeadline !== undefined &&
+    raw.recommendationHeadline !== null
+  )
+    out.recommendationHeadline = raw.recommendationHeadline;
+  if (raw.recommendationSub !== undefined && raw.recommendationSub !== null)
+    out.recommendationSub = raw.recommendationSub;
   if (raw.subjects && raw.subjects.length > 0) out.subjects = raw.subjects;
-  if (raw.price45Ils !== undefined && raw.price45Ils !== null) out.price45Ils = raw.price45Ils;
-  if (raw.price60Ils !== undefined && raw.price60Ils !== null) out.price60Ils = raw.price60Ils;
-  if (raw.city !== undefined && raw.city !== null) out.city = raw.city;
+  if (raw.prices && Object.keys(raw.prices).length > 0) out.prices = raw.prices;
   if (raw.photoR2Key !== undefined && raw.photoR2Key !== null) out.photoR2Key = raw.photoR2Key;
   if (raw.introVideoR2Key !== undefined && raw.introVideoR2Key !== null)
     out.introVideoR2Key = raw.introVideoR2Key;

@@ -24,7 +24,15 @@ export interface SlotStateInput {
   bookings: ActiveBookingRow[];
   from: Date; // UTC instant — should be "midnight in Asia/Jerusalem" of the first day
   daysAhead: number;
-  durationMinutes: 45 | 60;
+  /**
+   * Lesson duration. Widened from 45 | 60 to 45 | 60 | 75 | 90 on
+   * 2026-05-18 (founder direction — tutors now offer all four lengths).
+   * The slot-state algorithm doesn't actually depend on the duration
+   * value (recurring/exception rules + bookings drive availability);
+   * the duration is passed through for forward compatibility with the
+   * booking flow's slot-overlap math.
+   */
+  durationMinutes: 45 | 60 | 75 | 90;
   /**
    * "Now" reference. Slots whose start instant is before `now` are marked
    * `"unavailable"` so users can't click into a past booking time. Defaults
@@ -173,8 +181,13 @@ function timeRangeCovers(
 }
 
 export function computeSlotStates(input: SlotStateInput): SlotStatesByDay {
-  const startHour = input.startHour ?? 14;
-  const endHour = input.endHour ?? 22; // 22:00 exclusive → last slot is 21:30
+  // Defaults match `SCHEDULE_GRID` in the tutor editor
+  // (`src/app/tutor/me/schedule/_lib/schedule-flow.ts`). The window was
+  // expanded from 14:00–22:00 to 08:00–23:00 on 2026-05-18 so morning +
+  // late-evening slots configured by the tutor surface on the public
+  // profile. Callers can still override.
+  const startHour = input.startHour ?? 8;
+  const endHour = input.endHour ?? 23; // 23:00 exclusive → last slot is 22:30
   const slotsPerDay = (endHour - startHour) * 2;
   const nowMs = (input.now ?? new Date()).getTime();
 

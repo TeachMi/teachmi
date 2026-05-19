@@ -42,7 +42,7 @@ export function TutorTabNav() {
               className={
                 isActive
                   ? "px-5 py-3 border-b-2 border-tertiary-accent text-primary-container text-sm font-bold"
-                  : "px-5 py-3 border-b-2 border-transparent text-on-surface-variant hover:text-primary-container text-sm font-bold transition-colors"
+                  : "px-5 py-3 border-b-2 border-transparent text-on-surface-variant text-sm font-bold transition hover:bg-white hover:text-primary-container hover:border-linen-border"
               }
             >
               {tab.label}

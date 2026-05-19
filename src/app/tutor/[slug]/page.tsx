@@ -21,7 +21,7 @@ import {
   getTutorSubjects,
 } from "@/lib/db/queries/tutor-queries";
 import { getFilesProvider } from "@/lib/providers/files";
-import { AvailabilityCalendar } from "./_components/AvailabilityCalendar";
+import { BookingSidebar } from "./_components/BookingSidebar";
 import { Hero } from "./_components/Hero";
 import { RatingWidget } from "./_components/RatingWidget";
 import { SubjectChips } from "./_components/SubjectChips";
@@ -34,7 +34,10 @@ interface PageProps {
 }
 
 const PRESIGNED_URL_TTL_SEC = 3600; // 1 hour
-const CALENDAR_DAYS_AHEAD = 7;
+// Two-week public-calendar horizon (Sally 2026-05-18). Students rarely
+// plan more than 2 weeks ahead; the tutor's exception-overrides further
+// out still apply when the visitor navigates there.
+const CALENDAR_DAYS_AHEAD = 14;
 
 // Wrap in `cache()` so `generateMetadata` and the page body share the same
 // per-request lookup. Without this, Next 16 issues two DB round-trips per
@@ -122,8 +125,17 @@ async function presignFromR2(
   }
 }
 
-function parseDuration(raw: string | undefined): 45 | 60 {
-  return raw === "45" ? 45 : 60;
+function parseDuration(raw: string | undefined): 45 | 60 | 75 | 90 {
+  switch (raw) {
+    case "45":
+      return 45;
+    case "75":
+      return 75;
+    case "90":
+      return 90;
+    default:
+      return 60;
+  }
 }
 
 function truncateForDescription(text: string, maxLen = 160): string {
@@ -174,8 +186,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     return { title: "TeachMe" };
   }
 
-  const description = tutor.bio
-    ? stripBidiOverrides(truncateForDescription(tutor.bio))
+  // OG description prefers the short bio (1-2 sentence summary). Falls back
+  // to a generic line so closed-beta tutors who haven't filled the form yet
+  // still get sharable metadata.
+  const description = tutor.shortBio
+    ? stripBidiOverrides(truncateForDescription(tutor.shortBio))
     : `${tutor.displayName} — מורה ב-TeachMe`;
   // OG image is served via a stable proxy route that re-signs the R2 URL
   // per request. Social-media scrapers (Slack/FB/Twitter) cache the
@@ -258,33 +273,89 @@ export default async function PublicTutorProfilePage({
   });
 
   const isSignedIn = !!session?.user?.id;
+  // Story 4.3 (PM round 2026-05-18): tutors viewing their own public
+  // profile see an "owner" sidebar with a back-link to /tutor/me, no
+  // CTA. The server's `runCreateBooking` enforces the same guard, so a
+  // tampered request still 404-ish bounces back.
+  const viewerIsOwner =
+    session?.user?.id !== undefined && session.user.id === tutor.userId;
+
+  const prices = {
+    45: tutor.lesson45PriceIls,
+    60: tutor.hourlyPriceIls,
+    75: tutor.lesson75PriceIls,
+    90: tutor.lesson90PriceIls,
+  } as const;
+
+  // Closed-beta UX rule (founder 2026-05-18): show the rating widget on
+  // the public profile only once the tutor has at least one real review.
+  // Until then, the histogram is misleading (a 0-of-0 average looks bad).
+  const showRatingWidget = rating !== null && rating.total > 0;
+
+  // "Has anything bookable" — toggles the sidebar CTA between active and
+  // disabled. Cheaper than recomputing inside the BookingSidebar.
+  const hasAnyAvailability = Array.from(slotStates.values()).some((slots) =>
+    slots.some((s) => s.status === "available"),
+  );
 
   return (
     <AppShell mainClassName="flex-1 bg-linen">
       <div className="mx-auto w-full max-w-7xl px-6 py-8">
-        <Hero
-          tutor={{ ...tutor, bio: tutor.bio ? stripBidiOverrides(tutor.bio) : tutor.bio }}
-          subjects={subjects}
-          rating={rating}
-          introVideoUrl={introVideoUrl}
-          profilePhotoUrl={profilePhotoUrl}
-        />
+        {/* Two-column layout: profile content (main) + sticky booking
+            sidebar. On lg+ the sidebar is fixed via lg:sticky, so it
+            stays in view as the student scrolls the bio and reviews. */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <section className="lg:col-span-2 min-w-0">
+            <Hero
+              tutor={{
+                ...tutor,
+                // Strip Unicode bidi-override control codes from EVERY tutor-
+                // authored text field rendered on the public profile. The
+                // codes are invisible but reflow surrounding RTL UI; only
+                // the page (which loads the raw row) is positioned to clean
+                // them before the Hero / About / chip renderers consume them.
+                tagline: tutor.tagline
+                  ? stripBidiOverrides(tutor.tagline)
+                  : tutor.tagline,
+                shortBio: tutor.shortBio
+                  ? stripBidiOverrides(tutor.shortBio)
+                  : tutor.shortBio,
+                longBio: tutor.longBio
+                  ? stripBidiOverrides(tutor.longBio)
+                  : tutor.longBio,
+              }}
+              subjects={subjects}
+              introVideoUrl={introVideoUrl}
+              profilePhotoUrl={profilePhotoUrl}
+            />
 
-        <AvailabilityCalendar
-          tutorUserId={tutor.userId}
-          slotStates={slotStates}
-          hourlyPriceIls={tutor.hourlyPriceIls}
-          lesson45PriceIls={tutor.lesson45PriceIls}
-          selectedDuration={selectedDuration}
-          isSignedIn={isSignedIn}
-          weekStartUtc={weekStart}
-        />
+            {showRatingWidget && (
+              <div className="mb-12">
+                <RatingWidget histogram={rating!} />
+              </div>
+            )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-12">
-          {rating !== null && <RatingWidget histogram={rating} />}
+            <SubjectChips subjects={subjects} withSectionHeader />
+          </section>
+
+          <div className="lg:col-span-1">
+            <BookingSidebar
+              tutorUserId={tutor.userId}
+              displayName={tutor.displayName}
+              profilePhotoUrl={profilePhotoUrl}
+              prices={prices}
+              ratingAverage={rating?.average ?? null}
+              ratingCount={rating?.total ?? 0}
+              totalLessonsCompleted={tutor.totalLessonsCompleted}
+              slotStates={slotStates}
+              weekStartUtc={weekStart}
+              isSignedIn={isSignedIn}
+              hasAnyAvailability={hasAnyAvailability}
+              viewerIsOwner={viewerIsOwner}
+              initialDuration={selectedDuration}
+            />
+          </div>
         </div>
-
-        <SubjectChips subjects={subjects} withSectionHeader />
       </div>
     </AppShell>
   );

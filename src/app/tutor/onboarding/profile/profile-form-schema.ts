@@ -7,11 +7,30 @@
  * inconsistent with 1.13/1.14.
  */
 
+import {
+  type HighlightSlug,
+  sanitizeHighlights,
+} from "@/lib/highlights";
+
 export const PROFILE_FORM_LIMITS = {
   PRICE_MIN_ILS: 1,
   PRICE_MAX_ILS: 10_000,
+  /**
+   * `bio` is the deprecated single-text field. `BIO_MIN_CHARS` /
+   * `BIO_MAX_CHARS` are kept exported so existing imports compile during
+   * the Story 2.11 transition; new code should reference
+   * `LONG_BIO_MIN_CHARS` / `LONG_BIO_MAX_CHARS` instead.
+   */
   BIO_MIN_CHARS: 50,
   BIO_MAX_CHARS: 1000,
+  TAGLINE_MIN_CHARS: 4,
+  TAGLINE_MAX_CHARS: 60,
+  SHORT_BIO_MIN_CHARS: 30,
+  SHORT_BIO_MAX_CHARS: 220,
+  LONG_BIO_MIN_CHARS: 50,
+  LONG_BIO_MAX_CHARS: 1000,
+  RECOMMENDATION_HEADLINE_MAX_CHARS: 80,
+  RECOMMENDATION_SUB_MAX_CHARS: 100,
   DISPLAY_NAME_MIN_CHARS: 2,
   DISPLAY_NAME_MAX_CHARS: 200,
   SUBJECTS_MIN: 1,
@@ -48,6 +67,33 @@ export type AllowedIntroVideoMimeType = (typeof ALLOWED_INTRO_VIDEO_MIME_TYPES)[
 
 const SUBJECT_SLUG_REGEX = /^[a-z][a-z0-9-]*$/;
 
+// Hebrew-grammar gender on the tutor profile. Drives gender-agreeing copy
+// (e.g., the verified badge "מורה מאומת" male / "מורה מאומתת" female).
+// Closed-beta enum is M/F only — see schema comment on tutor_profiles.gender.
+export const TUTOR_GENDERS = ["male", "female"] as const;
+export type TutorGender = (typeof TUTOR_GENDERS)[number];
+
+export function isTutorGender(value: unknown): value is TutorGender {
+  return typeof value === "string" && (TUTOR_GENDERS as readonly string[]).includes(value);
+}
+
+/**
+ * Hebrew "verified tutor" badge copy — gender-agrees with the tutor's
+ * grammatical gender. Surface in the Hero badge on the public profile,
+ * the dashboard "approved" Card story, and any future copy that needs the
+ * same agreement (e.g., "המורה המומלצת" / "המורה המומלץ" — add helpers as
+ * those strings arrive; keep verbs/adjectives explicit rather than building
+ * a general-purpose translator).
+ */
+export function verifiedTutorLabel(gender: TutorGender): string {
+  return gender === "female" ? "מורה מאומתת" : "מורה מאומת";
+}
+
+/** Display label for the gender radio + ProfileView. */
+export function genderLabel(gender: TutorGender): string {
+  return gender === "female" ? "נקבה" : "זכר";
+}
+
 export function isAllowedPhotoMime(value: string): value is AllowedPhotoMimeType {
   return (ALLOWED_PHOTO_MIME_TYPES as readonly string[]).includes(value);
 }
@@ -58,36 +104,80 @@ export function isAllowedIntroVideoMime(
   return (ALLOWED_INTRO_VIDEO_MIME_TYPES as readonly string[]).includes(value);
 }
 
+/**
+ * Lesson-length pricing model. Story 2.10 follow-up (founder direction
+ * 2026-05-17): tutors can opt into any subset of these four lengths and
+ * set per-length pricing. Schema-level relaxation: 60-min is no longer
+ * required; "at least one length set" is the new invariant.
+ *
+ * Cross-length consistency (e.g. price45 < price60) is intentionally NOT
+ * enforced at this revision — see the relaxed founder call. Revisit when
+ * pricing-policy data shows up post-closed-beta.
+ */
+export const LESSON_LENGTH_MINUTES = [45, 60, 75, 90] as const;
+export type LessonLengthMinutes = (typeof LESSON_LENGTH_MINUTES)[number];
+
 export interface ProfileDraftInput {
   displayName?: string;
+  gender?: string;
+  /** DEPRECATED — kept as a draft-side passthrough during Story 2.11 transition. */
   bio?: string;
+  tagline?: string;
+  shortBio?: string;
+  longBio?: string;
+  /** Slug array from `src/lib/highlights.ts`. Cap of 4 enforced at parse. */
+  highlights?: string[];
+  recommendationVisible?: boolean;
+  recommendationHeadline?: string;
+  recommendationSub?: string;
   subjects?: string[];
-  price45Ils?: number;
-  price60Ils?: number;
-  city?: string;
+  /** Per-length price in whole shekels. `null` = length not offered. */
+  prices?: Partial<Record<LessonLengthMinutes, number | null>>;
   photoR2Key?: string;
   introVideoR2Key?: string;
 }
 
 export interface ProfileSubmitInput {
   displayName: string;
-  bio: string;
+  gender: TutorGender;
+  tagline: string;
+  shortBio: string;
+  longBio: string;
+  highlights: import("@/lib/highlights").HighlightSlug[];
+  /** Always tracked; when `false`, headline/sub may be empty strings. */
+  recommendationVisible: boolean;
+  /** Required (non-empty) only when `recommendationVisible` is true. */
+  recommendationHeadline: string;
+  recommendationSub: string;
   subjects: string[];
-  price45Ils: number;
-  price60Ils: number;
-  city: string | null;
-  photoR2Key: string | null;
-  introVideoR2Key: string;
+  /** Per-length price in whole shekels. `null` = length not offered. */
+  prices: Record<LessonLengthMinutes, number | null>;
+  /** Photo is required at submit. */
+  photoR2Key: string;
+  /** Intro video stays OPTIONAL per founder direction. */
+  introVideoR2Key: string | null;
 }
 
 export type ProfileFieldErrors = Partial<{
   displayName: string;
+  gender: string;
+  /** Legacy field — retained for API compatibility during Story 2.11. */
   bio: string;
+  tagline: string;
+  shortBio: string;
+  longBio: string;
+  highlights: string;
+  recommendationHeadline: string;
+  recommendationSub: string;
   subjects: string;
+  /** Field-level error for a specific lesson length, keyed by minutes. */
   price45Ils: string;
   price60Ils: string;
+  price75Ils: string;
+  price90Ils: string;
+  /** Cross-cutting "at least one length" error. */
+  prices: string;
   introVideoR2Key: string;
-  city: string;
   photoR2Key: string;
 }>;
 
@@ -105,11 +195,78 @@ export function parseSubmitInput(raw: ProfileDraftInput): ProfileSubmitParseResu
     fieldErrors.displayName = "השם ארוך מדי.";
   }
 
-  const bio = (raw.bio ?? "").trim();
-  if (bio.length < PROFILE_FORM_LIMITS.BIO_MIN_CHARS) {
-    fieldErrors.bio = `ביוגרפיה חייבת להכיל לפחות ${PROFILE_FORM_LIMITS.BIO_MIN_CHARS} תווים.`;
-  } else if (bio.length > PROFILE_FORM_LIMITS.BIO_MAX_CHARS) {
-    fieldErrors.bio = `ביוגרפיה לא יכולה לעלות על ${PROFILE_FORM_LIMITS.BIO_MAX_CHARS} תווים.`;
+  const genderRaw = (raw.gender ?? "").trim();
+  let gender: TutorGender | undefined;
+  if (genderRaw.length === 0) {
+    fieldErrors.gender = "יש לבחור מין.";
+  } else if (!isTutorGender(genderRaw)) {
+    fieldErrors.gender = "ערך לא תקין.";
+  } else {
+    gender = genderRaw;
+  }
+
+  // Story 2.11 — tagline / short_bio / long_bio all required.
+  const tagline = (raw.tagline ?? "").trim();
+  if (tagline.length < PROFILE_FORM_LIMITS.TAGLINE_MIN_CHARS) {
+    fieldErrors.tagline = `הכותרת קצרה מדי (לפחות ${PROFILE_FORM_LIMITS.TAGLINE_MIN_CHARS} תווים).`;
+  } else if (tagline.length > PROFILE_FORM_LIMITS.TAGLINE_MAX_CHARS) {
+    fieldErrors.tagline = `הכותרת ארוכה מדי (עד ${PROFILE_FORM_LIMITS.TAGLINE_MAX_CHARS} תווים).`;
+  }
+
+  const shortBio = (raw.shortBio ?? "").trim();
+  if (shortBio.length < PROFILE_FORM_LIMITS.SHORT_BIO_MIN_CHARS) {
+    fieldErrors.shortBio = `התיאור הקצר חייב להכיל לפחות ${PROFILE_FORM_LIMITS.SHORT_BIO_MIN_CHARS} תווים.`;
+  } else if (shortBio.length > PROFILE_FORM_LIMITS.SHORT_BIO_MAX_CHARS) {
+    fieldErrors.shortBio = `התיאור הקצר לא יכול לעלות על ${PROFILE_FORM_LIMITS.SHORT_BIO_MAX_CHARS} תווים.`;
+  }
+
+  const longBio = (raw.longBio ?? "").trim();
+  if (longBio.length < PROFILE_FORM_LIMITS.LONG_BIO_MIN_CHARS) {
+    fieldErrors.longBio = `אודות חייב להכיל לפחות ${PROFILE_FORM_LIMITS.LONG_BIO_MIN_CHARS} תווים.`;
+  } else if (longBio.length > PROFILE_FORM_LIMITS.LONG_BIO_MAX_CHARS) {
+    fieldErrors.longBio = `אודות לא יכול לעלות על ${PROFILE_FORM_LIMITS.LONG_BIO_MAX_CHARS} תווים.`;
+  }
+
+  // Highlights — OPTIONAL chip group, capped at 4. Tampered values silently
+  // drop via `sanitizeHighlights`. Skip-empty is fine (no error).
+  const highlights = sanitizeHighlights(raw.highlights);
+
+  // Recommendation card — toggle plus 2 conditional fields. When toggle is
+  // ON, both fields must be non-empty (within their caps). When OFF, the
+  // copy may be stored as-is (we keep it so re-enabling doesn't lose work).
+  const recommendationVisible = !!raw.recommendationVisible;
+  const recommendationHeadline = (raw.recommendationHeadline ?? "").trim();
+  const recommendationSub = (raw.recommendationSub ?? "").trim();
+  if (recommendationVisible) {
+    if (recommendationHeadline.length === 0) {
+      fieldErrors.recommendationHeadline = "כותרת ההמלצה חובה כשהקופסה מוצגת.";
+    } else if (
+      recommendationHeadline.length > PROFILE_FORM_LIMITS.RECOMMENDATION_HEADLINE_MAX_CHARS
+    ) {
+      fieldErrors.recommendationHeadline = `הכותרת ארוכה מדי (עד ${PROFILE_FORM_LIMITS.RECOMMENDATION_HEADLINE_MAX_CHARS} תווים).`;
+    }
+    if (recommendationSub.length === 0) {
+      fieldErrors.recommendationSub = "תיאור משלים חובה כשהקופסה מוצגת.";
+    } else if (
+      recommendationSub.length > PROFILE_FORM_LIMITS.RECOMMENDATION_SUB_MAX_CHARS
+    ) {
+      fieldErrors.recommendationSub = `התיאור ארוך מדי (עד ${PROFILE_FORM_LIMITS.RECOMMENDATION_SUB_MAX_CHARS} תווים).`;
+    }
+  } else {
+    // When hidden, still cap stored copy so a tampered field can't blow
+    // past the column-sized limits we'll add in a future migration.
+    if (
+      recommendationHeadline.length >
+      PROFILE_FORM_LIMITS.RECOMMENDATION_HEADLINE_MAX_CHARS
+    ) {
+      fieldErrors.recommendationHeadline = `הכותרת ארוכה מדי.`;
+    }
+    if (
+      recommendationSub.length >
+      PROFILE_FORM_LIMITS.RECOMMENDATION_SUB_MAX_CHARS
+    ) {
+      fieldErrors.recommendationSub = `התיאור ארוך מדי.`;
+    }
   }
 
   // Code-review patch (2026-05-12, patch #10): dedupe slugs before the
@@ -125,51 +282,59 @@ export function parseSubmitInput(raw: ProfileDraftInput): ProfileSubmitParseResu
     fieldErrors.subjects = `ניתן לבחור עד ${PROFILE_FORM_LIMITS.SUBJECTS_MAX} מקצועות.`;
   }
 
-  const price45 = raw.price45Ils;
-  if (price45 === undefined || !Number.isInteger(price45)) {
-    fieldErrors.price45Ils = "המחיר ל-45 דק׳ חייב להיות מספר שלם.";
-  } else if (price45 < PROFILE_FORM_LIMITS.PRICE_MIN_ILS) {
-    fieldErrors.price45Ils = "המחיר חייב להיות חיובי.";
-  } else if (price45 > PROFILE_FORM_LIMITS.PRICE_MAX_ILS) {
-    fieldErrors.price45Ils = "המחיר גבוה מהסביר. בדקו שוב.";
+  // Per-length pricing. Each length is optional individually; the only
+  // cross-cutting rule is "at least one length must be offered with a
+  // positive price." Cross-length consistency (e.g. price45 < price60) is
+  // deferred per founder direction 2026-05-17.
+  const rawPrices = raw.prices ?? {};
+  const cleanedPrices: Record<LessonLengthMinutes, number | null> = {
+    45: null,
+    60: null,
+    75: null,
+    90: null,
+  };
+  let anyPriceOffered = false;
+  for (const len of LESSON_LENGTH_MINUTES) {
+    const value = rawPrices[len];
+    if (value === undefined || value === null) {
+      continue; // length not offered
+    }
+    if (!Number.isInteger(value)) {
+      fieldErrors[priceFieldErrorKey(len)] = `המחיר ל-${len} דק׳ חייב להיות מספר שלם.`;
+      continue;
+    }
+    if (value < PROFILE_FORM_LIMITS.PRICE_MIN_ILS) {
+      fieldErrors[priceFieldErrorKey(len)] = "המחיר חייב להיות חיובי.";
+      continue;
+    }
+    if (value > PROFILE_FORM_LIMITS.PRICE_MAX_ILS) {
+      fieldErrors[priceFieldErrorKey(len)] = "המחיר גבוה מהסביר. בדקו שוב.";
+      continue;
+    }
+    cleanedPrices[len] = value;
+    anyPriceOffered = true;
+  }
+  if (!anyPriceOffered && fieldErrors.prices === undefined) {
+    fieldErrors.prices = "יש להגדיר מחיר עבור לפחות אורך שיעור אחד.";
   }
 
-  const price60 = raw.price60Ils;
-  if (price60 === undefined || !Number.isInteger(price60)) {
-    fieldErrors.price60Ils = "המחיר ל-60 דק׳ חייב להיות מספר שלם.";
-  } else if (price60 < PROFILE_FORM_LIMITS.PRICE_MIN_ILS) {
-    fieldErrors.price60Ils = "המחיר חייב להיות חיובי.";
-  } else if (price60 > PROFILE_FORM_LIMITS.PRICE_MAX_ILS) {
-    fieldErrors.price60Ils = "המחיר גבוה מהסביר. בדקו שוב.";
-  }
-
-  // Sanity invariant — only check if both sides parsed cleanly.
-  // TODO(product-review): consider downgrade to warning-not-error if tutors push back.
-  if (
-    fieldErrors.price45Ils === undefined &&
-    fieldErrors.price60Ils === undefined &&
-    price45 !== undefined &&
-    price60 !== undefined &&
-    price45 >= price60
-  ) {
-    fieldErrors.price45Ils = "מחיר 45 דק׳ חייב להיות נמוך ממחיר 60 דק׳.";
-  }
-
+  // Story 2.11 (2026-05-18): intro video is now OPTIONAL. Founder direction
+  // "all required except video and highlights".
   const introVideoR2Key = (raw.introVideoR2Key ?? "").trim();
-  if (introVideoR2Key.length === 0) {
-    fieldErrors.introVideoR2Key = "סרטון היכרות חובה לפני שליחה לבדיקה.";
-  } else if (introVideoR2Key.length > PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS) {
+  if (
+    introVideoR2Key.length > 0 &&
+    introVideoR2Key.length > PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS
+  ) {
     fieldErrors.introVideoR2Key = "מפתח סרטון לא תקין.";
   }
 
+  // Story 2.11 (2026-05-18): profile photo is REQUIRED at submit. Previously
+  // optional. The editor + Hero render the photo as a primary identity element.
   const photoR2Key = (raw.photoR2Key ?? "").trim();
-  if (photoR2Key.length > PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS) {
+  if (photoR2Key.length === 0) {
+    fieldErrors.photoR2Key = "תמונת פרופיל חובה.";
+  } else if (photoR2Key.length > PROFILE_FORM_LIMITS.R2_KEY_MAX_CHARS) {
     fieldErrors.photoR2Key = "מפתח תמונה לא תקין.";
-  }
-
-  const city = (raw.city ?? "").trim();
-  if (city.length > 80) {
-    fieldErrors.city = "שם העיר ארוך מדי.";
   }
 
   if (Object.keys(fieldErrors).length > 0) {
@@ -180,20 +345,30 @@ export function parseSubmitInput(raw: ProfileDraftInput): ProfileSubmitParseResu
     ok: true,
     value: {
       displayName,
-      bio,
+      gender: gender as TutorGender,
+      tagline,
+      shortBio,
+      longBio,
+      highlights,
+      recommendationVisible,
+      recommendationHeadline,
+      recommendationSub,
       subjects,
-      price45Ils: price45 as number,
-      price60Ils: price60 as number,
-      city: city.length > 0 ? city : null,
-      photoR2Key: photoR2Key.length > 0 ? photoR2Key : null,
-      introVideoR2Key,
+      prices: cleanedPrices,
+      photoR2Key,
+      introVideoR2Key: introVideoR2Key.length > 0 ? introVideoR2Key : null,
     },
   };
 }
 
+function priceFieldErrorKey(len: LessonLengthMinutes): keyof ProfileFieldErrors {
+  return `price${len}Ils` as keyof ProfileFieldErrors;
+}
+
 /**
- * Convert a flat FormData into a draft input. Subjects come in as a single
- * comma-separated string (the form serializer); we split, trim, and drop empties.
+ * Convert a flat FormData into a draft input. Subjects + highlights come in
+ * as comma-separated strings (the form serializer); we split, trim, and
+ * drop empties.
  */
 export function parseFormDataIntoDraftInput(formData: FormData): ProfileDraftInput {
   const subjectsRaw = String(formData.get("subjects") ?? "");
@@ -202,13 +377,38 @@ export function parseFormDataIntoDraftInput(formData: FormData): ProfileDraftInp
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
 
+  const highlightsRaw = String(formData.get("highlights") ?? "");
+  const highlights = highlightsRaw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  // Read the four per-length prices. A length is "offered" iff its
+  // corresponding form field is a parseable positive integer; absent /
+  // blank fields stay `undefined` and the parse layer treats them as
+  // "length not offered."
+  const prices: Partial<Record<LessonLengthMinutes, number | null>> = {};
+  for (const len of LESSON_LENGTH_MINUTES) {
+    const value = numberOrUndefined(formData.get(`price${len}Ils`));
+    if (value !== undefined) prices[len] = value;
+  }
+
+  const recommendationVisible =
+    formData.get("recommendationVisible") === "on" ||
+    formData.get("recommendationVisible") === "true";
+
   return {
     displayName: optionalString(formData.get("displayName")),
-    bio: optionalString(formData.get("bio")),
+    gender: optionalString(formData.get("gender")),
+    tagline: optionalString(formData.get("tagline")),
+    shortBio: optionalString(formData.get("shortBio")),
+    longBio: optionalString(formData.get("longBio")),
+    highlights: highlights.length > 0 ? highlights : undefined,
+    recommendationVisible,
+    recommendationHeadline: optionalString(formData.get("recommendationHeadline")),
+    recommendationSub: optionalString(formData.get("recommendationSub")),
     subjects: subjects.length > 0 ? subjects : undefined,
-    price45Ils: numberOrUndefined(formData.get("price45Ils")),
-    price60Ils: numberOrUndefined(formData.get("price60Ils")),
-    city: optionalString(formData.get("city")),
+    prices: Object.keys(prices).length > 0 ? prices : undefined,
     photoR2Key: optionalString(formData.get("photoR2Key")),
     introVideoR2Key: optionalString(formData.get("introVideoR2Key")),
   };

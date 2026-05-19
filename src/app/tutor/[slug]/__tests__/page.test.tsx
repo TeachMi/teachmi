@@ -49,14 +49,14 @@ vi.mock("@/lib/availability/compute-slots", () => ({
 // the top of the file by vitest's transformer).
 const componentSpies = vi.hoisted(() => ({
   hero: vi.fn(() => null),
-  calendar: vi.fn(() => null),
+  bookingSidebar: vi.fn(() => null),
   rating: vi.fn(() => null),
   subjects: vi.fn(() => null),
 }));
 
 vi.mock("../_components/Hero", () => ({ Hero: componentSpies.hero }));
-vi.mock("../_components/AvailabilityCalendar", () => ({
-  AvailabilityCalendar: componentSpies.calendar,
+vi.mock("../_components/BookingSidebar", () => ({
+  BookingSidebar: componentSpies.bookingSidebar,
 }));
 vi.mock("../_components/RatingWidget", () => ({
   RatingWidget: componentSpies.rating,
@@ -112,12 +112,23 @@ const NOT_A_UUID = "ד״ר מיכל לוי"; // also Hebrew; should fail UUID pa
 const FULL_TUTOR = {
   userId: TUTOR_UUID,
   displayName: "ד״ר מיכל לוי",
-  bio: "מורה למתמטיקה עם 8 שנות ניסיון.",
-  city: "תל אביב",
+  gender: "female",
+  // Story 2.11 (2026-05-18): `bio` + `city` removed, replaced by the
+  // tagline / shortBio / longBio / highlights / recommendation fields.
+  tagline: "מורה למתמטיקה ופיזיקה",
+  shortBio: "מורה למתמטיקה עם 8 שנות ניסיון.",
+  longBio:
+    "שלום, אני מיכל. מלמדת מתמטיקה כבר 8 שנים.\n\nגישה אישית וחומרי לימוד מקוריים.",
+  highlights: [] as string[],
+  recommendationHeadline: null,
+  recommendationSub: null,
+  recommendationVisible: false,
   introVideoR2Key: `intros/${TUTOR_UUID}/abc.mp4`,
   profilePhotoR2Key: `photos/${TUTOR_UUID}/abc.jpg`,
   hourlyPriceIls: 180,
   lesson45PriceIls: 140,
+  lesson75PriceIls: null,
+  lesson90PriceIls: null,
   lessonLengthMinutes: 60,
   averageRating: "4.90",
   ratingCount: 124,
@@ -135,7 +146,7 @@ beforeEach(() => {
   );
   mockAuth.mockReset().mockResolvedValue(null);
   componentSpies.hero.mockClear();
-  componentSpies.calendar.mockClear();
+  componentSpies.bookingSidebar.mockClear();
   componentSpies.rating.mockClear();
   componentSpies.subjects.mockClear();
 });
@@ -197,13 +208,13 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
     });
 
     const heroProps = lastPropsTo(componentSpies.hero) as {
-      tutor: { displayName: string; bio: string };
+      tutor: { displayName: string; shortBio: string; longBio: string };
       introVideoUrl: string;
       profilePhotoUrl: string;
     };
     expect(heroProps).not.toBeNull();
     expect(heroProps.tutor.displayName).toBe("ד״ר מיכל לוי");
-    expect(heroProps.tutor.bio).toContain("מורה למתמטיקה");
+    expect(heroProps.tutor.shortBio).toContain("מורה למתמטיקה");
     expect(heroProps.introVideoUrl).toContain("stub.r2.local");
     expect(heroProps.profilePhotoUrl).toContain("stub.r2.local");
   });
@@ -225,7 +236,7 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
     );
   });
 
-  it("passes empty slotStates to AvailabilityCalendar when tutor has no rows", async () => {
+  it("passes empty slotStates to BookingSidebar when tutor has no rows", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
     mockGetAvailability.mockResolvedValue([]);
 
@@ -234,9 +245,13 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({}),
     });
 
-    const calProps = lastPropsTo(componentSpies.calendar) as { slotStates: Map<unknown, unknown> };
-    expect(calProps).not.toBeNull();
-    expect(calProps.slotStates).toBeInstanceOf(Map);
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      slotStates: Map<unknown, unknown>;
+      hasAnyAvailability: boolean;
+    };
+    expect(sidebarProps).not.toBeNull();
+    expect(sidebarProps.slotStates).toBeInstanceOf(Map);
+    expect(sidebarProps.hasAnyAvailability).toBe(false);
   });
 
   it("does NOT render RatingWidget when histogram is null", async () => {
@@ -251,7 +266,27 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
     expect(lastPropsTo(componentSpies.rating)).toBeNull();
   });
 
-  it("renders RatingWidget with the histogram when it's non-null", async () => {
+  it("does NOT render RatingWidget when histogram has zero reviews (closed-beta guard)", async () => {
+    mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
+    mockGetRating.mockResolvedValue({
+      score1: 0,
+      score2: 0,
+      score3: 0,
+      score4: 0,
+      score5: 0,
+      total: 0,
+      average: 0,
+    });
+
+    lastRendered = await PublicTutorProfilePage({
+      params: Promise.resolve({ slug: TUTOR_UUID }),
+      searchParams: Promise.resolve({}),
+    });
+
+    expect(lastPropsTo(componentSpies.rating)).toBeNull();
+  });
+
+  it("renders RatingWidget with the histogram when total > 0", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
     const histogram = {
       score1: 0,
@@ -295,7 +330,7 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
     expect(subjProps?.subjects).toEqual(subjects);
   });
 
-  it("passes the tutor's bio (bidi-stripped) to <Hero> so it renders under the name", async () => {
+  it("threads tagline / shortBio / longBio (bidi-stripped) through to <Hero>", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
 
     lastRendered = await PublicTutorProfilePage({
@@ -303,15 +338,22 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({}),
     });
 
-    // 2026-05-16 amendment: the bio moved out of a standalone "About"
-    // section in page.tsx and into the Hero component's right column. The
-    // page no longer renders the bio inline — it threads `tutor.bio` (with
-    // bidi-override chars stripped) through to <Hero> via props.
-    const heroProps = lastPropsTo(componentSpies.hero) as { tutor: { bio: string | null } };
-    expect(heroProps?.tutor?.bio).toBe(FULL_TUTOR.bio);
+    // 2026-05-18 Story 2.11: `bio` is gone; Hero now reads tagline /
+    // shortBio / longBio off the tutor object directly. Page applies
+    // `stripBidiOverrides` to ALL THREE before threading them through.
+    const heroProps = lastPropsTo(componentSpies.hero) as {
+      tutor: {
+        tagline: string | null;
+        shortBio: string | null;
+        longBio: string | null;
+      };
+    };
+    expect(heroProps?.tutor?.tagline).toBe(FULL_TUTOR.tagline);
+    expect(heroProps?.tutor?.shortBio).toBe(FULL_TUTOR.shortBio);
+    expect(heroProps?.tutor?.longBio).toBe(FULL_TUTOR.longBio);
   });
 
-  it("defaults selectedDuration to 60 when ?duration= is absent", async () => {
+  it("defaults initialDuration to 60 on BookingSidebar when ?duration= is absent", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
 
     lastRendered = await PublicTutorProfilePage({
@@ -319,11 +361,13 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({}),
     });
 
-    const calProps = lastPropsTo(componentSpies.calendar) as { selectedDuration: 45 | 60 };
-    expect(calProps?.selectedDuration).toBe(60);
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      initialDuration: 45 | 60 | 75 | 90;
+    };
+    expect(sidebarProps?.initialDuration).toBe(60);
   });
 
-  it("uses ?duration=45 when query param is set", async () => {
+  it("threads ?duration=45 from URL into BookingSidebar.initialDuration", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
 
     lastRendered = await PublicTutorProfilePage({
@@ -331,11 +375,13 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({ duration: "45" }),
     });
 
-    const calProps = lastPropsTo(componentSpies.calendar) as { selectedDuration: 45 | 60 };
-    expect(calProps?.selectedDuration).toBe(45);
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      initialDuration: 45 | 60 | 75 | 90;
+    };
+    expect(sidebarProps?.initialDuration).toBe(45);
   });
 
-  it("passes isSignedIn=false to AvailabilityCalendar when auth returns null", async () => {
+  it("passes isSignedIn=false to BookingSidebar when auth returns null", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
     mockAuth.mockResolvedValue(null);
 
@@ -344,11 +390,13 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({}),
     });
 
-    const calProps = lastPropsTo(componentSpies.calendar) as { isSignedIn: boolean };
-    expect(calProps?.isSignedIn).toBe(false);
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      isSignedIn: boolean;
+    };
+    expect(sidebarProps?.isSignedIn).toBe(false);
   });
 
-  it("passes isSignedIn=true to AvailabilityCalendar when auth returns a session", async () => {
+  it("passes isSignedIn=true to BookingSidebar when auth returns a session", async () => {
     mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
     mockAuth.mockResolvedValue({ user: { id: "u-1" } });
 
@@ -357,8 +405,29 @@ describe("/tutor/[slug] page — rendered profile (Story 3.2)", () => {
       searchParams: Promise.resolve({}),
     });
 
-    const calProps = lastPropsTo(componentSpies.calendar) as { isSignedIn: boolean };
-    expect(calProps?.isSignedIn).toBe(true);
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      isSignedIn: boolean;
+    };
+    expect(sidebarProps?.isSignedIn).toBe(true);
+  });
+
+  it("passes the four-length prices map (with nulls for un-offered lengths) to BookingSidebar", async () => {
+    mockGetDiscoverable.mockResolvedValue(FULL_TUTOR);
+
+    lastRendered = await PublicTutorProfilePage({
+      params: Promise.resolve({ slug: TUTOR_UUID }),
+      searchParams: Promise.resolve({}),
+    });
+
+    const sidebarProps = lastPropsTo(componentSpies.bookingSidebar) as {
+      prices: Record<45 | 60 | 75 | 90, number | null>;
+    };
+    expect(sidebarProps?.prices).toEqual({
+      45: 140,
+      60: 180,
+      75: null,
+      90: null,
+    });
   });
 });
 
@@ -443,9 +512,12 @@ describe("/tutor/[slug] page — generateMetadata (Story 3.2 extensions)", () =>
     expect(mockGetDiscoverable).not.toHaveBeenCalled();
   });
 
-  it("truncates long bios at 160 chars in the description (with ellipsis)", async () => {
-    const longBio = "א".repeat(300); // 300 Hebrew chars
-    mockGetDiscoverable.mockResolvedValue({ ...FULL_TUTOR, bio: longBio });
+  it("truncates long shortBio at 160 chars in the description (with ellipsis)", async () => {
+    const longShortBio = "א".repeat(300); // 300 Hebrew chars
+    mockGetDiscoverable.mockResolvedValue({
+      ...FULL_TUTOR,
+      shortBio: longShortBio,
+    });
 
     const meta = await generateMetadata({
       params: Promise.resolve({ slug: TUTOR_UUID }),
@@ -456,8 +528,8 @@ describe("/tutor/[slug] page — generateMetadata (Story 3.2 extensions)", () =>
     expect(meta.description).toMatch(/…$/);
   });
 
-  it("falls back to a generic description when bio is null", async () => {
-    mockGetDiscoverable.mockResolvedValue({ ...FULL_TUTOR, bio: null });
+  it("falls back to a generic description when shortBio is null", async () => {
+    mockGetDiscoverable.mockResolvedValue({ ...FULL_TUTOR, shortBio: null });
 
     const meta = await generateMetadata({
       params: Promise.resolve({ slug: TUTOR_UUID }),

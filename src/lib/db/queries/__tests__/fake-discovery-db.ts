@@ -18,12 +18,20 @@ import type {
 export interface FakeTutorRow {
   userId: string;
   displayName: string;
-  bio: string | null;
-  city: string | null;
+  gender: "male" | "female";
+  tagline: string | null;
+  shortBio: string | null;
+  longBio: string | null;
+  highlights: string[] | null;
+  recommendationHeadline: string | null;
+  recommendationSub: string | null;
+  recommendationVisible: boolean;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
-  hourlyPriceIls: number;
+  hourlyPriceIls: number | null;
   lesson45PriceIls: number | null;
+  lesson75PriceIls: number | null;
+  lesson90PriceIls: number | null;
   lessonLengthMinutes: number;
   averageRating: string | null;
   ratingCount: number;
@@ -37,12 +45,20 @@ export interface FakeTutorRow {
 const PUBLIC_KEYS: Array<keyof DiscoverableTutorPublic> = [
   "userId",
   "displayName",
-  "bio",
-  "city",
+  "gender",
+  "tagline",
+  "shortBio",
+  "longBio",
+  "highlights",
+  "recommendationHeadline",
+  "recommendationSub",
+  "recommendationVisible",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
   "lesson45PriceIls",
+  "lesson75PriceIls",
+  "lesson90PriceIls",
   "lessonLengthMinutes",
   "averageRating",
   "ratingCount",
@@ -158,12 +174,20 @@ function projectPublic(row: FakeTutorRow): DiscoverableTutorPublic {
 const OWNER_KEYS: Array<keyof TutorProfileForOwner> = [
   "userId",
   "displayName",
-  "bio",
-  "city",
+  "gender",
+  "tagline",
+  "shortBio",
+  "longBio",
+  "highlights",
+  "recommendationHeadline",
+  "recommendationSub",
+  "recommendationVisible",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
   "lesson45PriceIls",
+  "lesson75PriceIls",
+  "lesson90PriceIls",
   "lessonLengthMinutes",
   "vettingStatus",
   "isActive",
@@ -181,12 +205,20 @@ export function buildFakeRow(overrides: Partial<FakeTutorRow> = {}): FakeTutorRo
   return {
     userId: "00000000-0000-0000-0000-000000000001",
     displayName: "ד״ר מיכל לוי",
-    bio: "מורה למתמטיקה עם 8 שנות ניסיון.",
-    city: "תל אביב",
+    gender: "female",
+    tagline: "מורה למתמטיקה",
+    shortBio: "מורה פרטי מנוסה במתמטיקה עם 8 שנות ניסיון.",
+    longBio: "מלמדת מתמטיקה כבר 8 שנים, מבית ספר התיכון ועד הכנה לפסיכומטרי. גישה אישית, חומרי לימוד מקוריים, ומעקב שבועי.",
+    highlights: null,
+    recommendationHeadline: null,
+    recommendationSub: null,
+    recommendationVisible: false,
     introVideoR2Key: "intros/00000000-0000-0000-0000-000000000001/abc.mp4",
     profilePhotoR2Key: "photos/00000000-0000-0000-0000-000000000001/abc.jpg",
     hourlyPriceIls: 180,
     lesson45PriceIls: 140,
+    lesson75PriceIls: null,
+    lesson90PriceIls: null,
     lessonLengthMinutes: 60,
     averageRating: "4.90",
     ratingCount: 124,

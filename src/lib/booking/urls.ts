@@ -1,34 +1,33 @@
 // Shared URL helpers for the booking funnel.
 //
 // Story 3.2 (tutor profile calendar) emits the gate URL when an anon visitor
-// clicks an available slot. Story 3.3 (this story) consumes those URLs on
-// /signup + /signin and threads the booking-stub URL through email
-// verification. Story 4.3 will replace `/booking-stub` with the real booking
-// route; consumers should keep importing `buildBookingStubUrl` from here so a
-// single edit propagates everywhere.
+// clicks an available slot. Story 3.3 consumes those URLs on /signup +
+// /signin and threads the checkout URL through email verification.
+// Story 4.3 (2026-05-18) renamed the post-verify landing page from
+// `/booking-stub` to `/checkout` — the real checkout form lives there now.
 //
 // Two producer functions:
 // - `buildGateSignupUrl` — the /signup gate URL emitted by the calendar.
-// - `buildBookingStubUrl` — the /booking-stub URL for the signed-in branch
-//   AND the post-verify redirect target.
+// - `buildCheckoutUrl` — the /checkout URL for the signed-in branch AND
+//   the post-verify redirect target.
 //
 // Two consumer functions:
 // - `parseGateParams` — primary parser; reads intent=book multi-params on the
 //   incoming page URL, verifies the sig, returns the payload + a computed
 //   `next` URL. Reports the failure reason for security analytics.
 // - `decomposeNextToGateParams` — second-chance parser used when a cross-page
-//   navigation link passed `?callbackUrl=<bookingstub url>` rather than the
-//   full multi-param shape; extracts gate params from the embedded booking-
-//   stub URL.
+//   navigation link passed `?callbackUrl=<checkout url>` rather than the
+//   full multi-param shape; extracts gate params from the embedded checkout
+//   URL.
 
 import { signSlotPayload, verifySlotSignature } from "@/lib/auth/slot-signing";
 
 export interface GateParams {
   tutorUserId: string;
   slotIso: string;
-  duration: 45 | 60;
+  duration: 45 | 60 | 75 | 90;
   sig: string;
-  /** Computed booking-stub URL — the post-verify redirect target. */
+  /** Computed checkout URL — the post-verify redirect target. */
   next: string;
 }
 
@@ -58,9 +57,9 @@ function isValidIsoUtc(value: string): boolean {
   return !Number.isNaN(Date.parse(value));
 }
 
-function coerceDuration(value: string): 45 | 60 | null {
+function coerceDuration(value: string): 45 | 60 | 75 | 90 | null {
   const n = Number(value);
-  return n === 45 || n === 60 ? n : null;
+  return n === 45 || n === 60 || n === 75 || n === 90 ? n : null;
 }
 
 function firstString(value: string | string[] | undefined): string | null {
@@ -78,7 +77,7 @@ function firstString(value: string | string[] | undefined): string | null {
 export function buildGateSignupUrl(input: {
   tutorUserId: string;
   slotIso: string;
-  duration: 45 | 60;
+  duration: 45 | 60 | 75 | 90;
 }): string {
   const callbackUrl = `/tutor/${input.tutorUserId}?duration=${input.duration}`;
   const sig = signSlotPayload({
@@ -98,18 +97,18 @@ export function buildGateSignupUrl(input: {
 }
 
 /**
- * Producer / consumer: builds the `/booking-stub?...` URL.
+ * Producer / consumer: builds the `/checkout?...` URL.
  *
  * The producer (signed-in branch of the tutor profile calendar) mints a fresh
- * sig via `buildSignedBookingStubUrl`. The consumer (signup / signin pages,
+ * sig via `buildSignedCheckoutUrl`. The consumer (signup / signin pages,
  * verify route) already has the sig in hand from the gate params and passes
  * it through unchanged — preserving the chain of custody from the calendar
  * emission all the way to the booking action that Story 4.3 will install.
  */
-export function buildBookingStubUrl(input: {
+export function buildCheckoutUrl(input: {
   tutorUserId: string;
   slotIso: string;
-  duration: 45 | 60;
+  duration: 45 | 60 | 75 | 90;
   sig: string;
 }): string {
   const params = new URLSearchParams({
@@ -118,24 +117,24 @@ export function buildBookingStubUrl(input: {
     duration: String(input.duration),
     sig: input.sig,
   });
-  return `/booking-stub?${params.toString()}`;
+  return `/checkout?${params.toString()}`;
 }
 
 /**
  * Convenience wrapper for the producer side that doesn't have a sig in hand:
  * sign the tuple, then compose. Used by the signed-in branch of the calendar.
  */
-export function buildSignedBookingStubUrl(input: {
+export function buildSignedCheckoutUrl(input: {
   tutorUserId: string;
   slotIso: string;
-  duration: 45 | 60;
+  duration: 45 | 60 | 75 | 90;
 }): string {
   const sig = signSlotPayload({
     tutorUserId: input.tutorUserId,
     slotIso: input.slotIso,
     duration: input.duration,
   });
-  return buildBookingStubUrl({ ...input, sig });
+  return buildCheckoutUrl({ ...input, sig });
 }
 
 /**
@@ -185,7 +184,7 @@ export function parseGateParams(
     return { payload: null, reason: "sig_invalid" };
   }
 
-  const next = buildBookingStubUrl({ tutorUserId, slotIso, duration, sig });
+  const next = buildCheckoutUrl({ tutorUserId, slotIso, duration, sig });
   return {
     payload: { tutorUserId, slotIso, duration, sig, next },
     reason: null,
@@ -195,11 +194,11 @@ export function parseGateParams(
 /**
  * Second-chance parser used when a cross-page navigation link passed only
  * `?callbackUrl=<bookingstub url>` (no intent multi-params) — see AC7. Parses
- * the booking-stub URL's own query string back into gate params and revalidates
+ * the checkout URL's own query string back into gate params and revalidates
  * the embedded sig. Returns null on any shape, parsing, or sig failure.
  *
- * Accepts a relative path (`/booking-stub?...`) or, defensively, an absolute
- * URL. Rejects anything that isn't a booking-stub URL — keeps the surface
+ * Accepts a relative path (`/checkout?...`) or, defensively, an absolute
+ * URL. Rejects anything that isn't a checkout URL — keeps the surface
  * narrow so an attacker can't smuggle a different path as `callbackUrl`.
  */
 export function decomposeNextToGateParams(next: string): GateParams | null {
@@ -215,7 +214,7 @@ export function decomposeNextToGateParams(next: string): GateParams | null {
     }
   }
 
-  if (!pathAndQuery.startsWith("/booking-stub?")) {
+  if (!pathAndQuery.startsWith("/checkout?")) {
     return null;
   }
 
@@ -239,6 +238,6 @@ export function decomposeNextToGateParams(next: string): GateParams | null {
     slotIso,
     duration,
     sig,
-    next: buildBookingStubUrl({ tutorUserId, slotIso, duration, sig }),
+    next: buildCheckoutUrl({ tutorUserId, slotIso, duration, sig }),
   };
 }
