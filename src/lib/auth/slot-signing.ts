@@ -21,7 +21,21 @@
 // signer falls back to a deterministic dev-only value AND `verify`
 // returns `true` for the matching signature only — no security leak.
 
+// SERVER-ONLY: HMAC slot signing must NEVER run in a client component.
+// `AUTH_SECRET` is not shipped to the client bundle (no NEXT_PUBLIC_
+// prefix), so a client-side `signSlotPayload` would silently fall back
+// to the dev-only secret and produce a sig the server can't verify.
+// Story 4.3 surfaced this in eyeball-testing 2026-05-18 (sig_invalid
+// on every "Continue" click); the fix routes signing through a Server
+// Action. The runtime guard below makes the misuse loud rather than
+// silently wrong if anyone re-imports this from a client component.
 import { createHmac, timingSafeEqual } from "node:crypto";
+
+if (typeof window !== "undefined") {
+  throw new Error(
+    "[slot-signing] This module is server-only. Import from a Server Component or Server Action — never from a client component. AUTH_SECRET is not shipped to the client bundle, so client-side signing would silently fall back to the dev secret and produce sigs the server cannot verify.",
+  );
+}
 
 const FALLBACK_DEV_SECRET = "dev-only-slot-signing-fallback";
 const SIGNATURE_BYTE_LENGTH = 16; // 128 bits

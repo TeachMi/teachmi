@@ -21,20 +21,17 @@
 //     Signed-in → inline "בקרוב" toast for closed-beta; Story 4.3
 //     will replace with the real booking action.
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  buildGateSignupUrl,
-  buildSignedBookingStubUrl,
-} from "@/lib/booking/urls";
-import { formatHebrewWeekday, formatIlsCurrency } from "@/lib/hebrew/format";
+import { checkoutHandoffAction } from "@/lib/booking/handoff-action";
+import { formatIlsCurrency } from "@/lib/hebrew/format";
 import type { SlotStatesByDay } from "@/lib/availability/compute-slots";
 import {
   BOOKING_PERIODS,
   periodForLocalTime,
   type PeriodKey,
 } from "./period-helpers";
+import { getSundayWeek } from "./sunday-week";
 
 export type LessonDurationMinutes = 45 | 60 | 75 | 90;
 
@@ -88,7 +85,6 @@ export function BookingModal({
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
   const [activePeriod, setActivePeriod] = useState<PeriodKey>("afternoon");
   const [selectedSlotIso, setSelectedSlotIso] = useState<string | null>(null);
-  const [bookingToast, setBookingToast] = useState<string | null>(null);
 
   // Per-render derived-state: detect open transition (false→true) and
   // reset transient selection state in render rather than an effect.
@@ -102,7 +98,6 @@ export function BookingModal({
       // because the duration toggle is purely UI-driven by the user).
       setWeekOffset(0);
       setSelectedSlotIso(null);
-      setBookingToast(null);
     }
   }
 
@@ -122,7 +117,9 @@ export function BookingModal({
     };
   }, [open, onClose]);
 
-  // Build per-day entries (all 14 days from slotStates).
+  // Build per-day entries from slotStates (every day in the computed window —
+  // typically today + N. Each entry has just the available slots so the
+  // period bucketing below stays O(slots) instead of O(all-slots).
   const allDays: DayEntry[] = useMemo(() => {
     const entries: DayEntry[] = [];
     const keys = Array.from(slotStates.keys());
@@ -138,6 +135,23 @@ export function BookingModal({
     });
     return entries;
   }, [slotStates, weekStartUtc]);
+
+  // Sunday-aligned week strip (founder direction 2026-05-18). The strip
+  // ALWAYS shows Sun→Sat for the current week + paginates 7-at-a-time.
+  // Past days within the current week stay visible but disabled — they
+  // intentionally have no slots in `allDays` (computeSlotStates filters
+  // past) so they read as "אין זמינות" by construction.
+  const sundayWeek = useMemo(
+    () =>
+      getSundayWeek(weekStartUtc, { now: weekStartUtc, weekOffset }),
+    [weekStartUtc, weekOffset],
+  );
+  // Stitch the Sunday-aligned strip with the available-slots data.
+  const allDaysByKey = useMemo(() => {
+    const map = new Map<string, DayEntry>();
+    for (const d of allDays) map.set(d.dateKey, d);
+    return map;
+  }, [allDays]);
 
   // Per-render derived-state: when `allDays` identity changes (new
   // slotStates Map from the parent) and the currently selected day is
@@ -155,11 +169,61 @@ export function BookingModal({
     }
   }
 
-  // The 7-day window for the day strip.
+  // The 7-day Sun→Sat window for the day strip, decorated with the
+  // available-slot count from `allDays`. Days outside the
+  // computed-slots horizon (past or far-future) just get an empty
+  // availableSlots array and render disabled.
   const visibleDays = useMemo(
-    () => allDays.slice(weekOffset * 7, weekOffset * 7 + 7),
-    [allDays, weekOffset],
+    () =>
+      sundayWeek.map((sd) => {
+        const data = allDaysByKey.get(sd.dateKey);
+        return {
+          dateKey: sd.dateKey,
+          dateObj: sd.date,
+          letter: sd.letter,
+          dayOfMonth: sd.dayOfMonth,
+          isPast: sd.isPast,
+          availableSlots: data?.availableSlots ?? [],
+        };
+      }),
+    [sundayWeek, allDaysByKey],
   );
+
+  // Pagination: how many future weeks the slotStates horizon covers.
+  // CALENDAR_DAYS_AHEAD on the page is 14, so we have at most 2-3 visible
+  // Sun→Sat weeks (depending on what weekday "today" falls on). Keep the
+  // limit derived from data, not hard-coded.
+  const lastSlotsKey = allDays.length > 0 ? allDays[allDays.length - 1]!.dateKey : null;
+  const canPaginateForward =
+    lastSlotsKey !== null &&
+    visibleDays[6]!.dateKey < lastSlotsKey;
+
+  // Code review 2026-05-19 (F16): when the user clicks "next week", the
+  // strip rebases to a new Sun→Sat window — but `selectedDateKey` from the
+  // PREVIOUS window stays set, so the period switcher shows "אין זמינות
+  // ביום זה" until the user manually picks a day in the new strip.
+  // Reseed the selection per-render when the visible window changes and
+  // the current selection isn't visible anymore. Keyed on `weekOffset`
+  // (identity changes per week-navigate) rather than `visibleDays`
+  // (rebuilt every render).
+  const [weekOffsetSeed, setWeekOffsetSeed] = useState<number>(weekOffset);
+  if (open && weekOffsetSeed !== weekOffset) {
+    setWeekOffsetSeed(weekOffset);
+    const selectionVisible =
+      selectedDateKey !== null &&
+      visibleDays.some((d) => d.dateKey === selectedDateKey);
+    if (!selectionVisible) {
+      const firstAvailable = visibleDays.find(
+        (d) => !d.isPast && d.availableSlots.length > 0,
+      );
+      setSelectedDateKey(
+        firstAvailable?.dateKey ??
+          visibleDays.find((d) => !d.isPast)?.dateKey ??
+          null,
+      );
+      setSelectedSlotIso(null);
+    }
+  }
 
   // Selected day's slots, bucketed by period.
   const selectedDay = useMemo(
@@ -200,21 +264,14 @@ export function BookingModal({
   const totalAvailableSlots = selectedDay?.availableSlots.length ?? 0;
   const activeSlots = slotsByPeriod[activePeriod] ?? [];
 
-  const continueHref = useMemo(() => {
-    if (!selectedSlotIso) return null;
-    if (isSignedIn) {
-      return buildSignedBookingStubUrl({
-        tutorUserId,
-        slotIso: selectedSlotIso,
-        duration,
-      });
-    }
-    return buildGateSignupUrl({
-      tutorUserId,
-      slotIso: selectedSlotIso,
-      duration,
-    });
-  }, [selectedSlotIso, isSignedIn, tutorUserId, duration]);
+  // Signing is done in a Server Action (`checkoutHandoffAction`) — NOT
+  // here in the client component. `AUTH_SECRET` is not shipped to the
+  // client bundle, so client-side `signSlotPayload` would silently fall
+  // back to the dev-only secret and produce a sig the server can't
+  // verify. The "המשך" button is a form that posts to the action; the
+  // action picks the right URL branch (signed-in → /checkout, anon →
+  // /signup gate) and `redirect()`s. `isSignedIn` IS still consumed —
+  // it drives the "אורח — נדרשת הרשמה קצרה להמשך" subtext under the CTA.
 
   if (!open) return null;
 
@@ -232,9 +289,14 @@ export function BookingModal({
         {/* Header */}
         <div className="p-5 border-b border-linen-border flex items-start gap-3">
           {profilePhotoUrl ? (
+            // Explicit width/height to avoid CLS while the presigned R2 URL
+            // loads — `Hero.tsx` already does the same for the 96px variant.
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={profilePhotoUrl}
               alt={displayName}
+              width={48}
+              height={48}
               className="w-12 h-12 rounded-lg object-cover"
             />
           ) : (
@@ -320,12 +382,8 @@ export function BookingModal({
               </div>
               <button
                 type="button"
-                disabled={(weekOffset + 1) * 7 >= allDays.length}
-                onClick={() =>
-                  setWeekOffset((v) =>
-                    (v + 1) * 7 >= allDays.length ? v : v + 1,
-                  )
-                }
+                disabled={!canPaginateForward}
+                onClick={() => setWeekOffset((v) => v + 1)}
                 aria-label="שבוע הבא"
                 className="w-8 h-8 rounded-lg bg-surface-low border border-linen-border hover:bg-surface-container flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -339,15 +397,12 @@ export function BookingModal({
               {visibleDays.map((day) => {
                 const isSelected = day.dateKey === selectedDateKey;
                 const isEmpty = day.availableSlots.length === 0;
-                const weekdayLabel = formatHebrewWeekday(day.dateObj)
-                  .replace("יום ", "")
-                  .slice(0, 2);
-                const dayNum = day.dateObj.getUTCDate();
+                const isDisabled = day.isPast || isEmpty;
                 return (
                   <button
                     key={day.dateKey}
                     type="button"
-                    disabled={isEmpty}
+                    disabled={isDisabled}
                     onClick={() => {
                       setSelectedDateKey(day.dateKey);
                       setSelectedSlotIso(null);
@@ -357,8 +412,8 @@ export function BookingModal({
                       "rounded-lg py-2.5 text-center border transition-colors",
                       isSelected
                         ? "bg-primary-container text-on-primary border-primary-container"
-                        : isEmpty
-                          ? "bg-transparent border-transparent opacity-50 cursor-not-allowed"
+                        : isDisabled
+                          ? "bg-transparent border-transparent opacity-40 cursor-not-allowed"
                           : "bg-transparent border-transparent hover:bg-surface-low",
                     ].join(" ")}
                   >
@@ -369,7 +424,7 @@ export function BookingModal({
                           : "text-[11px] text-secondary font-bold"
                       }
                     >
-                      {weekdayLabel}
+                      {day.letter}&#39;
                     </div>
                     <div
                       className={
@@ -378,7 +433,7 @@ export function BookingModal({
                           : "text-lg font-display font-bold text-on-surface"
                       }
                     >
-                      {dayNum}
+                      {day.dayOfMonth}
                     </div>
                   </button>
                 );
@@ -445,49 +500,36 @@ export function BookingModal({
             </div>
           )}
 
-          {bookingToast && (
-            <div
-              role="status"
-              className="bg-primary-fixed/40 border border-primary-fixed rounded-xl p-3 text-sm text-primary-container text-center"
-            >
-              {bookingToast}
-            </div>
-          )}
         </div>
 
-        {/* Footer */}
-        <div className="p-4 border-t border-linen-border bg-white">
-          {continueHref && !isSignedIn ? (
-            <Link
-              href={continueHref}
-              className="block w-full bg-primary-container hover:bg-primary text-on-primary font-bold py-3 rounded-xl text-base text-center transition-colors"
-            >
-              המשך
-            </Link>
-          ) : (
-            <Button
-              type="button"
-              variant="primary"
-              size="lg"
-              fullWidth
-              disabled={!selectedSlotIso}
-              onClick={() => {
-                if (!selectedSlotIso) return;
-                if (isSignedIn) {
-                  // Closed-beta: real booking-confirmation route lands in
-                  // Story 4.3. For now, surface a positive ack and keep
-                  // the modal open so the student can adjust.
-                  setBookingToast("בקרוב — עמוד אישור ההזמנה ייפתח כאן");
-                }
-              }}
-            >
-              המשך
-            </Button>
+        {/* Footer — form posts to the Server Action that signs server-side
+            and redirects to /checkout (signed-in) or /signup gate (anon). */}
+        <form action={checkoutHandoffAction} className="p-4 border-t border-linen-border bg-white">
+          <input type="hidden" name="tutorUserId" value={tutorUserId} />
+          <input
+            type="hidden"
+            name="slotIso"
+            value={selectedSlotIso ?? ""}
+          />
+          <input type="hidden" name="duration" value={duration} />
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            fullWidth
+            disabled={!selectedSlotIso}
+          >
+            המשך
+          </Button>
+          {!isSignedIn && (
+            <p className="text-[11px] text-on-surface-variant text-center mt-2">
+              אורח — נדרשת הרשמה קצרה להמשך
+            </p>
           )}
           <p className="text-[10px] text-secondary text-center mt-2">
-            לא יבוצע חיוב כרגע — בטא סגורה
+            תשלום פיקטיבי — לא יבוצע חיוב כספי בפועל
           </p>
-        </div>
+        </form>
       </div>
     </div>
   );
@@ -568,7 +610,7 @@ function PeriodPaginator({
 
 // ----- Window-label helper ------------------------------------------------
 
-function formatWindowLabel(days: DayEntry[]): string {
+function formatWindowLabel(days: ReadonlyArray<{ dateObj: Date }>): string {
   if (days.length === 0) return "";
   const first = days[0]!.dateObj;
   const last = days[days.length - 1]!.dateObj;

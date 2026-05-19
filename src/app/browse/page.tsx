@@ -55,7 +55,7 @@ export default function BrowsePage() {
                 </CardHeader>
 
                 <Button asChild size="lg">
-                  <Link href={`/booking-stub?tutor=${featuredTutor.id}`}>
+                  <Link href={`/tutor/${featuredTutor.id}`}>
                     הזמנת שיעור עם {featuredTutor.name}
                   </Link>
                 </Button>

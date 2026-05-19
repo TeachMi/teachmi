@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
+import { getUpcomingBookingsForTutor } from "@/lib/db/queries/booking-queries";
 import { requireTutor } from "../onboarding/_lib/require-tutor";
 import { TutorTabNav } from "./_components/TutorTabNav";
+import { UpcomingLessonsStrip } from "./_components/UpcomingLessonsStrip";
 
 // Story 2.10. The /tutor/me 3-tab shell (Profile / Schedule / Invoices).
 //
@@ -34,6 +36,10 @@ export default async function TutorMeLayout({
 }) {
   const user = await requireTutor("/tutor/me");
 
+  // Story 4.3: upcoming bookings strip above the tab nav. Fail-OPEN to
+  // empty so the page still renders if the query falters.
+  const upcoming = await getUpcomingBookingsForTutor(user.id);
+
   return (
     <AppShell mainClassName="flex-1 bg-surface">
       <div className="mx-auto w-full max-w-7xl px-6 pt-8">
@@ -53,6 +59,7 @@ export default async function TutorMeLayout({
             צפו בפרופיל הציבורי ←
           </Link>
         </div>
+        <UpcomingLessonsStrip upcoming={upcoming} />
       </div>
       <TutorTabNav />
       <div className="mx-auto w-full max-w-7xl px-6 py-6 pb-10">{children}</div>

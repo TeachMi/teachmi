@@ -17,6 +17,7 @@
 // (closed-beta). We keep the cell shells to match the mock structure
 // but render them disabled so accessibility checks don't trip.
 
+import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatIlsCurrency } from "@/lib/hebrew/format";
@@ -38,6 +39,13 @@ interface BookingSidebarProps {
   isSignedIn: boolean;
   hasAnyAvailability: boolean;
   /**
+   * True when the viewing user IS the tutor on this profile. Story 4.3
+   * (PM round 2026-05-18): the CTA + modal are replaced by an "owner"
+   * panel with a back-link to /tutor/me so a tutor can't book themselves.
+   * The server's `runCreateBooking` enforces the same guard.
+   */
+  viewerIsOwner: boolean;
+  /**
    * Pre-selected lesson length carried from the URL (`?duration=45`) for
    * deep-links from browse cards or marketing. Falls back to the sidebar's
    * headline duration when omitted.
@@ -57,9 +65,14 @@ export function BookingSidebar({
   weekStartUtc,
   isSignedIn,
   hasAnyAvailability,
+  viewerIsOwner,
   initialDuration,
 }: BookingSidebarProps) {
   const [open, setOpen] = useState(false);
+
+  if (viewerIsOwner) {
+    return <OwnerPanel headlinePrice={null} />;
+  }
 
   // Pick the headline duration. Prefer the URL-supplied `initialDuration`
   // when present AND offered, else 60 if offered, else the smallest
@@ -175,6 +188,42 @@ export function BookingSidebar({
         isSignedIn={isSignedIn}
         initialDuration={headlineDuration}
       />
+    </aside>
+  );
+}
+
+// ----- Owner panel --------------------------------------------------------
+// Rendered in place of the booking CTA when the viewing user is the tutor
+// on this profile (e.g. they navigated here via /tutor/me's "View public
+// profile" link). The modal is not rendered at all.
+
+function OwnerPanel(_props: { headlinePrice: number | null }) {
+  return (
+    <aside className="lg:sticky lg:top-24 lg:self-start">
+      <div className="bg-white rounded-2xl border border-linen-border shadow-sm p-6 text-start">
+        <div className="flex items-center gap-2 mb-2">
+          <span
+            className="material-symbols-outlined text-primary-container text-2xl"
+            style={{ fontVariationSettings: "'FILL' 1" }}
+            aria-hidden="true"
+          >
+            visibility
+          </span>
+          <h3 className="font-display font-bold text-lg text-on-surface">
+            זה הפרופיל שלך
+          </h3>
+        </div>
+        <p className="text-sm text-on-surface-variant leading-relaxed mb-4">
+          כך תלמידים פוטנציאליים רואים את הפרופיל שלך. כדי לערוך פרטים, זמינות
+          או חשבוניות — חזרו לאזור המורה.
+        </p>
+        <Link
+          href="/tutor/me"
+          className="inline-flex items-center gap-1 text-sm font-bold text-primary-container hover:underline"
+        >
+          ← חזרה לאזור המורה
+        </Link>
+      </div>
     </aside>
   );
 }

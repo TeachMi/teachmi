@@ -717,7 +717,7 @@ describe("runRegister — marketing opt-in (FR60)", () => {
 // `&next=` query param).
 describe("runRegister — Story 3.3 next threading", () => {
   const NEXT_URL =
-    "/booking-stub?tutor=11111111-2222-3333-4444-555555555555&slot=2026-05-20T11%3A00%3A00.000Z&duration=60&sig=abcdef0123456789";
+    "/checkout?tutor=11111111-2222-3333-4444-555555555555&slot=2026-05-20T11%3A00%3A00.000Z&duration=60&sig=abcdef0123456789";
 
   it("threads next into the verification email URL as &next=<encoded>", async () => {
     const { db, email, deps } = makeDeps({ next: NEXT_URL });

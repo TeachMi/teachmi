@@ -46,7 +46,7 @@ vi.mock("@/components/layout/AppShell", () => ({
 }));
 
 import { signSlotPayload } from "@/lib/auth/slot-signing";
-import { buildBookingStubUrl } from "@/lib/booking/urls";
+import { buildCheckoutUrl } from "@/lib/booking/urls";
 import SignupPage from "../page";
 
 const TUTOR_ID = "11111111-2222-3333-4444-555555555555";
@@ -118,7 +118,7 @@ function expectedNext(): string {
     slotIso: SLOT_ISO,
     duration: 60,
   });
-  return buildBookingStubUrl({
+  return buildCheckoutUrl({
     tutorUserId: TUTOR_ID,
     slotIso: SLOT_ISO,
     duration: 60,
