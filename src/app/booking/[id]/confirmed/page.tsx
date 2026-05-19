@@ -10,9 +10,10 @@ import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
+import { CancelLessonModal } from "@/components/booking/CancelLessonModal";
 import { auth } from "@/lib/auth/auth";
 import { getDb } from "@/lib/db/client";
-import { tutorProfiles, users } from "@/lib/db/schema";
+import { subjects, tutorProfiles, users } from "@/lib/db/schema";
 import { getBookingByIdForUser } from "@/lib/booking/booking-flow";
 import { formatIlsCurrency } from "@/lib/hebrew/format";
 import type { TutorDb } from "@/app/tutor/onboarding/profile/profile-flow";
@@ -50,19 +51,37 @@ export default async function BookingConfirmedPage({ params }: ConfirmedPageProp
   const booking = await getBookingByIdForUser(id, { db, userId });
   if (booking === null) notFound();
 
-  // Display name — prefer tutor_profiles.displayName, fall back to users.name.
+  // Display names + subject — single batched DB pass. Tutor name via the
+  // existing tutor-profiles-with-users fallback; student name via the
+  // users table; subject from the booked subject_id (nullable).
   const realDb = getDb();
-  const tutorNameRows = (await realDb
-    .select({
-      tpName: tutorProfiles.displayName,
-      uName: users.name,
-    })
-    .from(users)
-    .leftJoin(tutorProfiles, eq(tutorProfiles.userId, users.id))
-    .where(eq(users.id, booking.tutorUserId))
-    .limit(1)) as Array<{ tpName: string | null; uName: string | null }>;
+  const [tutorNameRows, studentNameRows, subjectRows] = await Promise.all([
+    realDb
+      .select({
+        tpName: tutorProfiles.displayName,
+        uName: users.name,
+      })
+      .from(users)
+      .leftJoin(tutorProfiles, eq(tutorProfiles.userId, users.id))
+      .where(eq(users.id, booking.tutorUserId))
+      .limit(1) as Promise<Array<{ tpName: string | null; uName: string | null }>>,
+    realDb
+      .select({ name: users.name })
+      .from(users)
+      .where(eq(users.id, booking.studentUserId))
+      .limit(1) as Promise<Array<{ name: string | null }>>,
+    booking.subjectId
+      ? (realDb
+          .select({ displayNameHe: subjects.displayNameHe })
+          .from(subjects)
+          .where(eq(subjects.id, booking.subjectId))
+          .limit(1) as Promise<Array<{ displayNameHe: string | null }>>)
+      : Promise.resolve([] as Array<{ displayNameHe: string | null }>),
+  ]);
   const tutorDisplayName =
     tutorNameRows[0]?.tpName ?? tutorNameRows[0]?.uName ?? "המורה";
+  const studentDisplayName = studentNameRows[0]?.name ?? "התלמיד/ה";
+  const subjectNameHe = subjectRows[0]?.displayNameHe ?? null;
 
   const start = booking.startsAt;
   const end = new Date(start.getTime() + booking.durationMinutes * 60 * 1000);
@@ -78,28 +97,62 @@ export default async function BookingConfirmedPage({ params }: ConfirmedPageProp
   // Is this the student or the tutor viewing?
   const isStudent = booking.studentUserId === userId;
   const dashboardHref = isStudent ? "/dashboard" : "/tutor/me";
+  const viewerRole = isStudent ? ("student" as const) : ("tutor" as const);
+  const counterpartName = isStudent ? tutorDisplayName : studentDisplayName;
+
+  // Cancel button is shown only when the booking is still cancellable —
+  // active status AND start is in the future. Past-start cancel is also
+  // rejected server-side (cancel-flow's time gate); the UI hides the
+  // button so it's not a foot-gun.
+  const isActiveBooking =
+    booking.status === "confirmed" || booking.status === "pending_payment";
+  const isFutureStart = start.getTime() > new Date().getTime();
+  const canCancel = isActiveBooking && isFutureStart;
+  const isCancelledBooking = booking.status === "cancelled";
 
   return (
     <AppShell mainClassName="flex-1 bg-linen">
       <main className="max-w-2xl mx-auto px-6 py-12">
-        {/* Success state */}
-        <div className="text-center mb-8">
-          <div className="w-20 h-20 bg-primary-fixed rounded-full mx-auto flex items-center justify-center mb-4 shadow-md">
-            <span
-              className="material-symbols-outlined text-primary-container text-5xl"
-              style={{ fontVariationSettings: "'FILL' 1" }}
-              aria-hidden="true"
-            >
-              check_circle
-            </span>
+        {/* Header — adapts to status. Confirmed (or pending) renders the
+            success state; cancelled renders a neutral "cancelled" banner
+            so the page is still safe to land on after a cancel. */}
+        {isCancelledBooking ? (
+          <div className="text-center mb-8">
+            <div className="w-20 h-20 bg-surface-container rounded-full mx-auto flex items-center justify-center mb-4">
+              <span
+                className="material-symbols-outlined text-secondary text-5xl"
+                aria-hidden="true"
+              >
+                event_busy
+              </span>
+            </div>
+            <h1 className="font-display font-extrabold text-3xl text-on-surface mb-2">
+              השיעור בוטל
+            </h1>
+            <p className="text-on-surface-variant">
+              ההזמנה הזו בוטלה. הזיכוי המלא יזוכה אוטומטית. (בטא סגורה — לא בוצע
+              חיוב כספי בפועל.)
+            </p>
           </div>
-          <h1 className="font-display font-extrabold text-3xl text-primary-container mb-2">
-            השיעור הוזמן!
-          </h1>
-          <p className="text-on-surface-variant">
-            שמרנו את ההזמנה במערכת. תזכורת תגיע 24 שעות לפני השיעור.
-          </p>
-        </div>
+        ) : (
+          <div className="text-center mb-8">
+            <div className="w-20 h-20 bg-primary-fixed rounded-full mx-auto flex items-center justify-center mb-4 shadow-md">
+              <span
+                className="material-symbols-outlined text-primary-container text-5xl"
+                style={{ fontVariationSettings: "'FILL' 1" }}
+                aria-hidden="true"
+              >
+                check_circle
+              </span>
+            </div>
+            <h1 className="font-display font-extrabold text-3xl text-primary-container mb-2">
+              השיעור הוזמן!
+            </h1>
+            <p className="text-on-surface-variant">
+              שמרנו את ההזמנה במערכת. תזכורת תגיע 24 שעות לפני השיעור.
+            </p>
+          </div>
+        )}
 
         {/* Booking summary */}
         <section className="bg-white rounded-2xl border border-linen-border shadow-sm overflow-hidden mb-6">
@@ -166,14 +219,16 @@ export default async function BookingConfirmedPage({ params }: ConfirmedPageProp
           </div>
         </div>
 
-        {/* Add to calendar */}
-        <AddToCalendarButtons
-          bookingId={booking.id}
-          startIso={start.toISOString()}
-          endIso={end.toISOString()}
-          tutorDisplayName={tutorDisplayName}
-          duration={booking.durationMinutes}
-        />
+        {/* Add to calendar — only when the booking is still active. */}
+        {!isCancelledBooking && (
+          <AddToCalendarButtons
+            bookingId={booking.id}
+            startIso={start.toISOString()}
+            endIso={end.toISOString()}
+            tutorDisplayName={tutorDisplayName}
+            duration={booking.durationMinutes}
+          />
+        )}
 
         {/* CTAs */}
         <div className="flex gap-3 mt-6">
@@ -189,11 +244,39 @@ export default async function BookingConfirmedPage({ params }: ConfirmedPageProp
           )}
         </div>
 
-        <p className="text-center text-xs text-secondary mt-6 leading-relaxed">
-          ניתן לבטל את השיעור עד תחילתו ללא עלות.
-          <br />
-          בטא סגורה — לא בוצע חיוב כספי בפועל.
-        </p>
+        {/* Cancel — only when the booking is still active AND start is
+            future. Renders as a low-emphasis ghost-with-destructive-text
+            button so it doesn't compete with the primary "back to
+            dashboard" CTA above. */}
+        {canCancel && (
+          <div className="mt-6 flex justify-center">
+            <CancelLessonModal
+              bookingId={booking.id}
+              viewerRole={viewerRole}
+              counterpartName={counterpartName}
+              startsAt={start}
+              durationMinutes={booking.durationMinutes}
+              subjectNameHe={subjectNameHe}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="md"
+                className="text-danger hover:text-red-700 hover:bg-danger/5"
+              >
+                בטל שיעור
+              </Button>
+            </CancelLessonModal>
+          </div>
+        )}
+
+        {!isCancelledBooking && (
+          <p className="text-center text-xs text-secondary mt-6 leading-relaxed">
+            ניתן לבטל את השיעור עד תחילתו ללא עלות.
+            <br />
+            בטא סגורה — לא בוצע חיוב כספי בפועל.
+          </p>
+        )}
       </main>
     </AppShell>
   );

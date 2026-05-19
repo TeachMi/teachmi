@@ -1,4 +1,7 @@
-import { getTutorAvailabilityRows } from "@/lib/db/queries/tutor-queries";
+import {
+  getActiveBookingsWithDetailsForTutor,
+  getTutorAvailabilityRows,
+} from "@/lib/db/queries/tutor-queries";
 import { requireTutor } from "../../onboarding/_lib/require-tutor";
 import { ScheduleEditor } from "./_components/ScheduleEditor";
 
@@ -6,6 +9,10 @@ import { ScheduleEditor } from "./_components/ScheduleEditor";
 // Loads existing rules (recurring + exceptions in the next 8 weeks) and
 // hands them to the client `ScheduleEditor`. Auth + role gate handled by
 // the parent /tutor/me/layout.tsx.
+//
+// Area 1 addition (2026-05-19): also loads active bookings in the same
+// window so the 4-week calendar tab can overlay them as `booked` cells.
+// The recurring grid tab stays bookings-blind per the rule/reality split.
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +37,13 @@ export default async function TutorMeSchedulePage() {
     console.error("[tutor/me/schedule] availability load failed", err);
   }
 
+  // Active bookings in the same window for the 4-week calendar overlay.
+  // The query already fails OPEN to [] on errors — no separate try/catch.
+  const bookings = await getActiveBookingsWithDetailsForTutor(user.id, {
+    from: now,
+    to: horizon,
+  });
+
   // Pre-split into recurring vs exceptions client-side via plain JSON so
   // the client island doesn't need DB types. Date / time columns come back
   // from Drizzle as strings already.
@@ -50,6 +64,14 @@ export default async function TutorMeSchedulePage() {
         date: r.date ?? "",
         startTime: r.startTime,
         endTime: r.endTime,
+      }))}
+      bookings={bookings.map((b) => ({
+        id: b.id,
+        startsAtIso: b.startsAt.toISOString(),
+        durationMinutes: b.durationMinutes,
+        studentUserId: b.studentUserId,
+        studentDisplayName: b.studentDisplayName,
+        subjectNameHe: b.subjectNameHe,
       }))}
     />
   );
