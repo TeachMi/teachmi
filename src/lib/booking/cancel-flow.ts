@@ -29,7 +29,7 @@
 // We return ok without re-writing anything. Already-completed / no-show
 // bookings ARE errors (the state has moved on; cancel is meaningless).
 
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { auditEvents, bookings, payments } from "../db/schema";
 import { toAuditEventValues } from "../db/audit";
 import type { TutorDb } from "@/app/tutor/onboarding/profile/profile-flow";
@@ -100,6 +100,9 @@ interface BookingLookupRow {
   studentUserId: string;
   tutorUserId: string;
   startsAt: Date;
+  // Surfaced so the idempotent-cancelled path can derive the ORIGINAL
+  // canceller's role rather than the current caller's (review patch 2).
+  cancelledByUserId: string | null;
 }
 
 interface PaymentLookupRow {
@@ -139,6 +142,7 @@ export async function runCancelBooking(
         studentUserId: bookings.studentUserId,
         tutorUserId: bookings.tutorUserId,
         startsAt: bookings.startsAt,
+        cancelledByUserId: bookings.cancelledByUserId,
       })
       .from(bookings)
       .where(
@@ -175,7 +179,20 @@ export async function runCancelBooking(
     // Idempotent — the user clicked twice OR the other party already
     // cancelled. Either way their intent is satisfied. No re-writes, no
     // audit row, no error.
-    return { ok: true, cancelledByRole, alreadyCancelled: true };
+    //
+    // Review patch 2: derive role from `cancelledByUserId` on the row,
+    // not from the current caller, so a student opening a
+    // tutor-cancelled booking and re-clicking cancel gets the correct
+    // `cancelledByRole: "tutor"` attribution rather than "student".
+    const originalCancellerId =
+      booking.cancelledByUserId ?? deps.currentUserId;
+    const originalRole: "student" | "tutor" =
+      booking.studentUserId === originalCancellerId ? "student" : "tutor";
+    return {
+      ok: true,
+      cancelledByRole: originalRole,
+      alreadyCancelled: true,
+    };
   }
   if (booking.status === "completed" || booking.status === "no_show") {
     return {
@@ -197,6 +214,20 @@ export async function runCancelBooking(
     };
   }
 
+  // Review patch 4: enforce "tutor must supply a reason" server-side.
+  // The CancelLessonModal's `buildReasonPayload` already blocks the form
+  // submit, but a curl/tampered client could submit a tutor cancel with
+  // no reason. The required-reason rule is part of the MVP1 policy (see
+  // mocks/cancel-modal.html + party-mode 2026-05-19); keep the trust
+  // boundary at the server, not in client JS.
+  if (cancelledByRole === "tutor" && reason === null) {
+    return {
+      ok: false,
+      reason: "invalid_input",
+      formError: "יש לבחור סיבה לביטול.",
+    };
+  }
+
   // 4. Time gate. Past-start cancellations are rejected even when the UI
   //    hides the button — the UI lies, the server doesn't.
   const now = deps.now();
@@ -209,8 +240,17 @@ export async function runCancelBooking(
   }
 
   // 5. UPDATE the booking row.
+  //
+  // Review patch 1: the WHERE clause now predicates on status IN
+  // ('confirmed','pending_payment') so two simultaneous cancels can't
+  // both flip the row (which would overwrite `cancelled_by_user_id`
+  // and double-write the audit). The .returning() check turns the
+  // race-loser into an idempotent success ("already cancelled by the
+  // other party in the gap between our SELECT and UPDATE") rather than
+  // a stomp.
+  let updatedBookingRows: Array<{ id: string }>;
   try {
-    await deps.db
+    updatedBookingRows = (await deps.db
       .update(bookings)
       .set({
         status: "cancelled",
@@ -221,7 +261,13 @@ export async function runCancelBooking(
         updatedByKind: "user",
         updatedByActor: deps.currentUserId,
       })
-      .where(eq(bookings.id, booking.id));
+      .where(
+        and(
+          eq(bookings.id, booking.id),
+          inArray(bookings.status, ["confirmed", "pending_payment"]),
+        ),
+      )
+      .returning({ id: bookings.id })) as Array<{ id: string }>;
   } catch (err) {
     log.error("[runCancelBooking] bookings UPDATE failed", err);
     return {
@@ -229,6 +275,13 @@ export async function runCancelBooking(
       reason: "unknown",
       formError: "אירעה שגיאה בעדכון ההזמנה. נסו שוב.",
     };
+  }
+  if (updatedBookingRows.length === 0) {
+    // Lost the race — between our SELECT (booking.status === 'confirmed')
+    // and this UPDATE, another actor (counterparty, admin, scheduled job)
+    // already cancelled or completed the booking. The user's intent is
+    // satisfied either way; surface as idempotent ok with alreadyCancelled.
+    return { ok: true, cancelledByRole, alreadyCancelled: true };
   }
 
   // 6. Payment branch. Today everything is mock_payment=true; the future
@@ -249,6 +302,11 @@ export async function runCancelBooking(
     // Continue — the booking is already cancelled. A stranded settled
     // payment is recoverable via the reconciliation job (Phase 2).
   }
+  // Review patch 7: count ACTUALLY-refunded rows in a separate counter so
+  // the audit payload doesn't claim refunds that silently failed in the
+  // try/catch below. Previously the audit re-filtered `paymentsForBooking`
+  // (the pre-update read), which lied when a mock UPDATE rejected.
+  let paymentRowsRefunded = 0;
   for (const payment of paymentsForBooking) {
     if (payment.status !== "settled") continue;
     if (payment.mockPayment) {
@@ -262,9 +320,11 @@ export async function runCancelBooking(
             updatedByActor: deps.currentUserId,
           })
           .where(eq(payments.id, payment.id));
+        paymentRowsRefunded++;
       } catch (err) {
         // Non-fatal: the booking row carries the cancel state-of-truth.
-        // Logged for the reconciliation job to catch.
+        // Logged for the reconciliation job to catch. The counter is NOT
+        // incremented — the audit row reflects what actually moved.
         log.error("[runCancelBooking] payments UPDATE (mock) failed", err);
       }
       continue;
@@ -298,9 +358,7 @@ export async function runCancelBooking(
           starts_at: booking.startsAt.toISOString(),
           status_before: booking.status,
           reason: reason ?? null,
-          payment_rows_refunded: paymentsForBooking.filter(
-            (p) => p.status === "settled" && p.mockPayment,
-          ).length,
+          payment_rows_refunded: paymentRowsRefunded,
         },
       }),
     );

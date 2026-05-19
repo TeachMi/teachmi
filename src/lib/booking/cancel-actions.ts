@@ -34,11 +34,18 @@ export async function cancelBookingAction(input: {
   });
 
   if (result.ok) {
-    // Both surfaces render upcoming bookings off the same queries; revalidate
-    // both so a tutor-cancel reflects on the student's dashboard (and vice
-    // versa) the next time either party visits.
+    // Three surfaces render bookings off the cancel target; revalidate all
+    // of them so the cancel reflects everywhere on the next render.
+    //
+    // Review patch 3: `/tutor/me/schedule` is the 4-week-calendar surface
+    // that overlays bookings via `getActiveBookingsWithDetailsForTutor`.
+    // Without an explicit revalidate, a cancel from the BookingPeekModal
+    // (or from /booking/[id]/confirmed) left the booked cell stuck on the
+    // calendar until the next hard nav — directly contradicting the
+    // rule/reality split this PR repairs.
     revalidatePath("/dashboard");
     revalidatePath("/tutor/me");
+    revalidatePath("/tutor/me/schedule");
     revalidatePath(`/booking/${input.bookingId}/confirmed`);
   }
 

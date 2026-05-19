@@ -27,7 +27,7 @@
 // refreshes the surrounding UI. We close the modal locally via a callback;
 // no router push.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Modal,
   ModalContent,
@@ -60,6 +60,13 @@ export interface CancelLessonModalProps {
   subjectNameHe?: string | null;
   /** The trigger element (typically a Button). asChild via Radix. */
   children: ReactNode;
+  /**
+   * Fires after a successful cancel (whether fresh or already-cancelled),
+   * just before this modal auto-closes. Used by the BookingPeekModal to
+   * close itself after the inner cancel modal finishes — without it the
+   * peek stays mounted with stale booking data on top (review patch 6).
+   */
+  onCancelled?: (result: { alreadyCancelled: boolean }) => void;
 }
 
 type Stage = "form" | "submitting" | "success" | "error";
@@ -85,11 +92,16 @@ export function CancelLessonModal({
   durationMinutes,
   subjectNameHe,
   children,
+  onCancelled,
 }: CancelLessonModalProps) {
   // `open` is controlled so we can programmatically close on success.
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<Stage>("form");
   const [formError, setFormError] = useState<string | null>(null);
+  // Was the success the result of an "already cancelled in the gap"
+  // path (counterparty got there first OR user double-clicked)? Drives
+  // the success-flash copy (review patch 12).
+  const [wasAlreadyCancelled, setWasAlreadyCancelled] = useState(false);
 
   // Student-side reason: single free-text field, optional.
   const [studentReason, setStudentReason] = useState("");
@@ -98,9 +110,21 @@ export function CancelLessonModal({
   const [tutorPreset, setTutorPreset] = useState<TutorPresetValue | "">("");
   const [tutorOtherText, setTutorOtherText] = useState("");
 
+  // Review patch 11: mountedRef guard so a slow `cancelBookingAction`
+  // resolving AFTER the modal unmounts (e.g. user navigates away mid-
+  // flight) doesn't trigger setState on an unmounted component.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   function resetForm() {
     setStage("form");
     setFormError(null);
+    setWasAlreadyCancelled(false);
     setStudentReason("");
     setTutorPreset("");
     setTutorOtherText("");
@@ -134,6 +158,10 @@ export function CancelLessonModal({
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // Review patch 10: hard early-return so a fast double-click (or a
+    // resubmit while the button is in its `disabled` repaint window)
+    // can't fire `cancelBookingAction` twice.
+    if (stage === "submitting" || stage === "success") return;
     const { value: reason, valid } = buildReasonPayload();
     if (!valid) {
       setFormError(
@@ -147,24 +175,42 @@ export function CancelLessonModal({
     setFormError(null);
     try {
       const result = await cancelBookingAction({ bookingId, reason });
+      // Review patch 11: skip all state updates if the modal unmounted
+      // while the action was in flight (user navigated away, parent
+      // tore down, etc.).
+      if (!mountedRef.current) return;
       if (result.ok) {
+        setWasAlreadyCancelled(result.alreadyCancelled);
         setStage("success");
         // Brief success flash, then close. revalidatePath in the action
-        // refreshes the surrounding UI.
-        setTimeout(() => handleOpenChange(false), 1400);
+        // refreshes the surrounding UI. The onCancelled callback fires
+        // before the local close so a parent modal (e.g. BookingPeek)
+        // can sync its own open state.
+        setTimeout(() => {
+          if (!mountedRef.current) return;
+          onCancelled?.({ alreadyCancelled: result.alreadyCancelled });
+          handleOpenChange(false);
+        }, 1400);
       } else {
         setStage("error");
         setFormError(result.formError);
       }
     } catch (err) {
       console.error("[CancelLessonModal] cancelBookingAction threw", err);
+      if (!mountedRef.current) return;
       setStage("error");
       setFormError("אירעה שגיאה. נסו שוב.");
     }
   }
 
   const isStudent = viewerRole === "student";
-  const headerTitle = isStudent ? "ביטול שיעור" : "ביטול שיעור";
+  // Review patch 5: header is identical for both actors at MVP1 — both
+  // see "ביטול שיעור". The role-specific tone lives in the body subtitle
+  // (tutor-only) and the modal header `tone` prop (`danger` for tutor).
+  // The previous `isStudent ? "ביטול שיעור" : "ביטול שיעור"` ternary was
+  // dead code; collapsed to a literal so future editors don't think it
+  // was meant to differ.
+  const headerTitle = "ביטול שיעור";
   const headerSub = isStudent
     ? null
     : "אני צריך/ה לבטל את השיעור. התלמיד יקבל הודעה והזיכוי הכספי יבוצע אוטומטית.";
@@ -265,7 +311,14 @@ export function CancelLessonModal({
                 >
                   check_circle
                 </span>
-                השיעור בוטל.
+                {/* Review patch 12: distinguish a fresh cancel from an
+                    already-cancelled idempotent path. The user deserves
+                    to know "the other side beat me to it" rather than
+                    being credited for a cancel they didn't actually
+                    perform. */}
+                {wasAlreadyCancelled
+                  ? "השיעור היה כבר מבוטל."
+                  : "השיעור בוטל."}
               </div>
             )}
           </ModalBody>

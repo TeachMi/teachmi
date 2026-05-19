@@ -173,6 +173,22 @@ export function CalendarTab({
   // Bookings overlay — pass minimal shape to unfoldAvailability; keep the
   // rich shape in a separate lookup map so the renderer can render student
   // name / subject / time inside booked cells without a parallel join.
+  //
+  // Review patch 13: derive a stable content-key from the bookings array
+  // so the heavy `originalUnfolded` memo (which fans out through the
+  // entire grid render) is NOT invalidated every time the parent server
+  // component re-sends the bookings prop with a new reference but
+  // identical content (the common case after revalidatePath). The key
+  // captures the only fields that drive overlay layout — id, start
+  // instant, and duration — and re-stringifies cheaply per render. Heavy
+  // work is gated behind it.
+  const bookingsKey = useMemo(
+    () =>
+      bookings
+        .map((b) => `${b.id}:${b.startsAtIso}:${b.durationMinutes}`)
+        .join("|"),
+    [bookings],
+  );
   const bookingsForUnfold = useMemo(
     () =>
       bookings.map((b) => ({
@@ -180,13 +196,15 @@ export function CalendarTab({
         startsAt: new Date(b.startsAtIso),
         durationMinutes: b.durationMinutes,
       })),
-    [bookings],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bookingsKey is the content-derived dep
+    [bookingsKey],
   );
   const bookingById = useMemo(() => {
     const m = new Map<string, CalendarBookingRow>();
     for (const b of bookings) m.set(b.id, b);
     return m;
-  }, [bookings]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bookingsKey is the content-derived dep
+  }, [bookingsKey]);
 
   // ORIGINAL — unfold the recurring + exception rules + active bookings
   // onto the visible week.
@@ -328,6 +346,24 @@ export function CalendarTab({
       }
     };
   }, []);
+
+  // Review patch 9: clear the hovered-booking id when the visible week
+  // changes. Without this, if the user hovers a booked band, the band's
+  // id stays set, and clicks "next week", the new week's render briefly
+  // highlights whatever cells the prior id resolved to (or nothing) —
+  // a "ghost hover" that confuses the affordance.
+  //
+  // setState-during-render pattern (same approach the file uses for
+  // `seededFrom` further down) — avoids a useEffect that the React
+  // Compiler lint rule flags for triggering cascading renders. Any
+  // pending rAF-deferred clear that's mid-air just finds `prev === null`
+  // in its functional setState and no-ops — no ref touch needed here.
+  // Reference: https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [lastSeenWeekOffset, setLastSeenWeekOffset] = useState(weekOffset);
+  if (lastSeenWeekOffset !== weekOffset) {
+    setLastSeenWeekOffset(weekOffset);
+    setHoveredBookingId(null);
+  }
 
   function setCell(dateIso: string, slotIdx: number, available: boolean) {
     setCurrent((prev) => {

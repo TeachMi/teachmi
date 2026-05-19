@@ -12,18 +12,20 @@
 //   - Subtitle: subject + date + time + duration
 //   - Primary action: "פתח דף תלמיד" → /tutor/students/{studentId}
 //     (live stub per Winston's guardrails)
-//   - Secondary action: "בטל שיעור" — opens the CancelLessonModal on top
-//     of this peek (Radix nesting handles stacking)
+//   - Secondary action: "בטל שיעור" — opens the CancelLessonModal nested
+//     on top of this peek
 //
-// Why nested modals: when the cancel modal closes (success flash or
-// dismiss), the peek stays open underneath so the tutor can re-engage if
-// needed. The visual "modal-over-modal" is minor — both backdrops fade
-// when the cancel closes, leaving the peek alone. Acceptable trade-off
-// for keeping cancel modal a single composable component (reused as-is on
-// /booking/[id]/confirmed).
+// Review patch 6 (2026-05-19): the peek is now CONTROLLED (`open` lives
+// in this component) so the two cleanup paths can close it explicitly:
+//   1. Cancel succeeds → CancelLessonModal's onCancelled callback fires
+//      → this component sets open=false. Prevents a stuck-open peek
+//      showing stale booking data the user just cancelled.
+//   2. User taps "פתח דף תלמיד" Link → setOpen(false) before navigation.
+//      Without this, the peek modal stays mounted across the route
+//      change and the browser back button returns to a stuck-open modal.
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Modal,
   ModalContent,
@@ -60,8 +62,9 @@ export function BookingPeekModal({
   subjectNameHe,
   children,
 }: BookingPeekModalProps) {
+  const [open, setOpen] = useState(false);
   return (
-    <Modal>
+    <Modal open={open} onOpenChange={setOpen}>
       <ModalTrigger asChild>{children}</ModalTrigger>
       <ModalContent size="sm">
         <ModalHeader>
@@ -90,7 +93,10 @@ export function BookingPeekModal({
           {/* Stacked actions: navigation primary, destructive secondary. */}
           <div className="space-y-2">
             <Button asChild variant="primary" size="md" fullWidth>
-              <Link href={`/tutor/students/${studentUserId}`}>
+              <Link
+                href={`/tutor/students/${studentUserId}`}
+                onClick={() => setOpen(false)}
+              >
                 פתח דף תלמיד
               </Link>
             </Button>
@@ -101,6 +107,7 @@ export function BookingPeekModal({
               startsAt={startsAt}
               durationMinutes={durationMinutes}
               subjectNameHe={subjectNameHe}
+              onCancelled={() => setOpen(false)}
             >
               <Button
                 type="button"

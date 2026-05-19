@@ -130,12 +130,21 @@ function UpcomingStrip({ bookings }: { bookings: UpcomingBookingRow[] }) {
                     durationMinutes={b.durationMinutes}
                     subjectNameHe={b.subjectNameHe}
                   >
-                    <button
+                    {/* Review patch 8: accessible cancel button — proper
+                        Button primitive with `size="sm"` (h-8 ≥ 32px,
+                        adequate touch target after px-3 padding totalling
+                        ~80×32), aria-label naming the specific lesson
+                        for screen-reader users, and focus-visible ring
+                        from the primitive's CVA defaults. */}
+                    <Button
                       type="button"
-                      className="text-xs font-bold text-danger hover:underline cursor-pointer"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`ביטול שיעור עם ${tutorName} בתאריך ${formatHebrewDate(b.startsAt)}`}
+                      className="text-danger hover:text-red-700 hover:bg-danger/5"
                     >
                       ביטול שיעור
-                    </button>
+                    </Button>
                   </CancelLessonModal>
                 </div>
               </Card>

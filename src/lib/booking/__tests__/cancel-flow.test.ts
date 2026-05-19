@@ -42,6 +42,7 @@ function makeBookingRow(
     startsAt: Date;
     studentUserId: string;
     tutorUserId: string;
+    cancelledByUserId: string | null;
   }> = {},
 ) {
   return {
@@ -50,11 +51,26 @@ function makeBookingRow(
     studentUserId: overrides.studentUserId ?? STUDENT_ID,
     tutorUserId: overrides.tutorUserId ?? TUTOR_ID,
     startsAt: overrides.startsAt ?? FUTURE_SLOT,
+    // Review patch 2: surfaced from the booking SELECT so the
+    // already-cancelled idempotent path can derive the ORIGINAL
+    // canceller's role rather than the current caller's.
+    cancelledByUserId: overrides.cancelledByUserId ?? null,
   };
 }
 
 function queueBooking(db: FakeTutorDb, overrides = {}) {
   db.queueSelect([makeBookingRow(overrides)]);
+}
+
+/**
+ * Most success-path tests need to queue the booking SELECT + the
+ * `.returning()` from the bookings UPDATE so the race-detect logic
+ * (review patch 1) sees a non-empty result and proceeds. This helper
+ * batches both.
+ */
+function queueBookingAndUpdate(db: FakeTutorDb, overrides = {}) {
+  queueBooking(db, overrides);
+  db.queueReturning([{ id: BOOKING_ID }]);
 }
 
 function queuePayments(db: FakeTutorDb, rows: Array<Partial<{ status: string; mockPayment: boolean }>>) {
@@ -178,7 +194,7 @@ describe("runCancelBooking — time gate", () => {
 describe("runCancelBooking — happy path (student)", () => {
   it("flips booking to cancelled + flips mock payment to refunded + writes audit", async () => {
     const { db, deps } = makeDeps(STUDENT_ID);
-    queueBooking(db);
+    queueBookingAndUpdate(db);
     queuePayments(db, [{ status: "settled", mockPayment: true }]);
 
     const result = await runCancelBooking(
@@ -229,7 +245,7 @@ describe("runCancelBooking — happy path (student)", () => {
 
   it("writes booking UPDATE → payment UPDATE → audit INSERT in order", async () => {
     const { db, deps } = makeDeps(STUDENT_ID);
-    queueBooking(db);
+    queueBookingAndUpdate(db);
     queuePayments(db, [{ status: "settled", mockPayment: true }]);
 
     await runCancelBooking({ bookingId: BOOKING_ID }, deps);
@@ -253,7 +269,7 @@ describe("runCancelBooking — happy path (student)", () => {
 describe("runCancelBooking — happy path (tutor)", () => {
   it("derives cancelledByRole='tutor' when caller is the tutor", async () => {
     const { db, deps } = makeDeps(TUTOR_ID);
-    queueBooking(db);
+    queueBookingAndUpdate(db);
     queuePayments(db, [{ status: "settled", mockPayment: true }]);
 
     const result = await runCancelBooking(
@@ -285,7 +301,7 @@ describe("runCancelBooking — happy path (tutor)", () => {
 describe("runCancelBooking — payment branches", () => {
   it("does NOT update non-settled payment rows (pending stays pending)", async () => {
     const { db, deps } = makeDeps(STUDENT_ID);
-    queueBooking(db);
+    queueBookingAndUpdate(db);
     queuePayments(db, [{ status: "pending", mockPayment: true }]);
 
     await runCancelBooking({ bookingId: BOOKING_ID }, deps);
@@ -294,7 +310,7 @@ describe("runCancelBooking — payment branches", () => {
 
   it("does NOT issue refund for real-payment rows today (TODO branch logs only)", async () => {
     const { db, deps } = makeDeps(STUDENT_ID);
-    queueBooking(db);
+    queueBookingAndUpdate(db);
     queuePayments(db, [{ status: "settled", mockPayment: false }]);
 
     const result = await runCancelBooking({ bookingId: BOOKING_ID }, deps);
@@ -306,7 +322,7 @@ describe("runCancelBooking — payment branches", () => {
 
   it("succeeds with zero payment rows (defensive — should never happen post-Story-4.3)", async () => {
     const { db, deps } = makeDeps(STUDENT_ID);
-    queueBooking(db);
+    queueBookingAndUpdate(db);
     queuePayments(db, []);
 
     const result = await runCancelBooking({ bookingId: BOOKING_ID }, deps);
@@ -315,6 +331,48 @@ describe("runCancelBooking — payment branches", () => {
     const auditInserts = db.insertedInto(auditEvents);
     const payload = (auditInserts[0]!.value as { payload: Record<string, unknown> }).payload;
     expect(payload.payment_rows_refunded).toBe(0);
+  });
+
+  it("audit's payment_rows_refunded counts ACTUAL UPDATE successes, not pre-update reads (review patch 7)", async () => {
+    // Two settled mock-payment rows. First UPDATE fails; second succeeds.
+    // The audit must reflect 1 actual refund, not 2 — even though the
+    // pre-update read showed 2 candidates.
+    const { db, deps } = makeDeps(STUDENT_ID);
+    queueBookingAndUpdate(db);
+    queuePayments(db, [
+      { status: "settled", mockPayment: true },
+      { status: "settled", mockPayment: true },
+    ]);
+    // Override the FakeDb to throw on the FIRST payment UPDATE, succeed on
+    // the second. Simplest approach with FakeTutorDb: monkey-patch update
+    // for one call so it rejects, then restore.
+    const originalUpdate = db.update.bind(db);
+    let updateCallCount = 0;
+    db.update = (table: unknown) => {
+      updateCallCount++;
+      if (updateCallCount === 2) {
+        // The second .update() call is the first payment UPDATE (1st = booking).
+        return {
+          set: () => ({
+            where: () => {
+              const rejected = Promise.reject(new Error("simulated payment UPDATE failure"));
+              return Object.assign(rejected, {
+                returning: () => Promise.reject(new Error("simulated payment UPDATE failure")) as Promise<unknown[]>,
+              });
+            },
+          }),
+        };
+      }
+      return originalUpdate(table);
+    };
+
+    const result = await runCancelBooking({ bookingId: BOOKING_ID }, deps);
+    expect(result.ok).toBe(true);
+
+    const auditInserts = db.insertedInto(auditEvents);
+    const payload = (auditInserts[0]!.value as { payload: Record<string, unknown> }).payload;
+    // Only ONE payment actually refunded; the other failed silently.
+    expect(payload.payment_rows_refunded).toBe(1);
   });
 });
 
@@ -325,7 +383,7 @@ describe("runCancelBooking — payment branches", () => {
 describe("runCancelBooking — reason normalization", () => {
   it("trims whitespace + treats blank as null", async () => {
     const { db, deps } = makeDeps(STUDENT_ID);
-    queueBooking(db);
+    queueBookingAndUpdate(db);
     queuePayments(db, []);
 
     await runCancelBooking({ bookingId: BOOKING_ID, reason: "   " }, deps);
@@ -336,7 +394,7 @@ describe("runCancelBooking — reason normalization", () => {
 
   it(`truncates reason to ${CANCEL_REASON_MAX_CHARS} chars`, async () => {
     const { db, deps } = makeDeps(STUDENT_ID);
-    queueBooking(db);
+    queueBookingAndUpdate(db);
     queuePayments(db, []);
 
     const longReason = "א".repeat(CANCEL_REASON_MAX_CHARS + 50);
@@ -348,14 +406,123 @@ describe("runCancelBooking — reason normalization", () => {
     expect(setValue.cancellationReason).toHaveLength(CANCEL_REASON_MAX_CHARS);
   });
 
-  it("undefined reason → null in DB", async () => {
+  it("undefined reason → null in DB (student-side: no reason required)", async () => {
     const { db, deps } = makeDeps(STUDENT_ID);
-    queueBooking(db);
+    queueBookingAndUpdate(db);
     queuePayments(db, []);
 
     await runCancelBooking({ bookingId: BOOKING_ID }, deps);
     expect(db.updatedAt(bookings)[0]!.set).toMatchObject({
       cancellationReason: null,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server-side tutor-reason enforcement (review patch 4)
+// ---------------------------------------------------------------------------
+
+describe("runCancelBooking — tutor must supply a reason (server-side)", () => {
+  it("tutor cancel with NO reason → invalid_input, no writes", async () => {
+    const { db, deps } = makeDeps(TUTOR_ID);
+    queueBooking(db);
+    const result = await runCancelBooking({ bookingId: BOOKING_ID }, deps);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("invalid_input");
+    // No bookings UPDATE attempted — the gate fires before the write
+    // path. The orchestrator's only DB call so far is the booking SELECT.
+    expect(db.updatedAt(bookings)).toHaveLength(0);
+    expect(db.insertedInto(auditEvents)).toHaveLength(0);
+  });
+
+  it("tutor cancel with blank-whitespace reason → invalid_input (matches normalizeReason)", async () => {
+    const { db, deps } = makeDeps(TUTOR_ID);
+    queueBooking(db);
+    const result = await runCancelBooking(
+      { bookingId: BOOKING_ID, reason: "   \n  " },
+      deps,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("invalid_input");
+    expect(db.updatedAt(bookings)).toHaveLength(0);
+  });
+
+  it("student cancel with NO reason → ok (student reason is optional)", async () => {
+    const { db, deps } = makeDeps(STUDENT_ID);
+    queueBookingAndUpdate(db);
+    queuePayments(db, []);
+    const result = await runCancelBooking({ bookingId: BOOKING_ID }, deps);
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Race-loser handling (review patch 1)
+// ---------------------------------------------------------------------------
+
+describe("runCancelBooking — race-loser handling", () => {
+  it("UPDATE returns no rows → idempotent alreadyCancelled ok (counterparty beat us in the gap)", async () => {
+    const { db, deps } = makeDeps(STUDENT_ID);
+    queueBooking(db);
+    // UPDATE returns []  — the status guard in the WHERE clause matched
+    // zero rows because another actor cancelled between our SELECT and
+    // UPDATE. The orchestrator must NOT treat this as a hard failure;
+    // the user's intent is satisfied either way.
+    db.queueReturning([]);
+
+    const result = await runCancelBooking(
+      { bookingId: BOOKING_ID, reason: "אירוע משפחתי" },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.alreadyCancelled).toBe(true);
+    expect(result.cancelledByRole).toBe("student");
+    // No subsequent operations — no payment refund, no audit row.
+    expect(db.updatedAt(payments)).toHaveLength(0);
+    expect(db.insertedInto(auditEvents)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Already-cancelled role attribution (review patch 2)
+// ---------------------------------------------------------------------------
+
+describe("runCancelBooking — already-cancelled role attribution", () => {
+  it("student re-clicks on a tutor-cancelled booking → returns cancelledByRole='tutor' (from row)", async () => {
+    const { db, deps } = makeDeps(STUDENT_ID);
+    queueBooking(db, {
+      status: "cancelled",
+      // Original cancel came from the tutor side.
+      cancelledByUserId: TUTOR_ID,
+    });
+    const result = await runCancelBooking({ bookingId: BOOKING_ID }, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.alreadyCancelled).toBe(true);
+    expect(result.cancelledByRole).toBe("tutor");
+  });
+
+  it("tutor re-clicks on a student-cancelled booking → returns cancelledByRole='student'", async () => {
+    const { db, deps } = makeDeps(TUTOR_ID);
+    queueBooking(db, {
+      status: "cancelled",
+      cancelledByUserId: STUDENT_ID,
+    });
+    const result = await runCancelBooking({ bookingId: BOOKING_ID }, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.cancelledByRole).toBe("student");
+  });
+
+  it("falls back to caller when cancelledByUserId is null (corrupt/legacy row)", async () => {
+    const { db, deps } = makeDeps(STUDENT_ID);
+    queueBooking(db, { status: "cancelled", cancelledByUserId: null });
+    const result = await runCancelBooking({ bookingId: BOOKING_ID }, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.cancelledByRole).toBe("student");
   });
 });
