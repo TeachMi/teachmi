@@ -220,9 +220,16 @@ async function _getUpcomingBookingsForTutor(
 ): Promise<UpcomingTutorBookingRow[]> {
   const now = deps.now ?? new Date();
   const logger = deps.logger ?? { error: (msg, err) => console.error(msg, err) };
-  const db = deps.db ?? (getDb() as unknown as DbForBookingQueries);
 
   try {
+    // `getDb()` is inside the try so a missing DATABASE_URL (in unit
+    // tests, or in a misconfigured deploy) returns `[]` instead of
+    // throwing. The `/tutor/me` layout calls this on every render —
+    // crashing the layout for the entire site over a DB-env blip
+    // is the wrong fail mode. Matches the student-side helper's
+    // intent ("fail-OPEN on DB errors — both return []").
+    const db = deps.db ?? (getDb() as unknown as DbForBookingQueries);
+
     const rows = (await db
       .select({
         id: bookings.id,
