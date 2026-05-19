@@ -97,6 +97,10 @@ export async function SiteHeader({ activeHref = "/", action }: SiteHeaderProps) 
     (user?.role as AccountRole | undefined) ?? null,
   );
 
+  // Founder direction 2026-05-17: the avatar is a direct link, NOT a
+  // dropdown. Logout lives at the bottom of /tutor/me (and analogous
+  // surfaces for student/admin), so the header avatar can stay a
+  // one-click affordance.
   const defaultAction = user ? (
     <Link
       href={accountHome.href}

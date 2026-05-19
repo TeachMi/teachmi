@@ -22,6 +22,9 @@ vi.mock("../_components/TutorTabNav", () => ({
   TutorTabNav: TabNavSpy,
 }));
 
+// (logoutAction moved out of /tutor/me/layout into ProfileTabClient
+// per founder direction 2026-05-18 — no mock needed here anymore.)
+
 import TutorMeLayout from "../layout";
 
 beforeEach(() => {

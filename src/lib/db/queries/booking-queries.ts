@@ -11,7 +11,12 @@
 
 import { cache } from "react";
 import { and, asc, desc, eq, gte, inArray, lt } from "drizzle-orm";
-import { bookings, subjects, tutorProfiles, users } from "../schema";
+import {
+  bookings,
+  subjects,
+  tutorProfiles,
+  users,
+} from "../schema";
 import { getDb } from "../client";
 
 export type UpcomingBookingStatus = "pending_payment" | "confirmed";
@@ -187,3 +192,82 @@ async function _getPastBookingsForStudent(
 
 export const getUpcomingBookingsForStudent = cache(_getUpcomingBookingsForStudent);
 export const getPastBookingsForStudent = cache(_getPastBookingsForStudent);
+
+// ----- Tutor-side mirror -----------------------------------------------
+// Story 4.3 (2026-05-18). Same shape as the student-side query, with the
+// counterpart (student) name + the tutor's payout (priceIls − commission)
+// substituted. Used by the tutor self-service surface's upcoming list.
+
+export interface UpcomingTutorBookingRow {
+  id: string;
+  studentUserId: string;
+  /** Display name of the counterpart student (users.name; nullable). */
+  studentDisplayName: string | null;
+  subjectId: string | null;
+  subjectNameHe: string | null;
+  startsAt: Date;
+  durationMinutes: number;
+  status: UpcomingBookingStatus;
+  /** Gross price the student paid (snapshot). */
+  priceIls: number;
+  /** What the tutor takes home (priceIls − platform commission). */
+  tutorPayoutIls: number;
+}
+
+async function _getUpcomingBookingsForTutor(
+  tutorUserId: string,
+  deps: BookingQueryDeps = {},
+): Promise<UpcomingTutorBookingRow[]> {
+  const now = deps.now ?? new Date();
+  const logger = deps.logger ?? { error: (msg, err) => console.error(msg, err) };
+
+  try {
+    // `getDb()` is inside the try so a missing DATABASE_URL (in unit
+    // tests, or in a misconfigured deploy) returns `[]` instead of
+    // throwing. The `/tutor/me` layout calls this on every render —
+    // crashing the layout for the entire site over a DB-env blip
+    // is the wrong fail mode. Matches the student-side helper's
+    // intent ("fail-OPEN on DB errors — both return []").
+    const db = deps.db ?? (getDb() as unknown as DbForBookingQueries);
+
+    const rows = (await db
+      .select({
+        id: bookings.id,
+        studentUserId: bookings.studentUserId,
+        studentDisplayName: users.name,
+        subjectId: bookings.subjectId,
+        subjectNameHe: subjects.displayNameHe,
+        startsAt: bookings.startsAt,
+        durationMinutes: bookings.durationMinutes,
+        status: bookings.status,
+        priceIls: bookings.priceIls,
+        tutorPayoutIls: bookings.tutorPayoutIls,
+      })
+      .from(bookings)
+      // Join shape matches the student-side helper so the structural
+      // FakeDb interface (3 leftJoins) stays a single contract. Here:
+      //  - `users` → student name
+      //  - `subjects` → subject display name
+      //  - `tutor_profiles` → no-op pin (joined for shape parity; we
+      //    don't select from it). The DB optimizer eliminates the row.
+      .leftJoin(users, eq(users.id, bookings.studentUserId))
+      .leftJoin(subjects, eq(subjects.id, bookings.subjectId))
+      .leftJoin(tutorProfiles, eq(tutorProfiles.userId, bookings.tutorUserId))
+      .where(
+        and(
+          eq(bookings.tutorUserId, tutorUserId),
+          gte(bookings.startsAt, now),
+          inArray(bookings.status, [...UPCOMING_STATUSES]),
+        ),
+      )
+      .orderBy(asc(bookings.startsAt))
+      .limit(MAX_UPCOMING_BOOKINGS)) as Array<UpcomingTutorBookingRow>;
+
+    return rows;
+  } catch (err) {
+    logger.error("[booking-queries] getUpcomingBookingsForTutor failed", err);
+    return [];
+  }
+}
+
+export const getUpcomingBookingsForTutor = cache(_getUpcomingBookingsForTutor);

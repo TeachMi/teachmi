@@ -10,7 +10,7 @@
 // `is_active` exists to handle correctly: an invisible-but-approved tutor is
 // the safe failure mode, not visible-with-unvetted-content.
 
-import { and, asc, eq, gte, inArray, isNull, lt, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, ne, sql, type SQL } from "drizzle-orm";
 import {
   bookings,
   ratings,
@@ -49,12 +49,24 @@ const MAX_BOOKING_DURATION_MS = 120 * 60 * 1000;
 export interface DiscoverableTutorPublic {
   userId: string;
   displayName: string;
-  bio: string | null;
-  city: string | null;
+  gender: "male" | "female";
+  /** Story 2.11 — short headline shown under display name. */
+  tagline: string | null;
+  /** Story 2.11 — 1-2 sentence intro under the identity row. */
+  shortBio: string | null;
+  /** Story 2.11 — 2-3 paragraph "אודות" section. */
+  longBio: string | null;
+  /** Story 2.11 — slugs from `src/lib/highlights.ts`, up to 4. */
+  highlights: string[] | null;
+  recommendationHeadline: string | null;
+  recommendationSub: string | null;
+  recommendationVisible: boolean;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
-  hourlyPriceIls: number;
+  hourlyPriceIls: number | null;
   lesson45PriceIls: number | null;
+  lesson75PriceIls: number | null;
+  lesson90PriceIls: number | null;
   lessonLengthMinutes: number;
   averageRating: string | null;
   ratingCount: number;
@@ -116,7 +128,23 @@ export interface DbForExtendedTutorQueries {
  * is solid.
  */
 export function discoverableTutorWhere(): SQL {
-  return and(eq(tutorProfiles.isActive, true), isNull(tutorProfiles.deletedAt))!;
+  // Story 2.11 (2026-05-18): tighten to require the new content fields are
+  // non-empty. The 0013 migration backfills tagline + short_bio + long_bio
+  // for existing approved rows, so this predicate doesn't silently
+  // de-discover anyone at deploy time. Empty-string is treated as missing
+  // (same as NULL) — tutors with `''` after backfill still pass once they
+  // re-edit. The dogfood seed in `seed/dogfood.ts` rewrites these to real
+  // Hebrew content for the seeded tutors.
+  return and(
+    eq(tutorProfiles.isActive, true),
+    isNull(tutorProfiles.deletedAt),
+    isNotNull(tutorProfiles.tagline),
+    ne(tutorProfiles.tagline, ""),
+    isNotNull(tutorProfiles.shortBio),
+    ne(tutorProfiles.shortBio, ""),
+    isNotNull(tutorProfiles.longBio),
+    ne(tutorProfiles.longBio, ""),
+  )!;
 }
 
 // --- Single-tutor lookup ---------------------------------------------------
@@ -128,12 +156,20 @@ interface TutorQueryDeps {
 const PUBLIC_COLUMNS = {
   userId: tutorProfiles.userId,
   displayName: tutorProfiles.displayName,
-  bio: tutorProfiles.bio,
-  city: tutorProfiles.city,
+  gender: tutorProfiles.gender,
+  tagline: tutorProfiles.tagline,
+  shortBio: tutorProfiles.shortBio,
+  longBio: tutorProfiles.longBio,
+  highlights: tutorProfiles.highlights,
+  recommendationHeadline: tutorProfiles.recommendationHeadline,
+  recommendationSub: tutorProfiles.recommendationSub,
+  recommendationVisible: tutorProfiles.recommendationVisible,
   introVideoR2Key: tutorProfiles.introVideoR2Key,
   profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
   hourlyPriceIls: tutorProfiles.hourlyPriceIls,
   lesson45PriceIls: tutorProfiles.lesson45PriceIls,
+  lesson75PriceIls: tutorProfiles.lesson75PriceIls,
+  lesson90PriceIls: tutorProfiles.lesson90PriceIls,
   lessonLengthMinutes: tutorProfiles.lessonLengthMinutes,
   averageRating: tutorProfiles.averageRating,
   ratingCount: tutorProfiles.ratingCount,
@@ -181,12 +217,20 @@ export async function isTutorDiscoverable(
 export const DISCOVERABLE_TUTOR_PUBLIC_KEYS = Object.freeze([
   "userId",
   "displayName",
-  "bio",
-  "city",
+  "gender",
+  "tagline",
+  "shortBio",
+  "longBio",
+  "highlights",
+  "recommendationHeadline",
+  "recommendationSub",
+  "recommendationVisible",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
   "lesson45PriceIls",
+  "lesson75PriceIls",
+  "lesson90PriceIls",
   "lessonLengthMinutes",
   "averageRating",
   "ratingCount",
@@ -211,12 +255,20 @@ export const DISCOVERABLE_TUTOR_PUBLIC_KEYS = Object.freeze([
 export interface TutorProfileForOwner {
   userId: string;
   displayName: string;
-  bio: string | null;
-  city: string | null;
+  gender: "male" | "female";
+  tagline: string | null;
+  shortBio: string | null;
+  longBio: string | null;
+  highlights: string[] | null;
+  recommendationHeadline: string | null;
+  recommendationSub: string | null;
+  recommendationVisible: boolean;
   introVideoR2Key: string | null;
   profilePhotoR2Key: string | null;
-  hourlyPriceIls: number;
+  hourlyPriceIls: number | null;
   lesson45PriceIls: number | null;
+  lesson75PriceIls: number | null;
+  lesson90PriceIls: number | null;
   lessonLengthMinutes: number;
   vettingStatus: "pending" | "approved" | "rejected" | "paused";
   isActive: boolean;
@@ -225,12 +277,20 @@ export interface TutorProfileForOwner {
 const OWNER_PROFILE_COLUMNS = {
   userId: tutorProfiles.userId,
   displayName: tutorProfiles.displayName,
-  bio: tutorProfiles.bio,
-  city: tutorProfiles.city,
+  gender: tutorProfiles.gender,
+  tagline: tutorProfiles.tagline,
+  shortBio: tutorProfiles.shortBio,
+  longBio: tutorProfiles.longBio,
+  highlights: tutorProfiles.highlights,
+  recommendationHeadline: tutorProfiles.recommendationHeadline,
+  recommendationSub: tutorProfiles.recommendationSub,
+  recommendationVisible: tutorProfiles.recommendationVisible,
   introVideoR2Key: tutorProfiles.introVideoR2Key,
   profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
   hourlyPriceIls: tutorProfiles.hourlyPriceIls,
   lesson45PriceIls: tutorProfiles.lesson45PriceIls,
+  lesson75PriceIls: tutorProfiles.lesson75PriceIls,
+  lesson90PriceIls: tutorProfiles.lesson90PriceIls,
   lessonLengthMinutes: tutorProfiles.lessonLengthMinutes,
   vettingStatus: tutorProfiles.vettingStatus,
   isActive: tutorProfiles.isActive,
@@ -239,12 +299,20 @@ const OWNER_PROFILE_COLUMNS = {
 export const OWNER_PROFILE_KEYS = Object.freeze([
   "userId",
   "displayName",
-  "bio",
-  "city",
+  "gender",
+  "tagline",
+  "shortBio",
+  "longBio",
+  "highlights",
+  "recommendationHeadline",
+  "recommendationSub",
+  "recommendationVisible",
   "introVideoR2Key",
   "profilePhotoR2Key",
   "hourlyPriceIls",
   "lesson45PriceIls",
+  "lesson75PriceIls",
+  "lesson90PriceIls",
   "lessonLengthMinutes",
   "vettingStatus",
   "isActive",
