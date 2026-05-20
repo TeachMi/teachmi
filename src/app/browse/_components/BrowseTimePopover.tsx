@@ -169,7 +169,7 @@ export function BrowseTimePopover() {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-linen-border bg-surface-lowest px-4 text-sm font-bold text-on-surface transition-colors hover:border-primary-fixed-dim focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim focus:border-primary-fixed-dim"
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-linen-border bg-surface-lowest px-4 text-sm font-bold text-primary-container transition-colors hover:border-primary-fixed-dim focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim focus:border-primary-fixed-dim"
       >
         <span className="flex items-center gap-2">
           <span

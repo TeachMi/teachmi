@@ -83,7 +83,7 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
             >
               <SelectTrigger
                 size="md"
-                className="min-w-[160px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0"
+                className="min-w-[160px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0 font-bold text-primary-container"
               >
                 <SelectValue placeholder="כל המקצועות" />
               </SelectTrigger>
@@ -107,7 +107,7 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
             >
               <SelectTrigger
                 size="md"
-                className="min-w-[120px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0"
+                className="min-w-[120px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0 font-bold text-primary-container"
               >
                 <SelectValue placeholder="הכל" />
               </SelectTrigger>
@@ -130,7 +130,7 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
             >
               <SelectTrigger
                 size="md"
-                className="min-w-[140px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0"
+                className="min-w-[140px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0 font-bold text-primary-container"
               >
                 <SelectValue placeholder="כל הטווחים" />
               </SelectTrigger>
@@ -164,7 +164,7 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
               <SelectTrigger
                 id="browse-sort"
                 size="md"
-                className="min-w-[160px]"
+                className="min-w-[160px] font-bold text-primary-container"
               >
                 <SelectValue />
               </SelectTrigger>
