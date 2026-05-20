@@ -373,6 +373,50 @@ const SAMPLE_BOOKINGS: SampleBookingSpec[] = [
   },
 ];
 
+// Story 5.x — past completed lessons for the rate-flow demo. The rate-
+// previous-lesson card on the student dashboard needs at least one
+// completed lesson with no rating to render. Seed two per student so
+// the founder can exercise the flow without bookkeeping.
+interface PastLessonSpec {
+  studentEmail: string;
+  tutorEmail: string;
+  /** Days ago — past lessons land in the dashboard's "rate previous" list. */
+  daysAgo: number;
+  /** When true, ALSO seed a rating row so the public profile has content. */
+  seedRating: { score: 1 | 2 | 3 | 4 | 5; comment: string | null } | null;
+  subjectSlug: string;
+  priceIls: number;
+}
+
+const PAST_LESSONS: PastLessonSpec[] = [
+  // Ofer-student × Ofer-tutor — one unrated (drives the rate-flow), one rated.
+  {
+    studentEmail: "ofer-student@teachme.co.il",
+    tutorEmail: "ofer-tutor@teachme.co.il",
+    daysAgo: 4,
+    seedRating: null,
+    subjectSlug: "mathematics",
+    priceIls: 180,
+  },
+  {
+    studentEmail: "ofer-student@teachme.co.il",
+    tutorEmail: "ofer-tutor@teachme.co.il",
+    daysAgo: 18,
+    seedRating: { score: 5, comment: "שיעור מצוין, ממליץ בחום." },
+    subjectSlug: "mathematics",
+    priceIls: 180,
+  },
+  // Aviel-student × Aviel-tutor — one unrated.
+  {
+    studentEmail: "aviel-student@teachme.co.il",
+    tutorEmail: "aviel-tutor@teachme.co.il",
+    daysAgo: 6,
+    seedRating: null,
+    subjectSlug: "english",
+    priceIls: 180,
+  },
+];
+
 /**
  * Find the next occurrence of `(weekday, hourIL:00)` in Asia/Jerusalem,
  * strictly in the future. Returns the UTC instant for storage.
@@ -526,6 +570,133 @@ async function seedSampleBookings(
   if (createdCount > 0 || skippedCount > 0) {
     console.log(
       `\n  Sample bookings: ${createdCount} created, ${skippedCount} preserved (already existed)`,
+    );
+  }
+
+  // Story 5.x — past completed lessons + optional ratings.
+  await seedPastLessons(sql, userIdByEmail);
+}
+
+// Fixed anchor for the past-lessons block. Stable across re-runs (same
+// reasoning as `SEED_BOOKING_ANCHOR_UTC` in `seed-mock-tutors.ts`). DST-
+// safe by definition: the wall-clock value is irrelevant — the only
+// consumer (`getUnratedCompletedLessonsForStudent` + the dashboard
+// review CTA) renders the date via `Intl.DateTimeFormat` in
+// `Asia/Jerusalem`, not the raw hour.
+const PAST_LESSON_ANCHOR_UTC = new Date("2026-01-01T15:00:00Z");
+
+async function seedPastLessons(
+  sql: ReturnType<typeof neon<false, false>>,
+  userIdByEmail: Map<string, string>,
+): Promise<void> {
+  const COMMISSION_RATE = 0.15;
+  let createdCount = 0;
+  let skippedCount = 0;
+  let ratingsCreated = 0;
+
+  for (const spec of PAST_LESSONS) {
+    const studentUserId = userIdByEmail.get(spec.studentEmail);
+    const tutorUserId = userIdByEmail.get(spec.tutorEmail);
+    if (!studentUserId || !tutorUserId) continue;
+
+    const startsAt = new Date(
+      PAST_LESSON_ANCHOR_UTC.getTime() - spec.daysAgo * 24 * 60 * 60 * 1000,
+    );
+
+    const existing = (await sql`
+      SELECT id FROM bookings
+      WHERE tutor_user_id = ${tutorUserId}
+        AND student_user_id = ${studentUserId}
+        AND starts_at = ${startsAt.toISOString()}
+      LIMIT 1
+    `) as Array<{ id: string }>;
+
+    let bookingId: string;
+    if (existing.length > 0) {
+      bookingId = existing[0]!.id;
+      skippedCount++;
+    } else {
+      const subjectRows = (await sql`
+        SELECT id FROM subjects WHERE slug = ${spec.subjectSlug} LIMIT 1
+      `) as Array<{ id: string }>;
+      const subjectId = subjectRows[0]?.id ?? null;
+
+      const platformCommissionIls = Math.round(spec.priceIls * COMMISSION_RATE);
+      const tutorPayoutIls = spec.priceIls - platformCommissionIls;
+
+      const bookingRows = (await sql`
+        INSERT INTO bookings (
+          student_user_id, payer_user_id, tutor_user_id, subject_id,
+          starts_at, duration_minutes, status,
+          price_ils, platform_commission_ils, tutor_payout_ils,
+          created_by_kind, created_by_actor
+        )
+        VALUES (
+          ${studentUserId}, ${studentUserId}, ${tutorUserId}, ${subjectId},
+          ${startsAt.toISOString()}, ${60}, ${"completed"},
+          ${spec.priceIls}, ${platformCommissionIls}, ${tutorPayoutIls},
+          ${"system"}, ${"dogfood-seed"}
+        )
+        RETURNING id
+      `) as Array<{ id: string }>;
+      bookingId = bookingRows[0]!.id;
+      createdCount++;
+    }
+
+    // lesson_sessions — completed.
+    const sessionRows = (await sql`
+      INSERT INTO lesson_sessions (
+        booking_id, room_provider, status, started_at, ended_at,
+        duration_actual_minutes,
+        created_by_kind, created_by_actor
+      )
+      VALUES (
+        ${bookingId}, ${"stub"}, ${"completed"},
+        ${startsAt.toISOString()}, ${new Date(startsAt.getTime() + 60 * 60 * 1000).toISOString()},
+        ${60},
+        ${"system"}, ${"dogfood-seed"}
+      )
+      ON CONFLICT (booking_id) DO UPDATE SET
+        status = 'completed',
+        updated_at = now()
+      RETURNING id
+    `) as Array<{ id: string }>;
+    const sessionId = sessionRows[0]!.id;
+
+    if (spec.seedRating !== null) {
+      await sql`
+        INSERT INTO ratings (
+          lesson_session_id, student_user_id, tutor_user_id, score, comment,
+          created_by_kind, created_by_actor
+        )
+        VALUES (
+          ${sessionId}, ${studentUserId}, ${tutorUserId}, ${spec.seedRating.score}, ${spec.seedRating.comment},
+          ${"system"}, ${"dogfood-seed"}
+        )
+        ON CONFLICT (lesson_session_id) DO NOTHING
+      `;
+      ratingsCreated++;
+
+      // Refresh the aggregate on the affected tutor.
+      await sql`
+        UPDATE tutor_profiles
+        SET average_rating = sub.avg_score,
+            rating_count = sub.cnt,
+            updated_at = now()
+        FROM (
+          SELECT
+            AVG(score)::numeric(3,2) AS avg_score,
+            COUNT(*)::int AS cnt
+          FROM ratings WHERE tutor_user_id = ${tutorUserId}
+        ) sub
+        WHERE tutor_profiles.user_id = ${tutorUserId}
+      `;
+    }
+  }
+
+  if (createdCount > 0 || skippedCount > 0) {
+    console.log(
+      `\n  Past lessons: ${createdCount} created, ${skippedCount} preserved, ${ratingsCreated} with seeded rating`,
     );
   }
 }

@@ -10,7 +10,7 @@
 // `is_active` exists to handle correctly: an invisible-but-approved tutor is
 // the safe failure mode, not visible-with-unvetted-content.
 
-import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, sql, type SQL } from "drizzle-orm";
 import {
   bookings,
   ratings,
@@ -641,4 +641,65 @@ export async function getTutorRatingHistogram(
     total,
     average: weightedSum / total,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Story 5.x — recent reviews list for the public tutor profile.
+// Aggregate display lives in RatingWidget (above); this returns the
+// individual review cards rendered beneath. Per Sally + the v2 mock:
+// reviewer's initial-only display, month + year date, score + comment.
+// ---------------------------------------------------------------------------
+
+export interface PublicReviewRow {
+  id: string;
+  score: number;
+  comment: string | null;
+  createdAt: Date;
+  /** First-character of the reviewer's display name. Whole name is PII. */
+  reviewerInitial: string;
+}
+
+/**
+ * Returns the most recent `limit` reviews for a tutor. Reviewer name is
+ * narrowed to first initial only — full name is PII and the closed-beta
+ * UX shows "ל. כ." style. Comments may be null when the student left only
+ * a star rating.
+ *
+ * No null-on-empty contract here (unlike `getTutorRatingHistogram`): an
+ * empty array is the natural "no reviews yet" signal for the caller's
+ * conditional render.
+ */
+export async function getTutorRecentReviews(
+  tutorUserId: string,
+  options: { limit?: number } = {},
+): Promise<PublicReviewRow[]> {
+  const db = getDb();
+  const limit = Math.min(50, Math.max(1, options.limit ?? 10));
+  const rows = await db
+    .select({
+      id: ratings.id,
+      score: ratings.score,
+      comment: ratings.comment,
+      createdAt: ratings.createdAt,
+      reviewerName: users.name,
+    })
+    .from(ratings)
+    .innerJoin(users, eq(users.id, ratings.studentUserId))
+    .where(eq(ratings.tutorUserId, tutorUserId))
+    .orderBy(desc(ratings.createdAt))
+    .limit(limit);
+
+  return rows.map((r) => ({
+    id: r.id,
+    score: r.score,
+    comment: r.comment,
+    createdAt: r.createdAt,
+    // Take the first grapheme via code-point spread, not `charAt(0)` —
+    // `charAt` returns a UTF-16 code unit, which splits surrogate pairs
+    // (emoji-prefixed names render as the U+FFFD replacement character).
+    // Hebrew letters are BMP so the common case is fine; the spread
+    // handles future-proofing without changing the common case.
+    reviewerInitial:
+      [...(r.reviewerName ?? "?").trim()][0] || "?",
+  }));
 }

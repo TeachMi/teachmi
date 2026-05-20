@@ -22,6 +22,7 @@
 //     will replace with the real booking action.
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { checkoutHandoffAction } from "@/lib/booking/handoff-action";
 import { formatIlsCurrency } from "@/lib/hebrew/format";
@@ -50,6 +51,16 @@ interface BookingModalProps {
   isSignedIn: boolean;
   /** Length to preselect on open. */
   initialDuration: LessonDurationMinutes;
+  /**
+   * Empty-state escape used when the modal is summoned from `/browse`
+   * (Story 5.x 2026-05-19). When ALL days in `slotStates` have zero
+   * available slots, the footer's "המשך" CTA is replaced with a link to
+   * this href ("ראו פרופיל מלא") so the student isn't dead-ended on a
+   * modal floating over a tutor list. Unset on the profile-page mount —
+   * the sidebar there already disables the CTA when there's no
+   * availability, so the modal never opens in that case.
+   */
+  fallbackProfileHref?: string;
 }
 
 interface DayEntry {
@@ -70,6 +81,7 @@ export function BookingModal({
   weekStartUtc,
   isSignedIn,
   initialDuration,
+  fallbackProfileHref,
 }: BookingModalProps) {
   const offeredDurations = useMemo(
     () => DURATION_OPTIONS.filter((d) => prices[d] !== null),
@@ -263,6 +275,23 @@ export function BookingModal({
 
   const totalAvailableSlots = selectedDay?.availableSlots.length ?? 0;
   const activeSlots = slotsByPeriod[activePeriod] ?? [];
+
+  // True when the visible window has no bookable slot anywhere. Two
+  // cases satisfy this — both should fall through to the empty-state
+  // escape:
+  //   (a) `allDays` is populated but every day has zero slots
+  //       (recurring rules + bookings happen to fully overlap).
+  //   (b) `allDays` is empty — happens when the modal is summoned from
+  //       `/browse` and `getTutorBookingContext` returned `null` (tutor
+  //       went non-discoverable between listing and click). Without
+  //       this branch the modal silently rendered a "המשך" CTA over
+  //       an empty calendar — looks broken, says nothing.
+  // The profile page itself never hits either case because
+  // `BookingSidebar` disables the CTA in the no-availability state
+  // and the modal never opens. (Story 5.x R2 2026-05-20.)
+  const noAvailabilityAnywhere =
+    allDays.length === 0 ||
+    allDays.every((d) => d.availableSlots.length === 0);
 
   // Signing is done in a Server Action (`checkoutHandoffAction`) — NOT
   // here in the client component. `AUTH_SECRET` is not shipped to the
@@ -503,33 +532,54 @@ export function BookingModal({
         </div>
 
         {/* Footer — form posts to the Server Action that signs server-side
-            and redirects to /checkout (signed-in) or /signup gate (anon). */}
-        <form action={checkoutHandoffAction} className="p-4 border-t border-linen-border bg-white">
-          <input type="hidden" name="tutorUserId" value={tutorUserId} />
-          <input
-            type="hidden"
-            name="slotIso"
-            value={selectedSlotIso ?? ""}
-          />
-          <input type="hidden" name="duration" value={duration} />
-          <Button
-            type="submit"
-            variant="primary"
-            size="lg"
-            fullWidth
-            disabled={!selectedSlotIso}
-          >
-            המשך
-          </Button>
-          {!isSignedIn && (
-            <p className="text-[11px] text-on-surface-variant text-center mt-2">
-              אורח — נדרשת הרשמה קצרה להמשך
+            and redirects to /checkout (signed-in) or /signup gate (anon).
+            Story 5.x escape: if the modal was summoned from `/browse` and
+            the tutor has NO availability in the visible window, swap the
+            CTA for a "ראו פרופיל מלא" link. The user lands on the profile
+            page where the empty state has more recovery surfaces (bio,
+            reviews) than a floating modal over a list. */}
+        {fallbackProfileHref && noAvailabilityAnywhere ? (
+          <div className="p-4 border-t border-linen-border bg-white">
+            <Button
+              asChild
+              variant="primary"
+              size="lg"
+              fullWidth
+            >
+              <Link href={fallbackProfileHref}>ראו פרופיל מלא</Link>
+            </Button>
+            <p className="text-[11px] text-secondary text-center mt-2">
+              אין זמינות בשבועיים הקרובים — בקרו בפרופיל לעדכונים
             </p>
-          )}
-          <p className="text-[10px] text-secondary text-center mt-2">
-            תשלום פיקטיבי — לא יבוצע חיוב כספי בפועל
-          </p>
-        </form>
+          </div>
+        ) : (
+          <form action={checkoutHandoffAction} className="p-4 border-t border-linen-border bg-white">
+            <input type="hidden" name="tutorUserId" value={tutorUserId} />
+            <input
+              type="hidden"
+              name="slotIso"
+              value={selectedSlotIso ?? ""}
+            />
+            <input type="hidden" name="duration" value={duration} />
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              fullWidth
+              disabled={!selectedSlotIso}
+            >
+              המשך
+            </Button>
+            {!isSignedIn && (
+              <p className="text-[11px] text-on-surface-variant text-center mt-2">
+                אורח — נדרשת הרשמה קצרה להמשך
+              </p>
+            )}
+            <p className="text-[10px] text-secondary text-center mt-2">
+              תשלום פיקטיבי — לא יבוצע חיוב כספי בפועל
+            </p>
+          </form>
+        )}
       </div>
     </div>
   );
