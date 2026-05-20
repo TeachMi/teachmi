@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   auditEvents,
+  bookings,
+  payments,
   tutorAvailability,
 } from "../../../../../../lib/db/schema";
 import {
@@ -543,5 +545,125 @@ describe("runBulkUpdateExceptions — add/remove batching", () => {
     );
     expect(result.ok).toBe(false);
     expect(db.operations).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Area 1 (2026-05-19) — orphan-and-leave invariant.
+//
+// Founder + party-mode decision: editing a recurring rule that already
+// has bookings under it MUST leave the bookings alone. Per Winston's
+// architecture guardrail, this is the load-bearing invariant of the
+// rule/reality split — the rule table and the bookings table live in
+// separate transactional domains, and `runBulkUpdateRecurring` must NEVER
+// touch the bookings table (or its sibling payments table) under any
+// input, even when the rule edit covers cells with active bookings under
+// them.
+//
+// The regression here catches future refactors that try to be "helpful"
+// (e.g. auto-cancel orphan bookings on rule removal). If that becomes a
+// product decision, this test fires as a sentinel.
+// ---------------------------------------------------------------------------
+
+describe("runBulkUpdateRecurring — orphan-and-leave invariant", () => {
+  it("removing a rule with bookings under it never writes to bookings or payments", async () => {
+    const { db, deps } = makeDeps();
+    db.queueSelect([{ id: "row-to-remove" }]);
+
+    const result = await runBulkUpdateRecurring(
+      {
+        addCells: [],
+        removeCells: [{ weekday: 2, slotIdx: 10 }], // Tue 13:00
+      },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+
+    // Hard invariant: NO writes to bookings or payments. Ever. Under any
+    // schedule-rule mutation.
+    expect(db.insertedInto(bookings)).toHaveLength(0);
+    expect(db.updatedAt(bookings)).toHaveLength(0);
+    expect(db.deletedFrom(bookings)).toHaveLength(0);
+    expect(db.insertedInto(payments)).toHaveLength(0);
+    expect(db.updatedAt(payments)).toHaveLength(0);
+    expect(db.deletedFrom(payments)).toHaveLength(0);
+
+    // And no reads from bookings either — the orchestrator must NEVER
+    // even look at the bookings table. The FakeTutorDb has a single
+    // select queue, so the orchestrator can only have consumed the one
+    // select we pre-queued (the existence check on tutor_availability).
+    expect(db.selectQueue).toEqual([]);
+  });
+
+  it("adding a rule never writes to bookings or payments", async () => {
+    const { db, deps } = makeDeps();
+    db.queueSelect([]); // existence-check empty → INSERT path
+
+    const result = await runBulkUpdateRecurring(
+      {
+        addCells: [{ weekday: 3, slotIdx: 6 }], // Wed 11:00
+        removeCells: [],
+      },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+
+    expect(db.insertedInto(bookings)).toHaveLength(0);
+    expect(db.updatedAt(bookings)).toHaveLength(0);
+    expect(db.deletedFrom(bookings)).toHaveLength(0);
+    expect(db.insertedInto(payments)).toHaveLength(0);
+    expect(db.updatedAt(payments)).toHaveLength(0);
+    expect(db.deletedFrom(payments)).toHaveLength(0);
+  });
+
+  it("mixed adds + removes never touches bookings/payments", async () => {
+    const { db, deps } = makeDeps();
+    db.queueSelect([{ id: "to-remove" }]);
+    db.queueSelect([]);
+
+    const result = await runBulkUpdateRecurring(
+      {
+        addCells: [{ weekday: 3, slotIdx: 0 }],
+        removeCells: [{ weekday: 1, slotIdx: 0 }],
+      },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+
+    expect(db.insertedInto(bookings)).toHaveLength(0);
+    expect(db.updatedAt(bookings)).toHaveLength(0);
+    expect(db.deletedFrom(bookings)).toHaveLength(0);
+    expect(db.insertedInto(payments)).toHaveLength(0);
+    expect(db.updatedAt(payments)).toHaveLength(0);
+    expect(db.deletedFrom(payments)).toHaveLength(0);
+  });
+});
+
+describe("runBulkUpdateExceptions — orphan-and-leave invariant", () => {
+  it("exception updates never write to bookings or payments", async () => {
+    const { db, deps } = makeDeps();
+    db.queueSelect([]); // for the add existence-check
+
+    const result = await runBulkUpdateExceptions(
+      {
+        addCells: [
+          {
+            dateIso: "2026-06-15",
+            slotIdx: 4,
+            kind: "exception_blocked",
+          },
+        ],
+        removeCells: [],
+      },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+
+    expect(db.insertedInto(bookings)).toHaveLength(0);
+    expect(db.updatedAt(bookings)).toHaveLength(0);
+    expect(db.deletedFrom(bookings)).toHaveLength(0);
+    expect(db.insertedInto(payments)).toHaveLength(0);
+    expect(db.updatedAt(payments)).toHaveLength(0);
+    expect(db.deletedFrom(payments)).toHaveLength(0);
   });
 });

@@ -500,6 +500,88 @@ export async function getActiveBookingsForTutor(
   return rows;
 }
 
+// ---------------------------------------------------------------------------
+// Area 1 (2026-05-19) — schedule-editor's 4-week calendar overlay.
+// Rich variant of `getActiveBookingsForTutor` that joins student name +
+// subject so the cell peek can render full detail without a second
+// round-trip. Kept as a sibling rather than extending the existing helper
+// because the public BookingSidebar still wants the minimal shape — fewer
+// columns, smaller payload, no FakeDb-interface churn.
+// ---------------------------------------------------------------------------
+
+export interface ActiveBookingWithDetailsRow extends ActiveBookingRow {
+  studentUserId: string;
+  /** users.name (nullable). Renderer falls back to "תלמיד/ה" when absent. */
+  studentDisplayName: string | null;
+  subjectId: string | null;
+  /** subjects.displayNameHe when subject_id is set; null otherwise. */
+  subjectNameHe: string | null;
+}
+
+// Wider chain shape: from → leftJoin → leftJoin → where (terminal Promise).
+// Mirrors the booking-queries `DbForBookingQueries` shape but stops at 2
+// joins (we don't need tutor_profiles here — owner-side, the tutor IS the
+// caller). Defined inline rather than added to the module's `DbForExtended…`
+// surface so the existing 4 helpers keep their tighter contract.
+interface ScheduleBookingsSelectFromLeftJoinLeftJoin {
+  where(condition: unknown): Promise<unknown[]>;
+}
+interface ScheduleBookingsSelectFromLeftJoin {
+  leftJoin(table: unknown, on: unknown): ScheduleBookingsSelectFromLeftJoinLeftJoin;
+}
+interface ScheduleBookingsSelectFrom {
+  leftJoin(table: unknown, on: unknown): ScheduleBookingsSelectFromLeftJoin;
+}
+export interface DbForScheduleBookings {
+  select(cols: unknown): {
+    from(table: unknown): ScheduleBookingsSelectFrom;
+  };
+}
+
+interface ScheduleBookingsQueryDeps {
+  db?: DbForScheduleBookings;
+}
+
+export async function getActiveBookingsWithDetailsForTutor(
+  userId: string,
+  dateRange: { from: Date; to: Date },
+  deps: ScheduleBookingsQueryDeps = {},
+): Promise<ActiveBookingWithDetailsRow[]> {
+  const db = deps.db ?? (getDb() as unknown as DbForScheduleBookings);
+  const fromExpanded = new Date(dateRange.from.getTime() - MAX_BOOKING_DURATION_MS);
+  try {
+    const rows = (await db
+      .select({
+        id: bookings.id,
+        startsAt: bookings.startsAt,
+        durationMinutes: bookings.durationMinutes,
+        status: bookings.status,
+        studentUserId: bookings.studentUserId,
+        studentDisplayName: users.name,
+        subjectId: bookings.subjectId,
+        subjectNameHe: subjects.displayNameHe,
+      })
+      .from(bookings)
+      .leftJoin(users, eq(users.id, bookings.studentUserId))
+      .leftJoin(subjects, eq(subjects.id, bookings.subjectId))
+      .where(
+        and(
+          eq(bookings.tutorUserId, userId),
+          gte(bookings.startsAt, fromExpanded),
+          lt(bookings.startsAt, dateRange.to),
+          inArray(bookings.status, ["pending_payment", "confirmed"]),
+        ),
+      )) as ActiveBookingWithDetailsRow[];
+    return rows;
+  } catch (err) {
+    // Fail-OPEN, same as the rest of the booking queries. The schedule
+    // editor must render even when the bookings overlay fails — better
+    // to show an empty 4-week calendar than to crash the page.
+    console.error("[tutor-queries] getActiveBookingsWithDetailsForTutor failed", err);
+    return [];
+  }
+}
+
 export interface RatingHistogram {
   score1: number;
   score2: number;
