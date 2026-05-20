@@ -10,6 +10,7 @@ import {
 } from "@/lib/availability/compute-slots";
 import {
   type DiscoverableTutorPublic,
+  type PublicReviewRow,
   type RatingHistogram,
   type TutorAvailabilityRow,
   type TutorSubjectPublic,
@@ -18,12 +19,14 @@ import {
   getDiscoverableTutorByUserId,
   getTutorAvailabilityRows,
   getTutorRatingHistogram,
+  getTutorRecentReviews,
   getTutorSubjects,
 } from "@/lib/db/queries/tutor-queries";
 import { getFilesProvider } from "@/lib/providers/files";
 import { BookingSidebar } from "./_components/BookingSidebar";
 import { Hero } from "./_components/Hero";
 import { RatingWidget } from "./_components/RatingWidget";
+import { ReviewsList } from "./_components/ReviewsList";
 import { SubjectChips } from "./_components/SubjectChips";
 
 export const dynamic = "force-dynamic";
@@ -104,6 +107,17 @@ const resolveRatingHistogram = cache(
     } catch (err) {
       console.error("[tutor/[slug]/page] rating histogram lookup failed", err);
       return null;
+    }
+  },
+);
+
+const resolveRecentReviews = cache(
+  async (userId: string): Promise<PublicReviewRow[]> => {
+    try {
+      return await getTutorRecentReviews(userId, { limit: 10 });
+    } catch (err) {
+      console.error("[tutor/[slug]/page] recent reviews lookup failed", err);
+      return [];
     }
   },
 );
@@ -254,12 +268,13 @@ export default async function PublicTutorProfilePage({
   // `safeAuth` and `resolveCalendarData` swallow errors and return null
   // sentinels — public profile must not 500 on auth/DB blips. If
   // calendar data is null, downstream renders the empty-state card.
-  const [session, subjects, calendarData, rating, introVideoUrl, profilePhotoUrl] =
+  const [session, subjects, calendarData, rating, recentReviews, introVideoUrl, profilePhotoUrl] =
     await Promise.all([
       safeAuth(),
       resolveTutorSubjects(tutor.userId),
       resolveCalendarData(tutor.userId, weekStart, weekEnd),
       resolveRatingHistogram(tutor.userId),
+      resolveRecentReviews(tutor.userId),
       presignFromR2("tutor-intro-videos", tutor.introVideoR2Key),
       presignFromR2("tutor-profile-photos", tutor.profilePhotoR2Key),
     ]);
@@ -333,6 +348,13 @@ export default async function PublicTutorProfilePage({
               <div className="mb-12">
                 <RatingWidget histogram={rating!} />
               </div>
+            )}
+
+            {recentReviews.length > 0 && (
+              <ReviewsList
+                reviews={recentReviews}
+                totalCount={rating?.total ?? recentReviews.length}
+              />
             )}
 
             <SubjectChips subjects={subjects} withSectionHeader />

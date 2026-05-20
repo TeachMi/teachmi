@@ -21,6 +21,8 @@
     "db:push": "drizzle-kit push",
     "db:seed": "tsx scripts/seed.ts",
     "seed:dogfood": "tsx scripts/seed-dogfood.ts",
+    "seed:mock-tutors": "tsx scripts/seed-mock-tutors.ts",
+    "upload:mock-defaults": "tsx scripts/upload-mock-defaults.ts",
     "og:generate": "node scripts/generate-og-default.mjs",
     "check:stories": "node scripts/check-stories.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
