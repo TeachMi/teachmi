@@ -64,3 +64,6 @@ next-env.d.ts
 
 *storybook.log
 storybook-static
+
+# Mock-tutor seed default assets (uploaded once to R2 via scripts/upload-mock-defaults.ts)
+/mock-assets/

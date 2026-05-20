@@ -81,6 +81,14 @@ export const users = pgTable(
     timezone: text("timezone").notNull().default("Asia/Jerusalem"),
     // Soft-delete (FR7)
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    // Area 2 mock-tutor seed marker (Story 5.x 2026-05-19). `true` ONLY for
+    // rows created by `scripts/seed-mock-tutors.ts`. Used to (a) wipe the
+    // demo cohort before public launch via `DELETE WHERE is_mock = true`,
+    // and (b) hide mock users from any future analytics rollups. The
+    // closed-beta browse page intentionally renders mock tutors alongside
+    // real ones so the marketplace looks populated — DO NOT add a default
+    // `is_mock = false` filter to `discoverableTutorWhere()`.
+    isMock: boolean("is_mock").notNull().default(false),
     ...authUserMetaCols,
     // NOTE: consent timestamps removed 2026-05-04 - single source of truth is `consent_receipts`.
     // NOTE: dual-role support (FR5) deferred to Phase 2+; `role` remains single-value enum.
@@ -90,6 +98,9 @@ export const users = pgTable(
     roleIdx: index("idx_users_role").on(t.role),
     parentIdx: index("idx_users_parent").on(t.parentUserId),
     deletedAtIdx: index("idx_users_deleted_at").on(t.deletedAt),
+    // Partial index — only mock rows pay the index cost. Used by the
+    // pre-launch cleanup query and any future "real users only" rollups.
+    isMockIdx: index("idx_users_is_mock").on(t.isMock).where(sql`${t.isMock} = true`),
   }),
 );
 
