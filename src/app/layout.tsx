@@ -29,8 +29,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({
   children,
+  modal,
 }: Readonly<{
   children: React.ReactNode;
+  modal: React.ReactNode;
 }>) {
   return (
     <html
@@ -52,7 +54,10 @@ export default function RootLayout({
         />
       </head>
       <body className="flex min-h-full flex-col bg-surface font-body text-on-surface">
-        <RadixProviders dir="rtl">{children}</RadixProviders>
+        <RadixProviders dir="rtl">
+          {children}
+          {modal}
+        </RadixProviders>
         <Analytics />
       </body>
     </html>

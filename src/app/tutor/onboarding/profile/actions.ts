@@ -5,6 +5,10 @@ import { headers } from "next/headers";
 import { getDb } from "../../../../lib/db/client";
 import { track } from "../../../../lib/analytics";
 import { anonymizeIpForAnalytics } from "../../../../lib/auth/rate-limit";
+import {
+  recordMarketingOptIn,
+  type MarketingOptInDb,
+} from "../../../../lib/legal/marketing-consent";
 import { readIp } from "../../../signup/_lib/origin";
 import { requireTutor } from "../_lib/require-tutor";
 import { lookupSubjectIdsBySlug } from "../_lib/subject-lookup";
@@ -115,6 +119,26 @@ async function submitProfile(formData: FormData): Promise<ProfileActionState> {
       fieldErrors: result.fieldErrors,
       values: draft,
     };
+  }
+
+  // Marketing opt-in (FR60) — optional, captured here in the wizard rather
+  // than at signup (Israeli Spam Law requires a separate, explicit opt-in, so
+  // it can't ride the signup form's passive small-print consent). Failure is
+  // swallowed inside `recordMarketingOptIn` — it never blocks the redirect.
+  const marketingOptIn =
+    formData.get("marketingOptIn") === "on" ||
+    formData.get("marketingOptIn") === "true" ||
+    formData.get("marketingOptIn") === "1";
+  if (marketingOptIn) {
+    await recordMarketingOptIn({
+      db: db as unknown as MarketingOptInDb,
+      userId: user.id,
+      role: "tutor",
+      ipAddress: ip === "unknown" ? null : ip,
+      userAgent: hdrs.get("user-agent"),
+      source: "tutor_wizard",
+      track,
+    });
   }
 
   redirect(result.redirectTo);

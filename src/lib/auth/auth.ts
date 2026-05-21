@@ -3,9 +3,11 @@ import { eq } from "drizzle-orm";
 import type { Adapter } from "next-auth/adapters";
 import NextAuth, { type NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
+import { cookies } from "next/headers";
 import { getDb } from "../db/client";
 import { accounts, sessions, users, verificationTokens } from "../db/schema";
 import { defaultPostSignInPath, getSafeCallbackUrl } from "./callback-url";
+import { PENDING_SIGNUP_ROLE_COOKIE } from "./pending-signup-role";
 import { isAppRole } from "./roles";
 
 let authAdapter: Adapter | null = null;
@@ -122,6 +124,38 @@ export function createAuthConfig(): NextAuthConfig {
       },
     },
     events: {
+      // A brand-new account was just created by the OAuth adapter. If the
+      // signup originated from the become-a-tutor flow, `signInWithGoogle`
+      // left a one-shot cookie — promote the account from the default
+      // `student` role to `tutor`. Only fires for NEW OAuth users; existing
+      // users signing in are untouched (no createUser event). Best-effort:
+      // a failure here just leaves the account as a student, recoverable.
+      async createUser({ user }) {
+        try {
+          const cookieStore = await cookies();
+          const wantsTutor =
+            cookieStore.get(PENDING_SIGNUP_ROLE_COOKIE)?.value === "tutor";
+          if (cookieStore.get(PENDING_SIGNUP_ROLE_COOKIE)) {
+            cookieStore.delete(PENDING_SIGNUP_ROLE_COOKIE);
+          }
+          if (wantsTutor && user.id) {
+            await getDb()
+              .update(users)
+              .set({
+                role: "tutor",
+                updatedAt: new Date(),
+                updatedByKind: "system",
+                updatedByActor: "google-signup-role",
+              })
+              .where(eq(users.id, user.id));
+          }
+        } catch (err) {
+          console.error("[auth] tutor-role promotion on createUser failed", err);
+        }
+      },
+      // A Google account just linked to a user. Google reports
+      // `email_verified`; when it's true, stamp `users.email_verified` so an
+      // OAuth-first user counts as verified without the email-code loop.
       async linkAccount({ user, account, profile }) {
         if (
           account.provider !== "google" ||
