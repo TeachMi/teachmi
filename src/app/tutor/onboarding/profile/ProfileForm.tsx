@@ -10,10 +10,12 @@ import {
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CheckboxField } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
 import { isStubUrl } from "@/lib/providers/files";
+import { MARKETING_OPTIN_LABEL_HE } from "@/lib/legal/marketing-consent";
 import {
   HIGHLIGHT_DEFS,
   HIGHLIGHT_MAX_SELECTED,
@@ -1020,6 +1022,21 @@ export function ProfileForm({
           ))}
         </div>
       </Card>
+
+      {/* Marketing opt-in (FR60) — optional, captured in the wizard. Moved
+          out of signup: Israeli Spam Law requires a separate, explicit
+          opt-in, which the signup form's passive small-print consent can't
+          satisfy. The profile submit action records it via
+          `recordMarketingOptIn`. Onboarding-only — not shown on profile edits. */}
+      {!isEditMode && (
+        <Card padding="md">
+          <CheckboxField
+            name="marketingOptIn"
+            value="on"
+            label={MARKETING_OPTIN_LABEL_HE}
+          />
+        </Card>
+      )}
 
       {/* ===== CTAs ===== */}
       {isEditMode ? (

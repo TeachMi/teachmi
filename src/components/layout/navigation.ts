@@ -3,14 +3,29 @@ import { legalDocuments } from "../../lib/legal/documents";
 export interface NavigationLink {
   href: string;
   label: string;
+  /**
+   * Auth-state gate for the top nav. `anonymous` shows only to signed-out
+   * visitors; `authenticated` only to signed-in users; omitted = always shown.
+   */
+  visibility?: "anonymous" | "authenticated";
 }
 
 export const primaryNavItems = [
   { href: "/", label: "בית" },
   { href: "/browse", label: "חיפוש מורים" },
-  { href: "/dashboard", label: "השיעורים שלי" },
+  { href: "/become-a-tutor", label: "הצטרפו כמורים", visibility: "anonymous" },
+  { href: "/dashboard", label: "השיעורים שלי", visibility: "authenticated" },
   { href: "/help", label: "עזרה" },
 ] satisfies NavigationLink[];
+
+/** Filters `primaryNavItems` by the viewer's auth state (see `NavigationLink.visibility`). */
+export function getPrimaryNavItems(isAuthenticated: boolean): NavigationLink[] {
+  return primaryNavItems.filter((item) => {
+    if (item.visibility === "authenticated") return isAuthenticated;
+    if (item.visibility === "anonymous") return !isAuthenticated;
+    return true;
+  });
+}
 
 export const legalLinks: NavigationLink[] = legalDocuments.map((doc) => ({
   href: doc.href,

@@ -1,15 +1,30 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { getDb } from "@/lib/db/client";
 import { getEmailProvider } from "@/lib/providers/email";
 import { track } from "@/lib/analytics";
 import { isEmailVerificationSkipEnabled } from "@/lib/auth/dev-flags";
 import { getSafeCallbackUrl } from "@/lib/auth/callback-url";
+import { signIn } from "@/lib/auth/auth";
+import {
+  PENDING_SIGNUP_ROLE_COOKIE,
+  PENDING_SIGNUP_ROLE_MAX_AGE_SEC,
+} from "@/lib/auth/pending-signup-role";
 import { runRegister } from "./registration-flow";
 import { readIp, readTrustedOrigin } from "./_lib/origin";
 import type { RegisterActionState } from "./register-state";
+
+// Auth.js database-strategy session cookie name — must match the name
+// next-auth reads. `src/app/signup/verify/route.ts` sets the same cookie
+// after a magic-link verification.
+function getSessionCookieName(): string {
+  return process.env.NODE_ENV === "production"
+    ? "__Secure-authjs.session-token"
+    : "authjs.session-token";
+}
 
 export async function registerAction(
   _prevState: RegisterActionState,
@@ -40,13 +55,55 @@ export async function registerAction(
     origin,
     userAgent,
     track,
+    generateSessionToken: () => randomUUID(),
     // Dev-only: production-guarded inside isEmailVerificationSkipEnabled().
     skipEmailVerification: isEmailVerificationSkipEnabled(),
   });
 
   if (result.ok) {
+    // The skip-verification path returns a freshly-minted session — set it as
+    // the Auth.js session cookie so the user lands signed in (no /signin hop).
+    if (result.session) {
+      const cookieStore = await cookies();
+      cookieStore.set({
+        name: getSessionCookieName(),
+        value: result.session.token,
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        expires: result.session.expires,
+      });
+    }
     redirect(result.redirectTo);
   }
 
   return result.state;
+}
+
+/**
+ * Google OAuth signup. A Google-created account lands as `student` by default
+ * (the `users.role` column default). When the signup came from the
+ * become-a-tutor flow, we leave a one-shot cookie that the `events.createUser`
+ * hook in `auth.ts` reads to promote the freshly-created account to `tutor`.
+ * Existing accounts signing in are unaffected — no `createUser` event fires.
+ */
+export async function signInWithGoogle(formData: FormData) {
+  const redirectTo = getSafeCallbackUrl(formData.get("callbackUrl"));
+  const cookieStore = await cookies();
+  if (formData.get("role") === "tutor") {
+    cookieStore.set({
+      name: PENDING_SIGNUP_ROLE_COOKIE,
+      value: "tutor",
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: PENDING_SIGNUP_ROLE_MAX_AGE_SEC,
+    });
+  } else {
+    // Student signup — clear any stale tutor intent from an abandoned flow.
+    cookieStore.delete(PENDING_SIGNUP_ROLE_COOKIE);
+  }
+  await signIn("google", { redirectTo });
 }

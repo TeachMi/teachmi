@@ -99,17 +99,16 @@ export interface PrivacyPolicyAcceptedEvent {
   source: "signup" | "re_acceptance";
 }
 
-// Story 1.22: marketing-opt-in acceptance at signup. The `source` literal is
-// fixed to "signup" for this story — Epic 6 / Story 6.3 will own a separate
-// `MarketingOptInRevokedEvent` and any future "re-opt-in from settings" event
-// with its own source discriminator. Do NOT pre-add a `source: "settings"`
-// union member here (YAGNI; Epic 6 owns the surface).
+// Marketing-opt-in acceptance (FR60). `source` records where it was captured:
+// `signup` is the legacy path; `tutor_wizard` is the current one — the opt-in
+// moved into the tutor-onboarding wizard (it must be a separate explicit
+// opt-in). Epic 6 / Story 6.3 owns the future opt-OUT event.
 export interface MarketingOptInAcceptedEvent {
   event: "marketing_optin_accepted";
   userId: string;
   role: AppRole;
   documentVersion: string;
-  source: "signup";
+  source: "signup" | "tutor_wizard";
 }
 
 // --- Tutor onboarding (Story 2.1, FR10) ---

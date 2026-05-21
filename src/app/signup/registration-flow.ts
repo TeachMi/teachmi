@@ -7,7 +7,7 @@ import { and, eq, gte } from "drizzle-orm";
 import {
   auditEvents,
   consentReceipts,
-  notificationPreferences,
+  sessions,
   users,
   verificationTokens,
 } from "../../lib/db/schema";
@@ -35,12 +35,23 @@ import {
   CURRENT_PRIVACY_POLICY_VERSION,
   truncateUserAgent,
 } from "../../lib/legal/privacy-consent";
-import { CURRENT_MARKETING_OPTIN_VERSION } from "../../lib/legal/marketing-consent";
 import type { RegisterActionState } from "./register-state";
+
+// Mirrors verify-flow.ts — Auth.js database-strategy sessions live 30 days.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export type RegisterFlowResult =
   | { ok: false; state: RegisterActionState }
-  | { ok: true; redirectTo: string };
+  | {
+      ok: true;
+      redirectTo: string;
+      /**
+       * Present only on the skip-verification path: the freshly-minted
+       * session the action wrapper sets as a cookie so the user lands
+       * signed in (no `/signin` round-trip).
+       */
+      session?: { token: string; expires: Date };
+    };
 
 // Minimal Drizzle-compatible surface so tests can pass a hand-rolled fake
 // without re-typing the entire Drizzle query builder. Real `getDb()` is
@@ -89,6 +100,12 @@ export interface RegisterDeps {
    */
   userAgent: string | null;
   track: (event: AnalyticsEvent) => void;
+  /**
+   * Mints the opaque token persisted to `sessions.session_token` on the
+   * skip-verification path. Injected (the action wrapper passes
+   * `() => randomUUID()`) so the orchestrator stays unit-testable.
+   */
+  generateSessionToken: () => string;
   logger?: { error: (message: string, err?: unknown) => void };
   /**
    * Dev-only override: when true, the new user is created with
@@ -155,12 +172,10 @@ export async function runRegister(
   if (!pw.ok) {
     fieldErrors.password = fieldErrorMessage(pw);
   }
-  if (!privacyPolicy) {
-    fieldErrors.privacyPolicy = "יש לאשר את מדיניות הפרטיות.";
-  }
-  if (!tos) {
-    fieldErrors.tos = "יש לאשר את תנאי השימוש.";
-  }
+  // Terms + privacy use passive consent — the signup form shows a small-print
+  // notice at the submit button instead of checkboxes, so there is nothing to
+  // field-validate here. Acceptance is the submit itself; the privacy_policy
+  // `consent_receipts` row is still written below (FR59).
 
   if (Object.keys(fieldErrors).length > 0) {
     return {
@@ -431,124 +446,12 @@ export async function runRegister(
     });
   }
 
-  // FR60 marketing-opt-in capture. Out here alongside the privacy block,
-  // OUTSIDE the cleanup-protected inner try — same reasoning as the privacy
-  // block (Story 1.21 review [H1] comment above). Three writes in sequence
-  // form an atomicity unit at the analytics layer: consent receipt → audit
-  // event → notification_preferences upsert. Any failure → log, swallow, do
-  // NOT roll back the user, do NOT fire the analytics event. Marketing
-  // opt-in is OPTIONAL — absence is the default state and a write failure
-  // is non-blocking.
-  let marketingOptInLogged = false;
-  if (marketingOptIn) {
-    try {
-      const acceptedAt = new Date();
-      const ipAddress = ip === "unknown" ? null : ip;
-
-      const marketingConsentInsert = (await db
-        .insert(consentReceipts)
-        .values({
-          userId,
-          documentType: "marketing_opt_in",
-          documentVersion: CURRENT_MARKETING_OPTIN_VERSION,
-          acceptedAt,
-          ipAddress,
-          userAgent: truncateUserAgent(deps.userAgent),
-          signature: null,
-          documentSnapshot: null,
-          createdByKind: "user",
-          createdByActor: userId,
-        })
-        .onConflictDoNothing({
-          target: [
-            consentReceipts.userId,
-            consentReceipts.documentType,
-            consentReceipts.documentVersion,
-          ],
-        })
-        .returning({ id: consentReceipts.id })) as { id: string }[];
-
-      if (marketingConsentInsert.length > 0) {
-        await db.insert(auditEvents).values(
-          toAuditEventValues({
-            eventType: "auth.marketing_optin_accepted",
-            actorKind: "user",
-            actorId: userId,
-            actorMeta: ipAddress,
-            targetType: "user",
-            targetId: userId,
-            payload: {
-              documentVersion: CURRENT_MARKETING_OPTIN_VERSION,
-              source: "signup",
-            },
-          }),
-        );
-
-        // UPSERT notification_preferences. On INSERT, let the table defaults
-        // populate the other 6 booleans (marketingSms/whatsapp default false;
-        // transactionalEmail default true per FR42). On UPDATE — defense
-        // against a stale row from a future Epic 6 settings UI write (a user
-        // who previously toggled marketingSms=true in settings and then signs
-        // in again via a re-registration path). Only flip marketingEmail; do
-        // NOT clobber other channel booleans the settings UI may have set.
-        // (Story 1.17 hard-delete is NOT a relevant scenario here because
-        // notification_preferences.userId has ON DELETE CASCADE in the schema,
-        // so a user hard-delete removes this row entirely — there is no stale
-        // row left over from that path.) See the story Dev Notes "Why a
-        // partial update on the UPDATE branch". [Code review round 1, P-1.]
-        await db
-          .insert(notificationPreferences)
-          .values({
-            userId,
-            marketingEmail: true,
-            createdByKind: "user",
-            createdByActor: userId,
-          })
-          .onConflictDoUpdate({
-            target: notificationPreferences.userId,
-            set: {
-              marketingEmail: true,
-              updatedAt: new Date(),
-              updatedByKind: "user",
-              updatedByActor: userId,
-            },
-          });
-
-        marketingOptInLogged = true;
-      }
-    } catch (marketingErr) {
-      log.error(
-        `[runRegister] marketing-opt-in capture failed for userId=${userId}; user remains registered, marketing analytics skipped`,
-        marketingErr,
-      );
-      // Intentionally do NOT throw. Marketing opt-in is OPTIONAL — a write
-      // failure is non-blocking. The user can re-opt-in via the future
-      // Epic 6 settings UI.
-      //
-      // Known partial-failure mode (code review round 1, DN-1): if the
-      // consent_receipts insert succeeds but the auditEvents insert OR the
-      // notification_preferences UPSERT fails, the user ends up with a
-      // marketing_opt_in receipt at CURRENT_MARKETING_OPTIN_VERSION but
-      // `marketing_email = false`. Subsequent submits hit ON CONFLICT DO
-      // NOTHING on the receipt and skip this entire block, so the preference
-      // flip is never retried inside `runRegister`. Accepted for MVP1
-      // because (a) the failure rate is very low on Neon HTTP, (b) the
-      // user-INSERT's ON CONFLICT on email already gates true concurrency
-      // here, (c) Epic 6 / Story 6.3's settings UI will self-heal by
-      // re-running the UPSERT on any visit (idempotent). Logged for ops
-      // visibility; tracked in deferred-work.md.
-    }
-  }
-
-  if (marketingOptInLogged) {
-    track({
-      event: "marketing_optin_accepted",
-      userId,
-      role,
-      documentVersion: CURRENT_MARKETING_OPTIN_VERSION,
-      source: "signup",
-    });
-  }
+  // FR60 marketing opt-in moved out of signup (2026-05) — Israeli Spam Law
+  // requires a separate, explicit opt-in, which the signup form's passive
+  // small-print consent cannot satisfy. It now lives in the tutor-onboarding
+  // wizard: `recordMarketingOptIn` (src/lib/legal/marketing-consent.ts),
+  // invoked from the profile-submit action. `marketingOptIn` from the signup
+  // form is no longer read here.
 
   track({ event: "signup_completed", userId, role });
 
@@ -559,9 +462,31 @@ export async function runRegister(
   //     retains intent (the resend form embeds it as a hidden input).
   const next = deps.next;
   if (skipVerification) {
+    // Email/OTP verification is skipped — the dev flag, and (until the Resend
+    // integration in Story 6.1) the only way signup completes at all, since
+    // no provider actually delivers a code. Mint a session here so the user
+    // lands SIGNED IN: the modal signup flows straight into the wizard /
+    // booking destination instead of bouncing through /signin.
+    let session: { token: string; expires: Date } | undefined;
+    try {
+      const sessionToken = deps.generateSessionToken();
+      const expires = new Date(Date.now() + SESSION_TTL_MS);
+      await db.insert(sessions).values({ sessionToken, userId, expires });
+      session = { token: sessionToken, expires };
+    } catch (sessionErr) {
+      log.error(
+        "[runRegister] skip-path session create failed; user verified but not signed in",
+        sessionErr,
+      );
+    }
     return {
       ok: true,
-      redirectTo: next && next.length > 0 ? next : "/signin?verified=1",
+      // Signed in → land on the real destination. `/dashboard` routes a tutor
+      // onward to /tutor/me → the onboarding wizard. If the session insert
+      // failed, fall back to the old "verified, please sign in" landing.
+      redirectTo:
+        next && next.length > 0 ? next : session ? "/dashboard" : "/signin?verified=1",
+      session,
     };
   }
   const verifyEmailSentBase = `/signup/verify-email-sent?email=${encodeURIComponent(email)}`;
