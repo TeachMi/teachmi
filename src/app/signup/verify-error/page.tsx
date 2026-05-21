@@ -12,20 +12,24 @@ export const metadata: Metadata = {
   description: "קישור האימות אינו תקין. שלחו לעצמכם קישור חדש.",
 };
 
-type ErrorReason = "expired" | "not_found" | "missing" | "internal";
+type ErrorReason = "expired" | "not_found" | "missing" | "rate_limited" | "internal";
 
 const REASON_COPY: Record<ErrorReason, { title: string; body: string }> = {
   expired: {
-    title: "הקישור פג תוקף",
-    body: "קישור האימות בתוקף ל-15 דקות בלבד. שלחו לעצמכם קישור חדש.",
+    title: "הקוד פג תוקף",
+    body: "קוד האימות בתוקף ל-15 דקות בלבד. שלחו לעצמכם קוד חדש.",
   },
   not_found: {
-    title: "הקישור אינו תקין",
-    body: "הקישור שלחצתם עליו אינו תקין או נוצל כבר. אם זו הפעם הראשונה שאתם רואים את הדף הזה, נסו לשלוח קישור חדש.",
+    title: "הקוד אינו תקין",
+    body: "הקוד שהזנתם אינו תקין או נוצל כבר. אם זו הפעם הראשונה שאתם רואים את הדף הזה, נסו לשלוח קוד חדש.",
   },
   missing: {
-    title: "הקישור אינו תקין",
-    body: "הקישור שלחצתם עליו חסר את אסימון האימות. נסו לשלוח קישור חדש.",
+    title: "הקוד אינו תקין",
+    body: "חסר קוד אימות תקין. נסו לשלוח קוד חדש.",
+  },
+  rate_limited: {
+    title: "יותר מדי ניסיונות",
+    body: "נסו שוב בעוד דקה, או שלחו לעצמכם קוד חדש.",
   },
   internal: {
     title: "שגיאה במערכת",
@@ -34,7 +38,13 @@ const REASON_COPY: Record<ErrorReason, { title: string; body: string }> = {
 };
 
 function isErrorReason(value: unknown): value is ErrorReason {
-  return value === "expired" || value === "not_found" || value === "missing" || value === "internal";
+  return (
+    value === "expired" ||
+    value === "not_found" ||
+    value === "missing" ||
+    value === "rate_limited" ||
+    value === "internal"
+  );
 }
 
 function firstString(value: string | string[] | undefined): string | null {
@@ -78,7 +88,7 @@ export default async function VerifyErrorPage({ searchParams }: PageProps) {
               surface="linen"
             />
             <Button type="submit" variant="outline" size="lg" fullWidth>
-              שלחו קישור חדש
+              שלחו קוד חדש
             </Button>
           </form>
         </CardBody>

@@ -48,5 +48,9 @@ export async function signInAction(
     redirect(result.redirectTo);
   }
 
+  if (result.redirectTo) {
+    redirect(result.redirectTo);
+  }
+
   return result.state;
 }

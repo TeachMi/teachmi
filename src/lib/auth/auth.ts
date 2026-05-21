@@ -1,9 +1,9 @@
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
+import { eq } from "drizzle-orm";
 import type { Adapter } from "next-auth/adapters";
 import NextAuth, { type NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
 import { cookies } from "next/headers";
-import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { accounts, sessions, users, verificationTokens } from "../db/schema";
 import { defaultPostSignInPath, getSafeCallbackUrl } from "./callback-url";
@@ -11,6 +11,26 @@ import { PENDING_SIGNUP_ROLE_COOKIE } from "./pending-signup-role";
 import { isAppRole } from "./roles";
 
 let authAdapter: Adapter | null = null;
+
+const GOOGLE_OAUTH_CLIENT_ID =
+  "746211293759-f6dclsj323op2buvfnqfffvu97jmklmq.apps.googleusercontent.com";
+
+function readGoogleClientId(): string {
+  return process.env.GOOGLE_OAUTH_CLIENT_ID?.trim() || GOOGLE_OAUTH_CLIENT_ID;
+}
+
+function readGoogleClientSecret(): string | undefined {
+  return process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim() || undefined;
+}
+
+function isGoogleEmailVerified(profile: unknown): boolean {
+  return (
+    typeof profile === "object" &&
+    profile !== null &&
+    "email_verified" in profile &&
+    (profile as { email_verified?: unknown }).email_verified === true
+  );
+}
 
 export function getAuthAdapter(): Adapter {
   if (!authAdapter) {
@@ -45,7 +65,15 @@ export function createAuthConfig(): NextAuthConfig {
     // (Story 1.13) which inserts a `sessions` row + sets a UUID-token cookie.
     // The Server Action at src/app/signin/actions.ts does the same direct
     // INSERT + cookie set; Auth.js only handles Google OAuth here.
-    providers: [Google],
+    providers: [
+      Google({
+        clientId: readGoogleClientId(),
+        clientSecret: readGoogleClientSecret(),
+        // Google reports `email_verified`; our signIn callback rejects any
+        // unverified Google profile before Auth.js reaches auto-linking.
+        allowDangerousEmailAccountLinking: true,
+      }),
+    ],
     session: {
       strategy: "database",
     },
@@ -55,6 +83,13 @@ export function createAuthConfig(): NextAuthConfig {
     trustHost: true,
     useSecureCookies: process.env.NODE_ENV === "production",
     callbacks: {
+      signIn({ account, profile }) {
+        if (account?.provider !== "google") {
+          return true;
+        }
+
+        return isGoogleEmailVerified(profile);
+      },
       session({ session, user }) {
         if (session.user) {
           session.user.id = user.id;
@@ -117,6 +152,29 @@ export function createAuthConfig(): NextAuthConfig {
         } catch (err) {
           console.error("[auth] tutor-role promotion on createUser failed", err);
         }
+      },
+      // A Google account just linked to a user. Google reports
+      // `email_verified`; when it's true, stamp `users.email_verified` so an
+      // OAuth-first user counts as verified without the email-code loop.
+      async linkAccount({ user, account, profile }) {
+        if (
+          account.provider !== "google" ||
+          !isGoogleEmailVerified(profile) ||
+          typeof user.id !== "string"
+        ) {
+          return;
+        }
+
+        const now = new Date();
+        await getDb()
+          .update(users)
+          .set({
+            emailVerified: now,
+            updatedAt: now,
+            updatedByKind: "system",
+            updatedByActor: "google-oauth",
+          })
+          .where(eq(users.id, user.id));
       },
     },
   };

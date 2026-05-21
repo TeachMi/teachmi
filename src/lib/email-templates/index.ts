@@ -11,7 +11,7 @@
 
 export const EMAIL_TEMPLATES = {
   AUTH_VERIFY_EMAIL: {
-    templateId: "auth-verify-email",
+    templateId: "account-verification",
     subject: "אימות כתובת אימייל ב-TeachMe",
   },
   AUTH_PASSWORD_RESET: {

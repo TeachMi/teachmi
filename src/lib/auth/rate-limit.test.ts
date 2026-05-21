@@ -92,6 +92,16 @@ describe("buildAttemptAuditEvent", () => {
     expect(event.eventType).toBe("auth.signup_resend_attempt");
   });
 
+  it("maps signup_verify_code to the right event type", () => {
+    const event = buildAttemptAuditEvent({
+      ip: "10.0.0.1",
+      action: "signup_verify_code",
+      email: "user@example.com",
+    });
+    expect(event.eventType).toBe("auth.signup_verify_code_attempt");
+    expect(event.payload).toEqual({ emailHash: hashEmailForAudit("user@example.com") });
+  });
+
   it("maps password_reset_request to the right event type", () => {
     const event = buildAttemptAuditEvent({
       ip: "10.0.0.1",
