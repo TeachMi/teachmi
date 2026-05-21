@@ -108,6 +108,28 @@ export interface BrowseSearchResult {
 
 export const DEFAULT_BROWSE_PAGE_SIZE = 12;
 
+// Column subset every tutor-card surface selects — the `/browse` listing
+// and the homepage "מורים מובילים" featured band. Intentionally narrower
+// than `DiscoverableTutorPublic`: long-form columns (`longBio`,
+// recommendation copy) aren't rendered on a card.
+const BROWSE_CARD_COLUMNS = {
+  userId: tutorProfiles.userId,
+  displayName: tutorProfiles.displayName,
+  gender: tutorProfiles.gender,
+  tagline: tutorProfiles.tagline,
+  shortBio: tutorProfiles.shortBio,
+  highlights: tutorProfiles.highlights,
+  introVideoR2Key: tutorProfiles.introVideoR2Key,
+  profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
+  lesson45PriceIls: tutorProfiles.lesson45PriceIls,
+  hourlyPriceIls: tutorProfiles.hourlyPriceIls,
+  lesson75PriceIls: tutorProfiles.lesson75PriceIls,
+  lesson90PriceIls: tutorProfiles.lesson90PriceIls,
+  averageRating: tutorProfiles.averageRating,
+  ratingCount: tutorProfiles.ratingCount,
+  totalLessonsCompleted: tutorProfiles.totalLessonsCompleted,
+} as const;
+
 const SORT_TO_ORDER_BY: Record<BrowseSort, SQL[]> = {
   // Recency — newest discoverable tutors first. Stable on `id` to avoid
   // tied-timestamp scroll skips.
@@ -331,24 +353,6 @@ export async function searchTutors(
   // Main row query — same JOIN shape as the count to keep filter parity.
   // Subject JOIN is only added when filtering by subject; without it, the
   // `tutor_subjects` JOIN would multiply rows by N subjects per tutor.
-  const baseSelect = {
-    userId: tutorProfiles.userId,
-    displayName: tutorProfiles.displayName,
-    gender: tutorProfiles.gender,
-    tagline: tutorProfiles.tagline,
-    shortBio: tutorProfiles.shortBio,
-    highlights: tutorProfiles.highlights,
-    introVideoR2Key: tutorProfiles.introVideoR2Key,
-    profilePhotoR2Key: tutorProfiles.profilePhotoR2Key,
-    lesson45PriceIls: tutorProfiles.lesson45PriceIls,
-    hourlyPriceIls: tutorProfiles.hourlyPriceIls,
-    lesson75PriceIls: tutorProfiles.lesson75PriceIls,
-    lesson90PriceIls: tutorProfiles.lesson90PriceIls,
-    averageRating: tutorProfiles.averageRating,
-    ratingCount: tutorProfiles.ratingCount,
-    totalLessonsCompleted: tutorProfiles.totalLessonsCompleted,
-  };
-
   const orderBy = SORT_TO_ORDER_BY[sort];
 
   // Same dedup reasoning as the count query above — single-subject filter
@@ -358,7 +362,7 @@ export async function searchTutors(
   // SELECT DISTINCT enforces.
   const tutorRows = subjectId !== null
     ? ((await db
-        .select(baseSelect)
+        .select(BROWSE_CARD_COLUMNS)
         .from(tutorProfiles)
         .innerJoin(users, eq(users.id, tutorProfiles.userId))
         .innerJoin(tutorSubjects, eq(tutorSubjects.tutorUserId, tutorProfiles.userId))
@@ -367,7 +371,7 @@ export async function searchTutors(
         .limit(pageSize)
         .offset(offset)) as BrowseTutorCard[])
     : ((await db
-        .select(baseSelect)
+        .select(BROWSE_CARD_COLUMNS)
         .from(tutorProfiles)
         .innerJoin(users, eq(users.id, tutorProfiles.userId))
         .where(where)
@@ -382,4 +386,42 @@ export async function searchTutors(
     pageSize,
     totalPages,
   };
+}
+
+/**
+ * Featured tutors for the marketing homepage's "מורים מובילים" band.
+ *
+ * Same discoverability gate as `searchTutors` (`discoverableTutorWhere()`),
+ * narrowed to `tutor_profiles.is_featured = true`. The flag is set manually
+ * — the mock-tutor seed flips it today; a future admin tool will own it.
+ * AND-composing with `discoverableTutorWhere()` means a featured tutor who
+ * later loses discoverability (re-vetting, soft-delete) silently drops off
+ * the homepage with no separate bookkeeping.
+ *
+ * Ordered rating-first (NULLs last) so the homepage leads with the
+ * strongest profiles. Idempotent + parameter-only; no mutations.
+ */
+export async function getFeaturedTutors(limit = 3): Promise<BrowseTutorCard[]> {
+  // Guard against a non-finite `limit` (NaN / Infinity) — `Math.floor(NaN)`
+  // would propagate through the min/max and reach Drizzle's `.limit()` as
+  // a malformed SQL bound.
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(12, Math.floor(limit)))
+    : 3;
+  const db = getDb();
+  const rows = (await db
+    .select(BROWSE_CARD_COLUMNS)
+    .from(tutorProfiles)
+    .where(and(discoverableTutorWhere(), eq(tutorProfiles.isFeatured, true)))
+    .orderBy(
+      sql`${tutorProfiles.averageRating} DESC NULLS LAST`,
+      desc(tutorProfiles.ratingCount),
+      desc(tutorProfiles.createdAt),
+      // Stable final tiebreaker — `user_id` is unique (1:1 with users), so
+      // freshly-seeded tutors that tie on rating + count + created_at still
+      // get a deterministic order across requests. Mirrors `searchTutors`.
+      asc(tutorProfiles.userId),
+    )
+    .limit(safeLimit)) as BrowseTutorCard[];
+  return rows;
 }

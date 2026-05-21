@@ -90,6 +90,14 @@ interface BrowseRowProps {
    * the alternatives.
    */
   selectedLengthMinutes: 45 | 60 | 75 | 90 | null;
+  /**
+   * Whether the viewer may book a lesson. `false` for logged-in tutors —
+   * the single-role model (CLAUDE.md) means a tutor account never books.
+   * When false the "קביעת שיעור" CTA is hidden here and in the video
+   * modal; `checkoutHandoffAction` is the load-bearing server gate.
+   * Defaults to `true` (anonymous + student viewers can book).
+   */
+  canBook?: boolean;
 }
 
 /**
@@ -120,6 +128,7 @@ export function BrowseRow({
   profilePhotoUrl,
   introVideoUrl,
   selectedLengthMinutes,
+  canBook = true,
 }: BrowseRowProps) {
   const router = useRouter();
   const profileHref = `/tutor/${tutor.userId}`;
@@ -318,16 +327,18 @@ export function BrowseRow({
                 <div className="text-sm text-secondary">תמחור לא פורסם</div>
               )}
             </div>
-            <Button
-              type="button"
-              variant="primary"
-              fullWidth
-              onClick={openBookingModal}
-              disabled={isPending}
-              aria-busy={isPending}
-            >
-              {isPending ? "טוען…" : "קביעת שיעור"}
-            </Button>
+            {canBook && (
+              <Button
+                type="button"
+                variant="primary"
+                fullWidth
+                onClick={openBookingModal}
+                disabled={isPending}
+                aria-busy={isPending}
+              >
+                {isPending ? "טוען…" : "קביעת שיעור"}
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -430,6 +441,7 @@ export function BrowseRow({
           displayName={tutor.displayName}
           tagline={tutor.tagline}
           profileHref={profileHref}
+          canBook={canBook}
           onClose={() => setVideoOpen(false)}
           onBookClick={() => {
             setVideoOpen(false);

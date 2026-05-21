@@ -19,6 +19,12 @@ interface BrowseVideoModalProps {
   tagline: string | null;
   /** Used by the footer "ראו פרופיל מלא" link. */
   profileHref: string;
+  /**
+   * Whether the viewer may book. `false` for logged-in tutors — the
+   * footer "קביעת שיעור" button is hidden and the profile link spans
+   * the full footer. Defaults to `true`.
+   */
+  canBook?: boolean;
   onClose: () => void;
   /** Called when the student clicks "קביעת שיעור" — opens the booking modal. */
   onBookClick: () => void;
@@ -29,6 +35,7 @@ export function BrowseVideoModal({
   displayName,
   tagline,
   profileHref,
+  canBook = true,
   onClose,
   onBookClick,
 }: BrowseVideoModalProps) {
@@ -94,13 +101,15 @@ export function BrowseVideoModal({
 
         {/* Actions */}
         <div className="p-4 flex gap-2 border-t border-linen-border">
-          <button
-            type="button"
-            onClick={onBookClick}
-            className="flex-1 bg-primary-container hover:bg-primary text-on-primary text-center text-sm font-bold py-2.5 rounded-lg transition-colors"
-          >
-            קביעת שיעור
-          </button>
+          {canBook && (
+            <button
+              type="button"
+              onClick={onBookClick}
+              className="flex-1 bg-primary-container hover:bg-primary text-on-primary text-center text-sm font-bold py-2.5 rounded-lg transition-colors"
+            >
+              קביעת שיעור
+            </button>
+          )}
           <a
             href={profileHref}
             className="flex-1 text-sm text-on-surface border border-linen-border hover:border-primary-fixed-dim hover:bg-linen text-center font-bold py-2.5 rounded-lg transition-colors"

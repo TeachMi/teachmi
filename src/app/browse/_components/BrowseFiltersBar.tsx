@@ -73,7 +73,9 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
   return (
     <section className="sticky top-[73px] z-20 bg-linen border-b border-linen-border shadow-sm">
       <div className="max-w-7xl mx-auto px-6 py-3">
-        <div className="flex items-center gap-3 flex-wrap">
+        {/* Phone: filters stack into a clean full-width column. From `sm:`
+            up they return to the inline wrap-row. */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
           <FilterCell label="מקצוע">
             <Select
               value={currentSubject || SUBJECT_ALL}
@@ -83,7 +85,7 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
             >
               <SelectTrigger
                 size="md"
-                className="min-w-[160px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0"
+                className="min-w-[160px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0 font-bold text-primary-container"
               >
                 <SelectValue placeholder="כל המקצועות" />
               </SelectTrigger>
@@ -107,7 +109,7 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
             >
               <SelectTrigger
                 size="md"
-                className="min-w-[120px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0"
+                className="min-w-[120px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0 font-bold text-primary-container"
               >
                 <SelectValue placeholder="הכל" />
               </SelectTrigger>
@@ -130,7 +132,7 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
             >
               <SelectTrigger
                 size="md"
-                className="min-w-[140px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0"
+                className="min-w-[140px] border-0 bg-transparent shadow-none focus:ring-0 focus:border-0 px-0 font-bold text-primary-container"
               >
                 <SelectValue placeholder="כל הטווחים" />
               </SelectTrigger>
@@ -146,12 +148,13 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
 
           {/* Time-of-day + day-of-week — Round-2 add. Lives in its own
               cell so the trigger reads as a peer of the other filters. */}
-          <div className="min-w-[160px]">
+          <div className="w-full sm:w-auto sm:min-w-[160px]">
             <BrowseTimePopover />
           </div>
 
-          {/* Sort — pushed to the trailing edge in RTL via `ms-auto`. */}
-          <div className="flex items-center gap-2 ms-auto">
+          {/* Sort — pushed to the trailing edge in RTL via `ms-auto` on
+              `sm:`+; full-width and in-flow on phone. */}
+          <div className="flex w-full items-center gap-2 sm:ms-auto sm:w-auto">
             <label className="text-[11px] text-secondary" htmlFor="browse-sort">
               מיין לפי
             </label>
@@ -164,7 +167,7 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
               <SelectTrigger
                 id="browse-sort"
                 size="md"
-                className="min-w-[160px]"
+                className="min-w-[160px] font-bold text-primary-container"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -185,7 +188,7 @@ export function BrowseFiltersBar({ subjects }: BrowseFiltersBarProps) {
 
 function FilterCell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-linen-border bg-surface-lowest px-3 py-1 hover:border-primary-fixed-dim transition-colors">
+    <div className="flex w-full items-center gap-2 rounded-lg border border-linen-border bg-surface-lowest px-3 py-1 transition-colors hover:border-primary-fixed-dim sm:w-auto">
       <span className="text-[11px] text-secondary">{label}</span>
       {children}
     </div>
