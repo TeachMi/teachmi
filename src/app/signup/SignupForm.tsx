@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,8 +39,19 @@ export function SignupForm({ next, role = "student" }: SignupFormProps = {}) {
     REGISTER_INITIAL_STATE,
   );
 
+  // On a successful signup the action returns a destination instead of
+  // redirecting — hard-navigate there (full document load). A server-action
+  // redirect() out of the signup modal crashes the /dashboard redirect chain;
+  // see RegisterActionState.redirectTo.
+  useEffect(() => {
+    if (state.redirectTo) {
+      window.location.assign(state.redirectTo);
+    }
+  }, [state.redirectTo]);
+
   const fieldErrors = state.fieldErrors ?? {};
   const values = state.values ?? {};
+  const navigating = Boolean(state.redirectTo);
 
   return (
     <section className="mx-auto w-full max-w-3xl px-6 py-12">
@@ -150,8 +161,17 @@ export function SignupForm({ next, role = "student" }: SignupFormProps = {}) {
               </p>
             )}
 
-            <Button type="submit" size="lg" fullWidth disabled={pending}>
-              {pending ? "שולחים אימות…" : "צרו חשבון ←"}
+            <Button
+              type="submit"
+              size="lg"
+              fullWidth
+              disabled={pending || navigating}
+            >
+              {pending
+                ? "שולחים אימות…"
+                : navigating
+                  ? "מעבירים אתכם…"
+                  : "צרו חשבון ←"}
             </Button>
 
             {/* Passive consent — submitting the form IS the acceptance event.

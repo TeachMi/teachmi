@@ -1,7 +1,6 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
-import { redirect } from "next/navigation";
 import { cookies, headers } from "next/headers";
 import { getDb } from "@/lib/db/client";
 import { getEmailProvider } from "@/lib/providers/email";
@@ -75,7 +74,10 @@ export async function registerAction(
         expires: result.session.expires,
       });
     }
-    redirect(result.redirectTo);
+    // Hand the destination to the client to HARD-navigate to (see
+    // RegisterActionState.redirectTo) — a server-action redirect() out of the
+    // signup modal crashes the multi-hop /dashboard redirect chain.
+    return { ok: true, redirectTo: result.redirectTo };
   }
 
   return result.state;

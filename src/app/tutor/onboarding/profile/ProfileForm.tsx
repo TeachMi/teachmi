@@ -1104,12 +1104,6 @@ export function ProfileForm({
           >
             שמרו טיוטה
           </Button>
-          <Link
-            href="/dashboard"
-            className="text-sm text-on-surface-variant hover:text-primary-container"
-          >
-            → חזרה
-          </Link>
         </div>
       )}
 
