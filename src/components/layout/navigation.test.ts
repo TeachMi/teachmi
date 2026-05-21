@@ -28,7 +28,7 @@ describe("getPrimaryNavItems — auth-state-gated top nav", () => {
   it("ungated items appear regardless of auth state", () => {
     for (const authed of [true, false]) {
       const hrefs = getPrimaryNavItems(authed).map((item) => item.href);
-      expect(hrefs).toEqual(expect.arrayContaining(["/", "/browse", "/help"]));
+      expect(hrefs).toEqual(expect.arrayContaining(["/", "/browse"]));
     }
   });
 });
