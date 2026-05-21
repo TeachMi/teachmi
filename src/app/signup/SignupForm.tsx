@@ -37,13 +37,34 @@ export function SignupForm({ next }: SignupFormProps = {}) {
   const fieldErrors = state.fieldErrors ?? {};
   const values = state.values ?? {};
 
+  // Story 3.3: preserve booking intent across the cross-link to /signin.
+  // The /signin page-level handler calls `decomposeNextToGateParams` on its
+  // `callbackUrl` query param to reconstruct the gate payload + banner.
+  const signinHref = next
+    ? `/signin?callbackUrl=${encodeURIComponent(next)}`
+    : "/signin";
+
   return (
     <section className="mx-auto w-full max-w-3xl px-6 py-12">
-      <div className="mb-10 text-center">
+      <div className="mb-8 text-center">
         <h1 className="mb-2 font-display text-3xl font-extrabold text-primary-container">
           ברוכים הבאים ל-TeachMe
         </h1>
         <p className="text-on-surface-variant">בואו נתחיל. למה אתם מצטרפים?</p>
+        {/* Sign-in affordance kept at first-level visibility — NOT buried at
+            the foot of the form. A logged-out *existing* student who hit the
+            booking gate must be able to switch to /signin without hunting;
+            `signinHref` carries the booking intent so they land back at
+            checkout post-auth. */}
+        <p className="mt-4 text-sm text-on-surface-variant">
+          כבר רשומים?{" "}
+          <Link
+            className="font-bold text-primary-container underline underline-offset-2 hover:text-primary"
+            href={signinHref}
+          >
+            התחברו לחשבון
+          </Link>
+        </p>
       </div>
 
       <div className="mb-8">
@@ -172,15 +193,7 @@ export function SignupForm({ next }: SignupFormProps = {}) {
               יש לכם חשבון?{" "}
               <Link
                 className="font-bold text-primary-container hover:underline"
-                href={
-                  // Story 3.3: preserve booking intent across the cross-link.
-                  // `/signin` page-level handler calls decomposeNextToGateParams
-                  // on its `callbackUrl` query param to reconstruct the gate
-                  // payload + render the same banner.
-                  next
-                    ? `/signin?callbackUrl=${encodeURIComponent(next)}`
-                    : "/signin"
-                }
+                href={signinHref}
               >
                 התחברות
               </Link>

@@ -4,32 +4,46 @@ import {
   getActiveSubjects,
   type MarketplaceSubject,
 } from "@/lib/db/queries/subject-queries";
+import { getFeaturedTutors } from "@/lib/db/queries/browse-queries";
+import { getFilesProvider, isStubUrl } from "@/lib/providers/files";
 import { buildIndexableRobotsDirective } from "@/lib/seo/robots";
-import { HeadlineFourSubjects } from "./_components/HeadlineFourSubjects";
 import { HeroSection } from "./_components/HeroSection";
-import { SubjectTaxonomyGrid } from "./_components/SubjectTaxonomyGrid";
+import { SubjectGrid } from "./_components/SubjectGrid";
+import { HowItWorks } from "./_components/HowItWorks";
+import {
+  FeaturedTutors,
+  type FeaturedTutorEntry,
+} from "./_components/FeaturedTutors";
+import { TrustStrip } from "./_components/TrustStrip";
+import { HomeFaq } from "./_components/HomeFaq";
+import { TutorRecruitingBand } from "./_components/TutorRecruitingBand";
 
-// Marketplace homepage (FR17, Story 3.1). Hero + headline-four cards + full
-// 11-subject taxonomy. All RSC; zero client JS.
+// Marketplace homepage. Rebuilt to the `mocks/landing-v2.html` structure
+// (founder direction 2026-05-20): hero + subject search, subject grid,
+// how-it-works, featured tutors, trust strip, FAQ, tutor-recruiting band.
+// Existing Story 3.1 copy is kept — the v2 mock's wording is not adopted.
 //
-// **Caching:** the `getActiveSubjects()` helper wraps its query in Next 16's
-// `unstable_cache` with tag `"subjects"`. Story 3.6's admin taxonomy editor
-// MUST call `revalidateTag("subjects")` after each mutation to invalidate
-// this entry cross-request.
+// **Caching:** `getActiveSubjects()` wraps its query in `unstable_cache`
+// tagged `"subjects"`; Story 3.6's admin taxonomy editor must
+// `revalidateTag("subjects")` after each mutation. The featured-tutor
+// query is per-request (small, 3 rows).
 //
-// **`dynamic = "force-dynamic"`** — required because static prerendering at
-// build time would call `getActiveSubjects()` (which opens a Drizzle
-// connection) without `DATABASE_URL` set in the build environment, breaking
-// `next build`. Same pattern as Story 3.2's tutor profile page. The
-// `unstable_cache` wrapper inside `getActiveSubjects` provides the
-// cross-request caching this page actually wants; per-request rendering is
-// cheap (one cached SELECT). Page does NOT call `auth()` — the CTAs work
-// identically for signed-in / anonymous visitors.
+// **`dynamic = "force-dynamic"`** — required because static prerendering
+// at build time would open a Drizzle connection without `DATABASE_URL`
+// set, breaking `next build`. Do NOT remove it to "optimize": the
+// cross-request caching this page wants comes from `unstable_cache` inside
+// `getActiveSubjects`, and per-request rendering is cheap. The page does
+// NOT call `auth()` — every section renders identically for signed-in and
+// anonymous visitors. The only client island is `<HeroSearch>` inside the
+// hero.
 export const dynamic = "force-dynamic";
 
 const TITLE = "TeachMe — מורים פרטיים בעברית";
 const DESCRIPTION =
   "פלטפורמת מורים פרטיים אונליין לתלמידי בגרות ופסיכומטרי. מורים מסודרים, חשבונית מס, ובלי וואטסאפ.";
+
+const FEATURED_TUTOR_LIMIT = 3;
+const FEATURED_PHOTO_TTL_SEC = 3600; // 1 hour
 
 export async function generateMetadata(): Promise<Metadata> {
   return {
@@ -58,31 +72,77 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-// Wrap the subjects query so a missing `DATABASE_URL` (CI playwright webServer,
-// preview-without-DB) or a Neon outage degrades to an empty taxonomy instead
-// of 500-ing the homepage. The headline-four band still renders via the
-// hardcoded fallback display names (per HeadlineFourSubjects AC2); the full
-// taxonomy band renders its "המקצועות מתעדכנים, חזרו בקרוב" empty state.
-// Same pattern Story 3.2's dashboard `readTutorOnboardingState` uses
-// (catch + log + degrade) per AR-22 (periphery internet) resilience guidance.
+// Wrap the subjects query so a missing `DATABASE_URL` (CI playwright
+// webServer, preview-without-DB) or a Neon outage degrades to an empty
+// taxonomy instead of 500-ing the homepage. The hero search renders with
+// an empty subject list; `SubjectGrid` renders its empty-state copy.
 async function getHomepageSubjects(): Promise<MarketplaceSubject[]> {
   try {
     return await getActiveSubjects();
   } catch (err) {
-    console.error("[homepage] active subject lookup failed; rendering empty taxonomy", err);
+    console.error(
+      "[homepage] active subject lookup failed; rendering empty taxonomy",
+      err,
+    );
+    return [];
+  }
+}
+
+// Featured tutors for the "מורים מובילים" band. Degrade-don't-crash, same
+// posture as the subjects query: ANY failure drops the band rather than
+// 500-ing the page. The whole body is inside one try/catch so a throw from
+// the query, `getFilesProvider()`, or `Promise.all` is all caught; the
+// inner per-photo try/catch additionally keeps one unreachable photo from
+// taking down its siblings. `FeaturedTutors` renders nothing for [].
+async function getHomepageFeaturedTutors(): Promise<FeaturedTutorEntry[]> {
+  try {
+    const tutors = await getFeaturedTutors(FEATURED_TUTOR_LIMIT);
+    const files = getFilesProvider();
+    return await Promise.all(
+      tutors.map(async (tutor) => {
+        let profilePhotoUrl: string | null = null;
+        if (tutor.profilePhotoR2Key) {
+          try {
+            const url = await files.generatePresignedGetUrl({
+              bucket: "tutor-profile-photos",
+              key: tutor.profilePhotoR2Key,
+              expiresInSec: FEATURED_PHOTO_TTL_SEC,
+            });
+            profilePhotoUrl = isStubUrl(url) ? null : url;
+          } catch (err) {
+            console.error(
+              "[homepage] featured tutor photo presign failed",
+              err,
+            );
+          }
+        }
+        return { tutor, profilePhotoUrl };
+      }),
+    );
+  } catch (err) {
+    console.error(
+      "[homepage] featured tutor band failed to resolve; omitting it",
+      err,
+    );
     return [];
   }
 }
 
 export default async function Home() {
-  const subjects = await getHomepageSubjects();
+  const [subjects, featuredTutors] = await Promise.all([
+    getHomepageSubjects(),
+    getHomepageFeaturedTutors(),
+  ]);
 
   return (
     <AppShell activeHref="/">
-      <HeroSection />
-      <HeadlineFourSubjects subjects={subjects} />
-      <SubjectTaxonomyGrid subjects={subjects} />
-      {/* Story 3.5 will insert <FeaturedTutors /> here */}
+      <HeroSection subjects={subjects} />
+      <SubjectGrid subjects={subjects} />
+      <HowItWorks />
+      <FeaturedTutors tutors={featuredTutors} />
+      <TrustStrip />
+      <HomeFaq />
+      <TutorRecruitingBand />
     </AppShell>
   );
 }

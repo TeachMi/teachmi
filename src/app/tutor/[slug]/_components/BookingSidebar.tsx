@@ -46,6 +46,14 @@ interface BookingSidebarProps {
    */
   viewerIsOwner: boolean;
   /**
+   * True when the viewing user is a tutor (single-role model — a tutor
+   * never books lessons). Renders an informational panel instead of the
+   * booking CTA + modal. `viewerIsOwner` takes precedence when the tutor
+   * is viewing their own profile. The server gate in `checkoutHandoffAction`
+   * / `submitCheckoutAction` is the load-bearing block.
+   */
+  viewerIsTutor?: boolean;
+  /**
    * Pre-selected lesson length carried from the URL (`?duration=45`) for
    * deep-links from browse cards or marketing. Falls back to the sidebar's
    * headline duration when omitted.
@@ -66,12 +74,17 @@ export function BookingSidebar({
   isSignedIn,
   hasAnyAvailability,
   viewerIsOwner,
+  viewerIsTutor = false,
   initialDuration,
 }: BookingSidebarProps) {
   const [open, setOpen] = useState(false);
 
   if (viewerIsOwner) {
     return <OwnerPanel headlinePrice={null} />;
+  }
+
+  if (viewerIsTutor) {
+    return <TutorViewerPanel />;
   }
 
   // Pick the headline duration. Prefer the URL-supplied `initialDuration`
@@ -222,6 +235,43 @@ function OwnerPanel(_props: { headlinePrice: number | null }) {
           className="inline-flex items-center gap-1 text-sm font-bold text-primary-container hover:underline"
         >
           ← חזרה לאזור המורה
+        </Link>
+      </div>
+    </aside>
+  );
+}
+
+// ----- Tutor-viewer panel -------------------------------------------------
+// Rendered in place of the booking CTA when a tutor views ANOTHER tutor's
+// public profile. The single-role model (CLAUDE.md) means a tutor account
+// never books lessons; the modal is not rendered at all. The server gate
+// in `checkoutHandoffAction` / `submitCheckoutAction` enforces the rule.
+
+function TutorViewerPanel() {
+  return (
+    <aside className="lg:sticky lg:top-24 lg:self-start">
+      <div className="bg-white rounded-2xl border border-linen-border shadow-sm p-6 text-start">
+        <div className="flex items-center gap-2 mb-2">
+          <span
+            className="material-symbols-outlined text-primary-container text-2xl"
+            style={{ fontVariationSettings: "'FILL' 1" }}
+            aria-hidden="true"
+          >
+            cast_for_education
+          </span>
+          <h3 className="font-display font-bold text-lg text-on-surface">
+            חשבון מורה
+          </h3>
+        </div>
+        <p className="text-sm text-on-surface-variant leading-relaxed mb-4">
+          חשבונות מורה אינם מזמינים שיעורים. כדי לנהל את הפרופיל, הזמינות
+          והשיעורים שלך — עברו לאזור המורה.
+        </p>
+        <Link
+          href="/tutor/me"
+          className="inline-flex items-center gap-1 text-sm font-bold text-primary-container hover:underline"
+        >
+          ← לאזור המורה
         </Link>
       </div>
     </aside>

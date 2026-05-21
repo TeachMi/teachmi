@@ -1,0 +1,2 @@
+ALTER TABLE "tutor_profiles" ADD COLUMN "is_featured" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+CREATE INDEX "idx_tutor_profiles_is_featured" ON "tutor_profiles" USING btree ("is_featured") WHERE "tutor_profiles"."is_featured" = true;

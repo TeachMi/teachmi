@@ -23,6 +23,7 @@
 
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
+import { auth } from "@/lib/auth/auth";
 import { getActiveSubjects } from "@/lib/db/queries/subject-queries";
 import {
   searchTutors,
@@ -78,6 +79,20 @@ function coercePage(raw: string | undefined): number {
   return Math.floor(n);
 }
 
+// `/browse` is a public route — an auth blip (rotated AUTH_SECRET, Neon
+// outage) must degrade to "anonymous viewer", never 500 the listing.
+// Only the viewer's role is needed: logged-in tutors don't get a booking
+// CTA (single-role model — CLAUDE.md).
+async function readViewerRole(): Promise<string | null> {
+  try {
+    const session = await auth();
+    return session?.user?.role ?? null;
+  } catch (err) {
+    console.error("[browse] auth lookup failed; treating viewer as anonymous", err);
+    return null;
+  }
+}
+
 async function presignFromR2(
   bucket: "tutor-intro-videos" | "tutor-profile-photos",
   key: string | null,
@@ -108,9 +123,9 @@ export default async function BrowsePage({ searchParams }: PageProps) {
     endTime: b.endTime,
   }));
 
-  // Fetch subjects + listing in parallel. `getActiveSubjects()` is cached
-  // (per `subject-queries.ts`); the listing is per-request.
-  const [subjectRows, result] = await Promise.all([
+  // Fetch subjects + listing + viewer role in parallel. `getActiveSubjects()`
+  // is cached (per `subject-queries.ts`); the listing is per-request.
+  const [subjectRows, result, viewerRole] = await Promise.all([
     getActiveSubjects(),
     searchTutors({
       subjectSlug,
@@ -123,7 +138,11 @@ export default async function BrowsePage({ searchParams }: PageProps) {
       page,
       pageSize: DEFAULT_BROWSE_PAGE_SIZE,
     }),
+    readViewerRole(),
   ]);
+
+  // Tutors never book lessons — hide the row CTA for them.
+  const canBook = viewerRole !== "tutor";
 
   const subjectOptions: SubjectOption[] = subjectRows.map((s) => ({
     slug: s.slug,
@@ -185,6 +204,7 @@ export default async function BrowsePage({ searchParams }: PageProps) {
                 profilePhotoUrl={profilePhotoUrl}
                 introVideoUrl={introVideoUrl}
                 selectedLengthMinutes={lessonLengthMinutes}
+                canBook={canBook}
               />
             ))}
           </div>
