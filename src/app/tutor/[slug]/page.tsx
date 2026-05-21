@@ -173,9 +173,13 @@ function stripBidiOverrides(text: string): string {
 // uncaught NextAuth decode failure (rotated AUTH_SECRET, malformed
 // cookie) would 500 the public profile page. Public routes must degrade
 // to "anon visitor" rather than crash.
-async function safeAuth(): Promise<{ user?: { id?: string } | null } | null> {
+async function safeAuth(): Promise<{
+  user?: { id?: string; role?: string } | null;
+} | null> {
   try {
-    return (await auth()) as { user?: { id?: string } | null } | null;
+    return (await auth()) as {
+      user?: { id?: string; role?: string } | null;
+    } | null;
   } catch (err) {
     console.error("[tutor/[slug]/page] auth() lookup failed; degrading to anon", err);
     return null;
@@ -294,6 +298,11 @@ export default async function PublicTutorProfilePage({
   // tampered request still 404-ish bounces back.
   const viewerIsOwner =
     session?.user?.id !== undefined && session.user.id === tutor.userId;
+  // A tutor viewing ANOTHER tutor's profile gets the tutor-viewer panel
+  // instead of a booking CTA (single-role model — CLAUDE.md). When the
+  // tutor views their own profile, `viewerIsOwner` takes precedence in
+  // BookingSidebar.
+  const viewerIsTutor = session?.user?.role === "tutor";
 
   const prices = {
     45: tutor.lesson45PriceIls,
@@ -374,6 +383,7 @@ export default async function PublicTutorProfilePage({
               isSignedIn={isSignedIn}
               hasAnyAvailability={hasAnyAvailability}
               viewerIsOwner={viewerIsOwner}
+              viewerIsTutor={viewerIsTutor}
               initialDuration={selectedDuration}
             />
           </div>

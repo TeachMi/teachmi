@@ -112,6 +112,8 @@ interface MockTutorSpec {
   totalLessonsCompleted: number;
   /** Which mock-default R2 video this tutor reuses (1/2/3). */
   introVideoVariant: 1 | 2 | 3;
+  /** Surfaced in the homepage "מורים מובילים" band when true. */
+  featured: boolean;
 }
 
 const MOCK_TUTORS: MockTutorSpec[] = [
@@ -135,6 +137,7 @@ const MOCK_TUTORS: MockTutorSpec[] = [
     },
     totalLessonsCompleted: 1240,
     introVideoVariant: 1,
+    featured: true,
   },
   {
     slug: "yossi-arbiv",
@@ -156,6 +159,7 @@ const MOCK_TUTORS: MockTutorSpec[] = [
     },
     totalLessonsCompleted: 480,
     introVideoVariant: 2,
+    featured: false,
   },
   {
     slug: "reuvit-ben-david",
@@ -177,6 +181,7 @@ const MOCK_TUTORS: MockTutorSpec[] = [
     },
     totalLessonsCompleted: 2100,
     introVideoVariant: 3,
+    featured: true,
   },
   {
     slug: "daniel-margalit",
@@ -198,6 +203,7 @@ const MOCK_TUTORS: MockTutorSpec[] = [
     },
     totalLessonsCompleted: 780,
     introVideoVariant: 1,
+    featured: true,
   },
   {
     slug: "tamar-ezra",
@@ -219,6 +225,7 @@ const MOCK_TUTORS: MockTutorSpec[] = [
     },
     totalLessonsCompleted: 360,
     introVideoVariant: 2,
+    featured: false,
   },
 ];
 
@@ -408,7 +415,7 @@ async function main() {
         recommendation_visible, recommendation_headline, recommendation_sub,
         lesson_45_price_ils, hourly_price_ils, lesson_75_price_ils, lesson_90_price_ils,
         lesson_length_minutes,
-        vetting_status, is_active,
+        vetting_status, is_active, is_featured,
         intro_video_r2_key, profile_photo_r2_key,
         total_lessons_completed,
         created_by_kind, created_by_actor
@@ -419,7 +426,7 @@ async function main() {
         ${false}, ${null}, ${null},
         ${tutor.prices.lesson45}, ${tutor.prices.lesson60}, ${tutor.prices.lesson75}, ${tutor.prices.lesson90},
         ${60},
-        ${"approved"}, ${true},
+        ${"approved"}, ${true}, ${tutor.featured},
         ${videoKey}, ${photoKey},
         ${tutor.totalLessonsCompleted},
         ${"system"}, ${"mock-seed"}
@@ -427,6 +434,7 @@ async function main() {
       ON CONFLICT (user_id) DO UPDATE SET
         vetting_status = 'approved',
         is_active = true,
+        is_featured = EXCLUDED.is_featured,
         deleted_at = NULL,
         display_name = EXCLUDED.display_name,
         gender = EXCLUDED.gender,

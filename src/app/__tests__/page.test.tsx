@@ -1,28 +1,64 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-// Mock the subjects query helper. Default to the full 11 launch subjects.
+// Marketplace homepage test. Rebuilt for the landing-v2 structure
+// (2026-05-20): hero + subject grid + how-it-works + featured tutors +
+// trust strip + FAQ + tutor-recruiting band.
+
+// --- Module mocks --------------------------------------------------------
+
 const mockGetActiveSubjects = vi.fn();
 vi.mock("@/lib/db/queries/subject-queries", () => ({
   getActiveSubjects: (...args: unknown[]) => mockGetActiveSubjects(...args),
 }));
 
-// Mock the three composed components as `vi.fn() => null` spies so we can
-// inspect what props they received. Same `vi.hoisted()` + tree-walker pattern
-// Story 3.2 established in `src/app/tutor/[slug]/__tests__/page.test.tsx`.
+const mockGetFeaturedTutors = vi.fn();
+vi.mock("@/lib/db/queries/browse-queries", () => ({
+  getFeaturedTutors: (...args: unknown[]) => mockGetFeaturedTutors(...args),
+}));
+
+const mockGeneratePresignedGetUrl = vi.fn();
+vi.mock("@/lib/providers/files", () => ({
+  getFilesProvider: () => ({
+    generatePresignedGetUrl: (...args: unknown[]) =>
+      mockGeneratePresignedGetUrl(...args),
+  }),
+  isStubUrl: (url: string | null | undefined) =>
+    typeof url === "string" && url.startsWith("stub:"),
+}));
+
+// Section components mocked as null-rendering spies so the test can inspect
+// the props the page hands each one. Same `vi.hoisted()` + tree-walker
+// pattern Story 3.1/3.2 established.
 const componentSpies = vi.hoisted(() => ({
   hero: vi.fn(() => null),
-  headlineFour: vi.fn(() => null),
-  taxonomy: vi.fn(() => null),
+  subjectGrid: vi.fn(() => null),
+  howItWorks: vi.fn(() => null),
+  featuredTutors: vi.fn(() => null),
+  trustStrip: vi.fn(() => null),
+  faq: vi.fn(() => null),
+  tutorBand: vi.fn(() => null),
 }));
 
 vi.mock("../_components/HeroSection", () => ({
   HeroSection: componentSpies.hero,
 }));
-vi.mock("../_components/HeadlineFourSubjects", () => ({
-  HeadlineFourSubjects: componentSpies.headlineFour,
+vi.mock("../_components/SubjectGrid", () => ({
+  SubjectGrid: componentSpies.subjectGrid,
 }));
-vi.mock("../_components/SubjectTaxonomyGrid", () => ({
-  SubjectTaxonomyGrid: componentSpies.taxonomy,
+vi.mock("../_components/HowItWorks", () => ({
+  HowItWorks: componentSpies.howItWorks,
+}));
+vi.mock("../_components/FeaturedTutors", () => ({
+  FeaturedTutors: componentSpies.featuredTutors,
+}));
+vi.mock("../_components/TrustStrip", () => ({
+  TrustStrip: componentSpies.trustStrip,
+}));
+vi.mock("../_components/HomeFaq", () => ({
+  HomeFaq: componentSpies.faq,
+}));
+vi.mock("../_components/TutorRecruitingBand", () => ({
+  TutorRecruitingBand: componentSpies.tutorBand,
 }));
 
 // Mock AppShell — passes through children only.
@@ -59,68 +95,55 @@ const SAMPLE_SUBJECTS = [
   { id: "id-2", slug: "english", displayNameHe: "אנגלית", sortOrder: 20 },
   { id: "id-3", slug: "hebrew-lashon", displayNameHe: "עברית ולשון", sortOrder: 30 },
   { id: "id-4", slug: "psychometric", displayNameHe: "פסיכומטרי", sortOrder: 40 },
-  { id: "id-5", slug: "statistics", displayNameHe: "סטטיסטיקה", sortOrder: 50 },
-  { id: "id-6", slug: "accounting", displayNameHe: "חשבונאות", sortOrder: 60 },
-  { id: "id-7", slug: "economics", displayNameHe: "כלכלה", sortOrder: 70 },
-  { id: "id-8", slug: "computer-science", displayNameHe: "מדעי המחשב", sortOrder: 80 },
-  { id: "id-9", slug: "physics", displayNameHe: "פיזיקה", sortOrder: 90 },
-  { id: "id-10", slug: "chemistry", displayNameHe: "כימיה", sortOrder: 100 },
-  { id: "id-11", slug: "biology", displayNameHe: "ביולוגיה", sortOrder: 110 },
+];
+
+// Minimal `BrowseTutorCard`-shaped rows — the page only reads
+// `profilePhotoR2Key` and threads the whole object through.
+const SAMPLE_FEATURED = [
+  { userId: "tutor-1", displayName: "שירה כהן", profilePhotoR2Key: "mock/photo-1.jpg" },
+  { userId: "tutor-2", displayName: "דניאל מרגלית", profilePhotoR2Key: null },
 ];
 
 beforeEach(() => {
   mockGetActiveSubjects.mockReset();
-  componentSpies.hero.mockClear();
-  componentSpies.headlineFour.mockClear();
-  componentSpies.taxonomy.mockClear();
+  mockGetFeaturedTutors.mockReset();
+  mockGeneratePresignedGetUrl.mockReset();
+  for (const spy of Object.values(componentSpies)) spy.mockClear();
+  // Sensible defaults — individual tests override as needed.
+  mockGetActiveSubjects.mockResolvedValue(SAMPLE_SUBJECTS);
+  mockGetFeaturedTutors.mockResolvedValue([]);
+  mockGeneratePresignedGetUrl.mockResolvedValue("https://r2.example/photo.jpg");
 });
 
-describe("HomePage (Story 3.1)", () => {
-  it("calls getActiveSubjects once and passes the result to both HeadlineFourSubjects and SubjectTaxonomyGrid", async () => {
-    mockGetActiveSubjects.mockResolvedValue(SAMPLE_SUBJECTS);
-
+describe("HomePage — landing-v2 structure", () => {
+  it("calls getActiveSubjects once and passes the result to HeroSection + SubjectGrid", async () => {
     const tree = await HomePage();
-    const headlineProps = findPropsByType(tree, componentSpies.headlineFour);
-    const taxonomyProps = findPropsByType(tree, componentSpies.taxonomy);
-
     expect(mockGetActiveSubjects).toHaveBeenCalledTimes(1);
-    expect(headlineProps?.subjects).toBe(SAMPLE_SUBJECTS);
-    expect(taxonomyProps?.subjects).toBe(SAMPLE_SUBJECTS);
+    expect(findPropsByType(tree, componentSpies.hero)?.subjects).toBe(
+      SAMPLE_SUBJECTS,
+    );
+    expect(findPropsByType(tree, componentSpies.subjectGrid)?.subjects).toBe(
+      SAMPLE_SUBJECTS,
+    );
   });
 
-  it("renders Hero, HeadlineFour, and Taxonomy in that source order", async () => {
-    mockGetActiveSubjects.mockResolvedValue(SAMPLE_SUBJECTS);
+  it("renders all seven landing-v2 sections", async () => {
     const tree = await HomePage();
-    const heroProps = findPropsByType(tree, componentSpies.hero);
-    const headlineProps = findPropsByType(tree, componentSpies.headlineFour);
-    const taxonomyProps = findPropsByType(tree, componentSpies.taxonomy);
-    expect(heroProps).not.toBeNull();
-    expect(headlineProps).not.toBeNull();
-    expect(taxonomyProps).not.toBeNull();
+    for (const spy of Object.values(componentSpies)) {
+      expect(findPropsByType(tree, spy)).not.toBeNull();
+    }
   });
 
-  it("still renders all three components when getActiveSubjects returns an empty list", async () => {
+  it("still renders when getActiveSubjects returns an empty list", async () => {
     mockGetActiveSubjects.mockResolvedValue([]);
     const tree = await HomePage();
-    expect(findPropsByType(tree, componentSpies.hero)).not.toBeNull();
-    expect(findPropsByType(tree, componentSpies.headlineFour)?.subjects).toEqual([]);
-    expect(findPropsByType(tree, componentSpies.taxonomy)?.subjects).toEqual([]);
+    expect(findPropsByType(tree, componentSpies.hero)?.subjects).toEqual([]);
+    expect(findPropsByType(tree, componentSpies.subjectGrid)?.subjects).toEqual(
+      [],
+    );
   });
 
-  it("does NOT call auth() — homepage rendering is anon-equivalent for signed-in users", async () => {
-    // No mock for auth() is set up; the page should not import or call it.
-    // If a regression adds `auth()`, the test environment will throw because
-    // the auth module loads DB env vars eagerly. Smoke-test by running the
-    // page with no auth mock and confirming it completes.
-    mockGetActiveSubjects.mockResolvedValue(SAMPLE_SUBJECTS);
-    await expect(HomePage()).resolves.toBeTruthy();
-  });
-
-  it("degrades to empty taxonomy when getActiveSubjects throws (no DATABASE_URL / Neon outage)", async () => {
-    // Regression guard for the CI playwright webServer running `pnpm dev`
-    // without DATABASE_URL set. Previously this 500-ed the homepage; now it
-    // renders with an empty subjects array and the taxonomy band shows its
-    // "המקצועות מתעדכנים, חזרו בקרוב" empty-state copy.
+  it("degrades to an empty taxonomy when getActiveSubjects throws", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockGetActiveSubjects.mockRejectedValue(
       new Error("DATABASE_URL is required before opening a database connection."),
@@ -128,15 +151,65 @@ describe("HomePage (Story 3.1)", () => {
 
     const tree = await HomePage();
 
-    expect(findPropsByType(tree, componentSpies.hero)).not.toBeNull();
-    expect(findPropsByType(tree, componentSpies.headlineFour)?.subjects).toEqual([]);
-    expect(findPropsByType(tree, componentSpies.taxonomy)?.subjects).toEqual([]);
-    expect(errSpy).toHaveBeenCalledOnce();
+    expect(findPropsByType(tree, componentSpies.hero)?.subjects).toEqual([]);
+    expect(findPropsByType(tree, componentSpies.subjectGrid)?.subjects).toEqual(
+      [],
+    );
+    expect(errSpy).toHaveBeenCalled();
     errSpy.mockRestore();
+  });
+
+  it("passes featured tutors to FeaturedTutors, presigning photos and respecting null R2 keys", async () => {
+    mockGetFeaturedTutors.mockResolvedValue(SAMPLE_FEATURED);
+
+    const tree = await HomePage();
+    const featured = findPropsByType(tree, componentSpies.featuredTutors)
+      ?.tutors as Array<{ tutor: { userId: string }; profilePhotoUrl: string | null }>;
+
+    expect(featured).toHaveLength(2);
+    expect(featured[0]?.profilePhotoUrl).toBe("https://r2.example/photo.jpg");
+    // The second tutor has no R2 key — no presign attempt, null URL.
+    expect(featured[1]?.profilePhotoUrl).toBeNull();
+    expect(mockGeneratePresignedGetUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the featured band when a photo presign fails — per-photo degrade", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGetFeaturedTutors.mockResolvedValue(SAMPLE_FEATURED);
+    mockGeneratePresignedGetUrl.mockRejectedValue(new Error("R2 unreachable"));
+
+    const tree = await HomePage();
+    const featured = findPropsByType(tree, componentSpies.featuredTutors)
+      ?.tutors as Array<{ profilePhotoUrl: string | null }>;
+
+    // The band still renders both tutors; an unreachable photo just
+    // degrades to a null URL (the initial-letter fallback).
+    expect(featured).toHaveLength(2);
+    expect(featured.every((e) => e.profilePhotoUrl === null)).toBe(true);
+    errSpy.mockRestore();
+  });
+
+  it("omits featured tutors (empty list) when getFeaturedTutors throws", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGetFeaturedTutors.mockRejectedValue(new Error("Neon outage"));
+
+    const tree = await HomePage();
+
+    expect(findPropsByType(tree, componentSpies.featuredTutors)?.tutors).toEqual(
+      [],
+    );
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("does NOT call auth() — the homepage renders identically for signed-in and anonymous visitors", async () => {
+    // No auth mock is set up; if a regression adds `auth()` the test
+    // environment throws because the auth module loads DB env vars eagerly.
+    await expect(HomePage()).resolves.toBeTruthy();
   });
 });
 
-describe("generateMetadata (Story 3.1)", () => {
+describe("generateMetadata", () => {
   it("returns the locked TeachMe title + Hebrew description", async () => {
     const meta = await generateMetadata();
     expect(meta.title).toBe("TeachMe — מורים פרטיים בעברית");
@@ -170,7 +243,6 @@ describe("generateMetadata (Story 3.1)", () => {
 
   it("emits noindex by default — only indexes in production with ALLOW_PUBLIC_INDEX=true", async () => {
     const meta = await generateMetadata();
-    // Test env has NODE_ENV !== "production" → indexing is disabled.
     expect(meta.robots).toEqual({ index: false, follow: false });
   });
 });

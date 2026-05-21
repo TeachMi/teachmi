@@ -57,6 +57,21 @@ export async function checkoutHandoffAction(formData: FormData): Promise<void> {
     redirect("/tutor/me");
   }
 
+  // Only students book lessons. The single-role model (CLAUDE.md) means a
+  // tutor OR admin account is never a booking actor. The self-booking
+  // check above is a friendlier redirect for the tutor-books-self case;
+  // this is the load-bearing gate that bounces every signed-in
+  // non-student out of the funnel. The BrowseRow / BookingSidebar CTAs are
+  // hidden for tutors, but a hand-crafted POST with a valid sig must still
+  // bounce here, and the booking action re-checks server-side.
+  const viewerRole = session?.user?.role;
+  if (viewerRole === "tutor") {
+    redirect("/tutor/me");
+  }
+  if (viewerRole === "admin") {
+    redirect("/admin");
+  }
+
   if (session?.user?.id) {
     redirect(
       buildSignedCheckoutUrl({ tutorUserId, slotIso, duration: duration as 45 | 60 | 75 | 90 }),
