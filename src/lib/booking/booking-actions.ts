@@ -53,6 +53,17 @@ export async function submitCheckoutAction(
   if (!session?.user?.id) {
     redirect("/signin?callbackUrl=/checkout");
   }
+  // Only students book lessons — single-role model (CLAUDE.md). A tutor or
+  // admin account is never a booking actor. `checkoutHandoffAction`
+  // bounces non-students before /checkout, but a hand-crafted POST
+  // straight to this action must be rejected here too — the load-bearing
+  // gate on the write path.
+  if (session.user.role === "tutor") {
+    redirect("/tutor/me");
+  }
+  if (session.user.role === "admin") {
+    redirect("/admin");
+  }
   const userId = session.user.id;
   const realDb = getDb();
   const db = realDb as unknown as TutorDb;

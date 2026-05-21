@@ -358,6 +358,13 @@ export const tutorProfiles = pgTable(
     vettedByAdminId: uuid("vetted_by_admin_id").references(() => users.id),
     vettedAt: timestamp("vetted_at", { withTimezone: true }),
     isActive: boolean("is_active").notNull().default(false),                    // wizard complete + vetted
+    // Homepage "מורים מובילים" feature flag. Set manually — the mock-tutor
+    // seed flips it today; a future admin tool will own it. There is no
+    // self-service toggle. Read by `getFeaturedTutors()` for the marketing
+    // homepage, AND-composed with `discoverableTutorWhere()` so an
+    // un-approved featured tutor never surfaces. Partial index mirrors
+    // `idx_users_is_mock`.
+    isFeatured: boolean("is_featured").notNull().default(false),
     // Denormalized aggregates (kept eventually-consistent via app code)
     totalLessonsCompleted: integer("total_lessons_completed").notNull().default(0),
     averageRating: numeric("average_rating", { precision: 3, scale: 2 }),       // null until first rating
@@ -377,6 +384,9 @@ export const tutorProfiles = pgTable(
     priceIdx: index("idx_tutor_profiles_price").on(t.hourlyPriceIls),
     avgRatingIdx: index("idx_tutor_profiles_avg_rating").on(t.averageRating),  // nulls last for browse sort
     deletedAtIdx: index("idx_tutor_profiles_deleted_at").on(t.deletedAt),
+    isFeaturedIdx: index("idx_tutor_profiles_is_featured")
+      .on(t.isFeatured)
+      .where(sql`${t.isFeatured} = true`),
   }),
 );
 

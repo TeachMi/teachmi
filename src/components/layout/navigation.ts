@@ -15,7 +15,6 @@ export const primaryNavItems = [
   { href: "/browse", label: "חיפוש מורים" },
   { href: "/become-a-tutor", label: "הצטרפו כמורים", visibility: "anonymous" },
   { href: "/dashboard", label: "השיעורים שלי", visibility: "authenticated" },
-  { href: "/help", label: "עזרה" },
 ] satisfies NavigationLink[];
 
 /** Filters `primaryNavItems` by the viewer's auth state (see `NavigationLink.visibility`). */

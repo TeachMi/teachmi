@@ -138,20 +138,20 @@ export async function SiteHeader({ activeHref = "/", action }: SiteHeaderProps) 
           <span
             className="material-symbols-outlined text-primary-container transition group-hover:text-tertiary-accent"
             style={{
-              fontSize: "2.25rem",
-              fontVariationSettings: "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 40",
+              fontSize: "2.5rem",
+              fontVariationSettings: "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 48",
             }}
             aria-hidden="true"
           >
             school
           </span>
-          <span className="font-display text-2xl font-extrabold tracking-normal text-primary-container">
+          <span className="font-display text-3xl font-extrabold tracking-normal text-primary-container">
             TeachMe
           </span>
         </Link>
 
         <nav
-          className="order-3 flex w-full items-center gap-5 overflow-x-auto text-sm font-bold md:order-none md:w-auto md:gap-7 md:overflow-visible"
+          className="order-3 flex w-full items-center gap-5 overflow-x-auto text-base font-bold md:order-none md:w-auto md:gap-7 md:overflow-visible"
           aria-label="ניווט ראשי"
         >
           {navItems.map((item) => {
