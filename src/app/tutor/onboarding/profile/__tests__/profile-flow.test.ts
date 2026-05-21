@@ -79,7 +79,7 @@ describe("runSubmitProfile — happy path (first submit)", () => {
     if (!result.ok) return;
     expect(result.isFirstSubmit).toBe(true);
     expect(result.tutorProfileId).toBe("tp-1");
-    expect(result.redirectTo).toBe("/tutor/onboarding/agreement");
+    expect(result.redirectTo).toBe("/tutor/me");
 
     expect(db.insertedInto(tutorProfiles)).toHaveLength(1);
     expect(db.insertedInto(tutorProfiles)[0]?.value).toMatchObject({

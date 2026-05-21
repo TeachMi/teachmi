@@ -1,21 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // Tests for `checkoutHandoffAction` — the Server Action behind the booking
-// modal's "המשך" click. Focus: the role gate that keeps tutors out of the
-// booking funnel (single-role model — CLAUDE.md) plus the existing
-// student / anonymous branches.
+// modal's "המשך" click. It RETURNS the target URL (the modal does a soft
+// `router.push`, so the anon `/signup` gate is caught by the `(.)signup`
+// intercepting route as a modal) — it does NOT `redirect()`. Focus: the role
+// gate that keeps tutors/admins out of the booking funnel (single-role model
+// — CLAUDE.md) plus the student / anonymous branches.
 
 const { mockAuth } = vi.hoisted(() => ({ mockAuth: vi.fn() }));
 vi.mock("@/lib/auth/auth", () => ({ auth: mockAuth }));
-
-// The real `redirect()` throws to abort control flow; the mock mirrors that
-// so a single call to the action produces exactly one redirect target.
-const { redirectMock } = vi.hoisted(() => ({
-  redirectMock: vi.fn((url: string) => {
-    throw new Error(`REDIRECT:${url}`);
-  }),
-}));
-vi.mock("next/navigation", () => ({ redirect: redirectMock }));
 
 const { checkoutHandoffAction } = await import("../handoff-action");
 
@@ -38,20 +31,8 @@ function validBookingForm(tutorUserId = TUTOR_A): FormData {
   });
 }
 
-async function captureRedirect(fd: FormData): Promise<string> {
-  try {
-    await checkoutHandoffAction(fd);
-  } catch {
-    // redirect mock throws — swallow; the target is read from the spy.
-  }
-  const call = redirectMock.mock.calls[0];
-  if (!call) throw new Error("redirect was not called");
-  return call[0] as string;
-}
-
 beforeEach(() => {
   mockAuth.mockReset();
-  redirectMock.mockClear();
 });
 
 describe("checkoutHandoffAction — tutor role gate", () => {
@@ -60,30 +41,31 @@ describe("checkoutHandoffAction — tutor role gate", () => {
     // booking themselves; a tutor booking another tutor used to fall
     // through to /checkout.
     mockAuth.mockResolvedValue({ user: { id: TUTOR_B, role: "tutor" } });
-    expect(await captureRedirect(validBookingForm(TUTOR_A))).toBe("/tutor/me");
+    const result = await checkoutHandoffAction(validBookingForm(TUTOR_A));
+    expect(result.url).toBe("/tutor/me");
   });
 
   it("bounces a tutor booking THEMSELVES to /tutor/me", async () => {
     mockAuth.mockResolvedValue({ user: { id: TUTOR_A, role: "tutor" } });
-    expect(await captureRedirect(validBookingForm(TUTOR_A))).toBe("/tutor/me");
+    const result = await checkoutHandoffAction(validBookingForm(TUTOR_A));
+    expect(result.url).toBe("/tutor/me");
   });
 
   it("bounces a logged-in admin to /admin — only students book", async () => {
     mockAuth.mockResolvedValue({ user: { id: ADMIN, role: "admin" } });
-    expect(await captureRedirect(validBookingForm(TUTOR_A))).toBe("/admin");
+    const result = await checkoutHandoffAction(validBookingForm(TUTOR_A));
+    expect(result.url).toBe("/admin");
   });
 
   it("sends a signed-in student to /checkout", async () => {
     mockAuth.mockResolvedValue({ user: { id: STUDENT, role: "student" } });
-    expect(await captureRedirect(validBookingForm(TUTOR_A))).toMatch(
-      /^\/checkout\?/,
-    );
+    const result = await checkoutHandoffAction(validBookingForm(TUTOR_A));
+    expect(result.url).toMatch(/^\/checkout\?/);
   });
 
   it("sends an anonymous visitor to the /signup gate", async () => {
     mockAuth.mockResolvedValue(null);
-    expect(await captureRedirect(validBookingForm(TUTOR_A))).toMatch(
-      /^\/signup\?/,
-    );
+    const result = await checkoutHandoffAction(validBookingForm(TUTOR_A));
+    expect(result.url).toMatch(/^\/signup\?/);
   });
 });

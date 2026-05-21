@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getAccountHomeHref, legalLinks } from "./navigation";
+import { getAccountHomeHref, getPrimaryNavItems, legalLinks } from "./navigation";
 
 describe("legalLinks", () => {
   it("keeps the four stable legal footer paths", () => {
@@ -9,6 +9,27 @@ describe("legalLinks", () => {
       "/legal/tutor-agreement",
       "/legal/code-of-conduct",
     ]);
+  });
+});
+
+describe("getPrimaryNavItems — auth-state-gated top nav", () => {
+  it("signed-out viewers see הצטרפו כמורים but not השיעורים שלי", () => {
+    const hrefs = getPrimaryNavItems(false).map((item) => item.href);
+    expect(hrefs).toContain("/become-a-tutor");
+    expect(hrefs).not.toContain("/dashboard");
+  });
+
+  it("signed-in viewers see השיעורים שלי but not הצטרפו כמורים", () => {
+    const hrefs = getPrimaryNavItems(true).map((item) => item.href);
+    expect(hrefs).toContain("/dashboard");
+    expect(hrefs).not.toContain("/become-a-tutor");
+  });
+
+  it("ungated items appear regardless of auth state", () => {
+    for (const authed of [true, false]) {
+      const hrefs = getPrimaryNavItems(authed).map((item) => item.href);
+      expect(hrefs).toEqual(expect.arrayContaining(["/", "/browse"]));
+    }
   });
 });
 

@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   auditEvents,
   consentReceipts,
-  notificationPreferences,
+  sessions,
   users,
   verificationTokens,
 } from "../../../lib/db/schema";
 import { CURRENT_PRIVACY_POLICY_VERSION } from "../../../lib/legal/privacy-consent";
-import { CURRENT_MARKETING_OPTIN_VERSION } from "../../../lib/legal/marketing-consent";
 import { runRegister } from "../registration-flow";
 import type { DbForRegister } from "../registration-flow";
 import {
@@ -37,6 +36,7 @@ function makeDeps(overrides?: { next?: string | null; skipEmailVerification?: bo
       origin: "https://teachme.test",
       userAgent: "Mozilla/5.0 (Vitest TeachMe)",
       track: recorder.capture,
+      generateSessionToken: () => "sess-tok-fake",
       logger: silentLogger,
       skipEmailVerification: overrides?.skipEmailVerification,
     },
@@ -152,33 +152,30 @@ describe("runRegister — validation", () => {
     expect(result.state.fieldErrors?.password).toContain("10 תווים");
   });
 
-  it("returns fieldErrors when ToS is unchecked", async () => {
-    const { deps } = makeDeps();
+  // Passive consent (2026-05): terms + privacy moved from required checkboxes
+  // to a small-print notice at the submit button — submitting the form IS the
+  // acceptance, so there is nothing to field-validate. A signup with no
+  // consent fields still succeeds and still writes the privacy_policy receipt.
+  it("succeeds with no consent fields and still writes the privacy_policy receipt", async () => {
+    const { db, deps } = makeDeps();
+    db.queueSelect<{ id: string }>([]); // rate-limit count
+    db.queueReturning<{ id: string }>([{ id: "user-passive-1" }]); // user RETURNING
+    db.queueReturning<{ id: string }>([{ id: "consent-passive-1" }]); // consent RETURNING
     const form = validForm();
     form.delete("tos");
-
-    const result = await runRegister(form, deps);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.state.fieldErrors?.tos).toBeDefined();
-  });
-
-  // Story 1.21: the privacy-policy checkbox is independently required.
-  it("returns fieldErrors when privacyPolicy is unchecked", async () => {
-    const { db, deps } = makeDeps();
-    const form = validForm();
     form.delete("privacyPolicy");
 
     const result = await runRegister(form, deps);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.state.fieldErrors?.privacyPolicy).toBe(
-      "יש לאשר את מדיניות הפרטיות.",
-    );
-    // values is round-tripped so the form can re-render the checkbox state.
-    expect(result.state.values?.privacyPolicy).toBe(false);
-    // No DB writes when validation fails — not even the rate-limit attempt row.
-    expect(db.inserts).toHaveLength(0);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Submitting the form is the acceptance event — the privacy_policy
+    // consent receipt is written regardless of any checkbox.
+    expect(db.insertedInto(consentReceipts)).toHaveLength(1);
+    expect(
+      (db.insertedInto(consentReceipts)[0]?.value as { documentType: string })
+        .documentType,
+    ).toBe("privacy_policy");
   });
 
   it("returns fieldErrors when email is malformed", async () => {
@@ -382,7 +379,7 @@ describe("runRegister — email-send failure is non-fatal", () => {
 });
 
 describe("runRegister — dev-only skip-email-verification", () => {
-  it("stamps emailVerified=now() on insert, skips token + email, redirects to /signin?verified=1", async () => {
+  it("stamps emailVerified=now() on insert, skips token + email, mints a session, redirects to /dashboard", async () => {
     const { db, email, recorder, deps } = makeDeps();
     db.queueSelect<{ id: string }>([]); // rate-limit count
     db.queueReturning<{ id: string }>([{ id: "user-dev-1" }]);
@@ -395,7 +392,18 @@ describe("runRegister — dev-only skip-email-verification", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.redirectTo).toBe("/signin?verified=1");
+    // Skip path now mints a session and lands the user signed in on the
+    // dashboard (which routes a tutor onward to the onboarding wizard).
+    expect(result.redirectTo).toBe("/dashboard");
+    expect(result.session?.token).toBe("sess-tok-fake");
+    expect(result.session?.expires).toBeInstanceOf(Date);
+
+    // A sessions row was written so the action wrapper can set the cookie.
+    expect(db.insertedInto(sessions)).toHaveLength(1);
+    const sessionInsert = db.insertedInto(sessions)[0]?.value as Record<string, unknown>;
+    expect(sessionInsert.userId).toBe("user-dev-1");
+    expect(sessionInsert.sessionToken).toBe("sess-tok-fake");
+    expect(sessionInsert.expires).toBeInstanceOf(Date);
 
     // User row inserted with emailVerified set (a Date instance, value =
     // approximately now). No verification-token row, no email send.
@@ -451,262 +459,6 @@ describe("runRegister — dev-only skip-email-verification", () => {
     expect(email.sends).toHaveLength(1);
     // Story 1.21: two analytics events now — privacy_policy_accepted + signup_completed.
     expect(recorder.events).toHaveLength(2);
-  }, 30_000);
-});
-
-// Story 1.22 — Marketing-comm opt-in (FR60).
-//
-// The existing happy-path test above implicitly covers the "no opt-in"
-// default path (the validForm() fixture does NOT set `marketingOptIn`, so
-// no marketing receipt, audit, notification_preferences, or analytics event
-// is written). This describe block adds explicit coverage for:
-//  1. The opt-in path (writes all four artifacts).
-//  2. The opt-out path (explicit assertion that nothing is written).
-//  3. Consent-receipt insert failure for marketing — user still committed,
-//     no notification_preferences write, no marketing analytics event.
-//  4. notification_preferences upsert failure — user still committed,
-//     marketing receipt + audit still written, but no marketing analytics
-//     event (atomicity unit at the analytics layer per story Dev Notes).
-//
-// The targeted-failure tests use FakeDb.failOnNthInsertInto(table, n) so
-// the FIRST consent_receipts insert (privacy) succeeds while the SECOND
-// (marketing) fails. Same pattern used to target the notification_prefs
-// upsert specifically without disturbing the prior writes.
-describe("runRegister — marketing opt-in (FR60)", () => {
-  function validFormOptedIn(): FormData {
-    const form = validForm();
-    form.set("marketingOptIn", "on");
-    return form;
-  }
-
-  it("opts in writes marketing receipt + audit + notification_preferences + analytics", async () => {
-    const { db, email, recorder, deps } = makeDeps();
-    db.queueSelect<{ id: string }>([]); // rate-limit count
-    db.queueReturning<{ id: string }>([{ id: "user-opt-1" }]); // user RETURNING
-    db.queueReturning<{ id: string }>([{ id: "consent-pp-1" }]); // privacy receipt RETURNING
-    db.queueReturning<{ id: string }>([{ id: "consent-mk-1" }]); // marketing receipt RETURNING
-
-    const result = await runRegister(validFormOptedIn(), deps);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.redirectTo).toBe(
-      "/signup/verify-email-sent?email=test%40example.com",
-    );
-
-    // 4 audit rows now: signup_attempt + user_registered + privacy_policy_accepted
-    // + marketing_optin_accepted.
-    expect(db.insertedInto(auditEvents)).toHaveLength(4);
-    const auditTypes = db
-      .insertedInto(auditEvents)
-      .map((e) => (e.value as { eventType: string }).eventType);
-    expect(auditTypes).toEqual([
-      "auth.signup_attempt",
-      "auth.user_registered",
-      "auth.privacy_policy_accepted",
-      "auth.marketing_optin_accepted",
-    ]);
-
-    // Two consent receipts: privacy first, marketing second.
-    expect(db.insertedInto(consentReceipts)).toHaveLength(2);
-    const consentTypes = db
-      .insertedInto(consentReceipts)
-      .map((e) => (e.value as { documentType: string }).documentType);
-    expect(consentTypes).toEqual(["privacy_policy", "marketing_opt_in"]);
-
-    const marketingReceipt = db.insertedInto(consentReceipts)[1]?.value as Record<string, unknown>;
-    expect(marketingReceipt.userId).toBe("user-opt-1");
-    expect(marketingReceipt.documentType).toBe("marketing_opt_in");
-    expect(marketingReceipt.documentVersion).toBe(CURRENT_MARKETING_OPTIN_VERSION);
-    expect(marketingReceipt.ipAddress).toBe("10.0.0.1");
-    expect(marketingReceipt.userAgent).toBe("Mozilla/5.0 (Vitest TeachMe)");
-    expect(marketingReceipt.signature).toBeNull();
-    expect(marketingReceipt.documentSnapshot).toBeNull();
-    expect(marketingReceipt.createdByKind).toBe("user");
-    expect(marketingReceipt.createdByActor).toBe("user-opt-1");
-    expect(marketingReceipt.acceptedAt).toBeInstanceOf(Date);
-
-    // Marketing audit row shape.
-    const marketingAudit = db.insertedInto(auditEvents)[3]?.value as Record<string, unknown>;
-    expect(marketingAudit.eventType).toBe("auth.marketing_optin_accepted");
-    expect(marketingAudit.actorId).toBe("user-opt-1");
-    expect(marketingAudit.actorMeta).toBe("10.0.0.1");
-    const mkPayload = marketingAudit.payload as Record<string, unknown>;
-    expect(mkPayload.documentVersion).toBe(CURRENT_MARKETING_OPTIN_VERSION);
-    expect(mkPayload.source).toBe("signup");
-
-    // notification_preferences UPSERT — one INSERT captured by the fake.
-    // (The fake doesn't simulate the actual conflict-update branch; we only
-    // assert that the call was made with the right shape.)
-    expect(db.insertedInto(notificationPreferences)).toHaveLength(1);
-    const notifPref = db.insertedInto(notificationPreferences)[0]?.value as Record<string, unknown>;
-    expect(notifPref.userId).toBe("user-opt-1");
-    expect(notifPref.marketingEmail).toBe(true);
-    expect(notifPref.createdByKind).toBe("user");
-    expect(notifPref.createdByActor).toBe("user-opt-1");
-
-    // Analytics: privacy_policy_accepted → marketing_optin_accepted → signup_completed.
-    expect(recorder.events).toEqual([
-      {
-        event: "privacy_policy_accepted",
-        userId: "user-opt-1",
-        role: "student",
-        documentVersion: CURRENT_PRIVACY_POLICY_VERSION,
-        source: "signup",
-      },
-      {
-        event: "marketing_optin_accepted",
-        userId: "user-opt-1",
-        role: "student",
-        documentVersion: CURRENT_MARKETING_OPTIN_VERSION,
-        source: "signup",
-      },
-      { event: "signup_completed", userId: "user-opt-1", role: "student" },
-    ]);
-
-    // Verification email still sent normally.
-    expect(email.sends).toHaveLength(1);
-  }, 30_000);
-
-  it("opt-in unchecked writes no marketing receipt, no notification_preferences row, no marketing analytics", async () => {
-    const { db, email, recorder, deps } = makeDeps();
-    db.queueSelect<{ id: string }>([]); // rate-limit count
-    db.queueReturning<{ id: string }>([{ id: "user-no-opt" }]); // user RETURNING
-    db.queueReturning<{ id: string }>([{ id: "consent-pp-no-opt" }]); // privacy receipt RETURNING
-
-    // Use the default validForm() — no `marketingOptIn` field set.
-    const result = await runRegister(validForm(), deps);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-
-    // Only one consent receipt (privacy). No marketing receipt.
-    expect(db.insertedInto(consentReceipts)).toHaveLength(1);
-    expect(
-      (db.insertedInto(consentReceipts)[0]?.value as { documentType: string })
-        .documentType,
-    ).toBe("privacy_policy");
-
-    // No notification_preferences row written.
-    expect(db.insertedInto(notificationPreferences)).toHaveLength(0);
-
-    // No marketing audit row.
-    const auditTypes = db
-      .insertedInto(auditEvents)
-      .map((e) => (e.value as { eventType: string }).eventType);
-    expect(auditTypes).not.toContain("auth.marketing_optin_accepted");
-    expect(auditTypes).toEqual([
-      "auth.signup_attempt",
-      "auth.user_registered",
-      "auth.privacy_policy_accepted",
-    ]);
-
-    // No marketing analytics event.
-    const eventNames = recorder.events.map(
-      (e) => (e as { event: string }).event,
-    );
-    expect(eventNames).not.toContain("marketing_optin_accepted");
-
-    // Verification email + signup_completed still fire normally.
-    expect(email.sends).toHaveLength(1);
-    expect(eventNames).toContain("signup_completed");
-  }, 30_000);
-
-  it("marketing receipt insert failure logs and continues — user committed, no notification_preferences write, no marketing analytics", async () => {
-    const { db, email, recorder, deps } = makeDeps();
-    db.queueSelect<{ id: string }>([]); // rate-limit count
-    db.queueReturning<{ id: string }>([{ id: "user-mk-fail" }]); // user RETURNING
-    db.queueReturning<{ id: string }>([{ id: "consent-pp-mk-fail" }]); // privacy receipt RETURNING (#1 into consent_receipts)
-    // Ordering assumption: Story 1.21's privacy receipt is consent_receipts
-    // insert #1; Story 1.22's marketing receipt is #2. If a future story adds
-    // a third consent_receipts write inside `runRegister` BEFORE marketing,
-    // this assertion fails loudly — re-target the N. [Code review round 1, P-5.]
-    expect(db.insertedInto(consentReceipts)).toHaveLength(0);
-    db.failOnNthInsertInto(consentReceipts, 2);
-
-    const result = await runRegister(validFormOptedIn(), deps);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.redirectTo).toBe(
-      "/signup/verify-email-sent?email=test%40example.com",
-    );
-
-    // User is fully committed; cleanup did NOT delete the user row.
-    expect(db.insertedInto(users)).toHaveLength(1);
-    const userDeletes = db.deletes.filter((d) => d.table === users);
-    expect(userDeletes).toHaveLength(0);
-
-    // Privacy receipt landed; marketing receipt did NOT (the failing insert
-    // throws before the fake captures it).
-    expect(db.insertedInto(consentReceipts)).toHaveLength(1);
-    expect(
-      (db.insertedInto(consentReceipts)[0]?.value as { documentType: string })
-        .documentType,
-    ).toBe("privacy_policy");
-
-    // Marketing audit + notification_preferences both skipped — we don't
-    // proceed past a failed consent write.
-    expect(db.insertedInto(notificationPreferences)).toHaveLength(0);
-    const auditTypes = db
-      .insertedInto(auditEvents)
-      .map((e) => (e.value as { eventType: string }).eventType);
-    expect(auditTypes).not.toContain("auth.marketing_optin_accepted");
-
-    // Marketing analytics is NOT fired; privacy + signup_completed still are.
-    const eventNames = recorder.events.map(
-      (e) => (e as { event: string }).event,
-    );
-    expect(eventNames).not.toContain("marketing_optin_accepted");
-    expect(eventNames).toContain("privacy_policy_accepted");
-    expect(eventNames).toContain("signup_completed");
-
-    expect(email.sends).toHaveLength(1);
-  }, 30_000);
-
-  it("notification_preferences upsert failure logs and continues — user committed, marketing receipt + audit still written, no marketing analytics (atomicity unit)", async () => {
-    const { db, email, recorder, deps } = makeDeps();
-    db.queueSelect<{ id: string }>([]); // rate-limit count
-    db.queueReturning<{ id: string }>([{ id: "user-np-fail" }]); // user RETURNING
-    db.queueReturning<{ id: string }>([{ id: "consent-pp-np-fail" }]); // privacy receipt RETURNING
-    db.queueReturning<{ id: string }>([{ id: "consent-mk-np-fail" }]); // marketing receipt RETURNING
-    // Fail the FIRST (only) insert into notification_preferences.
-    db.failingTables.add(notificationPreferences);
-
-    const result = await runRegister(validFormOptedIn(), deps);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.redirectTo).toBe(
-      "/signup/verify-email-sent?email=test%40example.com",
-    );
-
-    // User committed.
-    expect(db.insertedInto(users)).toHaveLength(1);
-
-    // Both consent receipts landed (privacy + marketing).
-    expect(db.insertedInto(consentReceipts)).toHaveLength(2);
-
-    // Marketing audit DID land (it comes before the notif_prefs upsert).
-    const auditTypes = db
-      .insertedInto(auditEvents)
-      .map((e) => (e.value as { eventType: string }).eventType);
-    expect(auditTypes).toContain("auth.marketing_optin_accepted");
-
-    // notification_preferences attempted but threw — failing-tables rejects
-    // BEFORE the values are recorded in the inserts array.
-    expect(db.insertedInto(notificationPreferences)).toHaveLength(0);
-
-    // Marketing analytics is NOT fired — atomicity unit guards against
-    // dashboard divergence from notification_preferences state.
-    const eventNames = recorder.events.map(
-      (e) => (e as { event: string }).event,
-    );
-    expect(eventNames).not.toContain("marketing_optin_accepted");
-    expect(eventNames).toContain("privacy_policy_accepted");
-    expect(eventNames).toContain("signup_completed");
-
-    expect(email.sends).toHaveLength(1);
   }, 30_000);
 });
 

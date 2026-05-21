@@ -425,7 +425,11 @@ export async function runSubmitProfile(
       ok: true,
       isFirstSubmit,
       tutorProfileId,
-      redirectTo: "/tutor/onboarding/agreement",
+      // Wizard phase 3 (`/tutor/onboarding/agreement`, Story 2.2) is not built
+      // yet — redirecting there 404s the tutor mid-flow. Land them on their
+      // self-service surface instead; it renders the just-created profile
+      // (no longer null, so `/tutor/me` won't bounce back to onboarding).
+      redirectTo: "/tutor/me",
     };
   } catch (err) {
     log.error("[runSubmitProfile] sequential writes failed", err);

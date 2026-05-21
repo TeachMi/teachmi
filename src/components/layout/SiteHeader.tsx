@@ -5,7 +5,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { resolveProfilePhotoUrl } from "@/app/account/profile/upload-actions";
 import { getTutorProfileForOwner } from "@/lib/db/queries/tutor-queries";
 import { getFilesProvider, isStubUrl } from "@/lib/providers/files";
-import { getAccountHomeHref, primaryNavItems, type AccountRole } from "./navigation";
+import { getAccountHomeHref, getPrimaryNavItems, type AccountRole } from "./navigation";
 
 const HEADER_PHOTO_URL_TTL_SEC = 600;
 
@@ -72,6 +72,7 @@ function deriveAvatarName(user: { name?: string | null; email?: string | null })
 export async function SiteHeader({ activeHref = "/", action }: SiteHeaderProps) {
   const session = await tryReadSession();
   const user = session?.user;
+  const navItems = getPrimaryNavItems(Boolean(user));
 
   // Resolve the avatar's image source. Priority:
   //   1. Role-aware photo from the right R2 bucket:
@@ -153,7 +154,7 @@ export async function SiteHeader({ activeHref = "/", action }: SiteHeaderProps) 
           className="order-3 flex w-full items-center gap-5 overflow-x-auto text-base font-bold md:order-none md:w-auto md:gap-7 md:overflow-visible"
           aria-label="ניווט ראשי"
         >
-          {primaryNavItems.map((item) => {
+          {navItems.map((item) => {
             const isActive = item.href === activeHref;
 
             return (

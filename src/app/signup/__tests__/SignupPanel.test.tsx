@@ -40,14 +40,9 @@ vi.mock("@/lib/analytics", () => ({
 const SignupFormSpy = vi.hoisted(() => vi.fn(() => null));
 vi.mock("../SignupForm", () => ({ SignupForm: SignupFormSpy }));
 
-// Mock AppShell — passes through children only.
-vi.mock("@/components/layout/AppShell", () => ({
-  AppShell: ({ children }: { children: unknown }) => children,
-}));
-
 import { signSlotPayload } from "@/lib/auth/slot-signing";
 import { buildCheckoutUrl } from "@/lib/booking/urls";
-import SignupPage from "../page";
+import { SignupPanel } from "../SignupPanel";
 
 const TUTOR_ID = "11111111-2222-3333-4444-555555555555";
 const SLOT_ISO = "2026-05-20T11:00:00.000Z";
@@ -126,20 +121,20 @@ function expectedNext(): string {
   });
 }
 
-async function renderPage(
-  searchParams: Record<string, string | undefined> | undefined,
+// SignupPanel is the shared async server component behind both the full
+// `/signup` page and the `(.)signup` modal — it owns the booking-intent
+// resolution, the analytics events, and the already-signed-in redirect.
+async function renderPanel(
+  params: Record<string, string | undefined> | undefined,
 ): Promise<unknown> {
-  return await SignupPage({
-    searchParams:
-      searchParams === undefined ? undefined : Promise.resolve(searchParams),
-  });
+  return await SignupPanel({ params: params ?? {} });
 }
 
 function getSignupFormProps(tree: unknown): Record<string, unknown> | null {
   return findPropsByType(tree, SignupFormSpy);
 }
 
-describe("SignupPage — valid intent + tutor discoverable", () => {
+describe("SignupPanel — valid intent + tutor discoverable", () => {
   it("renders the banner with tutor display name and passes next to SignupForm", async () => {
     mockAuth.mockResolvedValue(null);
     mockGetDiscoverable.mockResolvedValue({
@@ -147,17 +142,16 @@ describe("SignupPage — valid intent + tutor discoverable", () => {
       displayName: TUTOR_DISPLAY_NAME,
     });
 
-    const tree = await renderPage(makeGateSearchParams());
+    const tree = await renderPanel(makeGateSearchParams());
     expect(tree).toBeDefined();
 
     const props = getSignupFormProps(tree);
     expect(props).not.toBeNull();
     expect(props?.next).toBe(expectedNext());
 
-    // Banner copy somewhere in the rendered tree.
     // IntentBanner is rendered as a component reference in the JSX tree; its
-    // body isn't expanded by the page server-component executor. Assert via
-    // the prop the page passes in.
+    // body isn't expanded by the server-component executor. Assert via the
+    // prop the panel passes in.
     expect(JSON.stringify(tree)).toContain(`"tutorDisplayName":"${TUTOR_DISPLAY_NAME}"`);
 
     // `signup_intent_book_landed` fired once with the right tutorUserId.
@@ -167,7 +161,7 @@ describe("SignupPage — valid intent + tutor discoverable", () => {
   });
 });
 
-describe("SignupPage — tampered sig", () => {
+describe("SignupPanel — tampered sig", () => {
   it("hides banner and fires signup_intent_book_tampered with reason sig_invalid", async () => {
     mockAuth.mockResolvedValue(null);
     mockGetDiscoverable.mockResolvedValue({
@@ -178,7 +172,7 @@ describe("SignupPage — tampered sig", () => {
     const params = makeGateSearchParams();
     params.sig = "AAAAAAAAAAAAAAAAAAAAAA";
 
-    const tree = await renderPage(params);
+    const tree = await renderPanel(params);
 
     const props = getSignupFormProps(tree);
     expect(props?.next).toBeUndefined();
@@ -201,7 +195,7 @@ describe("SignupPage — tampered sig", () => {
       duration: "60",
       sig: "AAAAAAAAAAAAAAAAAAAAAA",
     };
-    await renderPage(params);
+    await renderPanel(params);
 
     expect(trackedEvents).toEqual([
       { event: "signup_intent_book_tampered", reason: "missing_fields", source: "signup" },
@@ -210,7 +204,7 @@ describe("SignupPage — tampered sig", () => {
 
   it("missing intent silently degrades — no tampered event, no banner", async () => {
     mockAuth.mockResolvedValue(null);
-    const tree = await renderPage({});
+    const tree = await renderPanel({});
 
     const props = getSignupFormProps(tree);
     expect(props?.next).toBeUndefined();
@@ -219,12 +213,12 @@ describe("SignupPage — tampered sig", () => {
   });
 });
 
-describe("SignupPage — valid sig but tutor not discoverable", () => {
+describe("SignupPanel — valid sig but tutor not discoverable", () => {
   it("hides banner and fires signup_intent_book_tutor_not_found", async () => {
     mockAuth.mockResolvedValue(null);
     mockGetDiscoverable.mockResolvedValue(null);
 
-    const tree = await renderPage(makeGateSearchParams());
+    const tree = await renderPanel(makeGateSearchParams());
 
     const props = getSignupFormProps(tree);
     expect(props?.next).toBeUndefined();
@@ -240,7 +234,7 @@ describe("SignupPage — valid sig but tutor not discoverable", () => {
   });
 });
 
-describe("SignupPage — single-param callbackUrl fallback (cross-link from /signin)", () => {
+describe("SignupPanel — single-param callbackUrl fallback (cross-link from /signin)", () => {
   it("decomposes /signup?callbackUrl=<bookingstub> into gate params + renders banner", async () => {
     mockAuth.mockResolvedValue(null);
     mockGetDiscoverable.mockResolvedValue({
@@ -249,13 +243,10 @@ describe("SignupPage — single-param callbackUrl fallback (cross-link from /sig
     });
 
     const callbackUrl = expectedNext();
-    const tree = await renderPage({ callbackUrl });
+    const tree = await renderPanel({ callbackUrl });
 
     const props = getSignupFormProps(tree);
     expect(props?.next).toBe(callbackUrl);
-    // IntentBanner is rendered as a component reference in the JSX tree; its
-    // body isn't expanded by the page server-component executor. Assert via
-    // the prop the page passes in.
     expect(JSON.stringify(tree)).toContain(`"tutorDisplayName":"${TUTOR_DISPLAY_NAME}"`);
     expect(trackedEvents).toEqual([
       { event: "signup_intent_book_landed", tutorUserId: TUTOR_ID },
@@ -263,7 +254,7 @@ describe("SignupPage — single-param callbackUrl fallback (cross-link from /sig
   });
 });
 
-describe("SignupPage — already signed in", () => {
+describe("SignupPanel — already signed in", () => {
   it("redirects to next when intent valid + tutor discoverable", async () => {
     mockAuth.mockResolvedValue({ user: { id: "u-1", email: "u@x.com" } });
     mockGetDiscoverable.mockResolvedValue({
@@ -271,14 +262,14 @@ describe("SignupPage — already signed in", () => {
       displayName: TUTOR_DISPLAY_NAME,
     });
 
-    await expect(renderPage(makeGateSearchParams())).rejects.toThrow(
+    await expect(renderPanel(makeGateSearchParams())).rejects.toThrow(
       `${REDIRECT_SENTINEL}${expectedNext()}`,
     );
   });
 
   it("redirects to /dashboard when no intent params", async () => {
     mockAuth.mockResolvedValue({ user: { id: "u-1", email: "u@x.com" } });
-    await expect(renderPage({})).rejects.toThrow(
+    await expect(renderPanel({})).rejects.toThrow(
       `${REDIRECT_SENTINEL}/dashboard`,
     );
   });
@@ -288,7 +279,7 @@ describe("SignupPage — already signed in", () => {
     const params = makeGateSearchParams();
     params.sig = "AAAAAAAAAAAAAAAAAAAAAA";
 
-    await expect(renderPage(params)).rejects.toThrow(
+    await expect(renderPanel(params)).rejects.toThrow(
       `${REDIRECT_SENTINEL}/dashboard`,
     );
     expect(trackedEvents).toContainEqual({
@@ -299,12 +290,12 @@ describe("SignupPage — already signed in", () => {
   });
 });
 
-describe("SignupPage — DB outage during tutor lookup", () => {
+describe("SignupPanel — DB outage during tutor lookup", () => {
   it("degrades to no-banner signup when getDiscoverableTutorByUserId throws", async () => {
     mockAuth.mockResolvedValue(null);
     mockGetDiscoverable.mockRejectedValue(new Error("Neon unreachable"));
 
-    const tree = await renderPage(makeGateSearchParams());
+    const tree = await renderPanel(makeGateSearchParams());
 
     const props = getSignupFormProps(tree);
     expect(props?.next).toBeUndefined();

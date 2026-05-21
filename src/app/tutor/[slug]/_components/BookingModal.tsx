@@ -21,8 +21,9 @@
 //     Signed-in → inline "בקרוב" toast for closed-beta; Story 4.3
 //     will replace with the real booking action.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { checkoutHandoffAction } from "@/lib/booking/handoff-action";
 import { formatIlsCurrency } from "@/lib/hebrew/format";
@@ -97,6 +98,27 @@ export function BookingModal({
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
   const [activePeriod, setActivePeriod] = useState<PeriodKey>("afternoon");
   const [selectedSlotIso, setSelectedSlotIso] = useState<string | null>(null);
+
+  const router = useRouter();
+  const [handoffPending, startHandoff] = useTransition();
+
+  // "המשך" — hand off to the server action (it signs the slot payload
+  // server-side), then do a SOFT navigation to the URL it returns. The soft
+  // `router.push` lets the `(.)signup` intercepting route open the anon gate
+  // as a modal; signed-in users land on /checkout. The booking modal closes
+  // so the two overlays don't stack.
+  function handleContinue() {
+    if (!selectedSlotIso) return;
+    const formData = new FormData();
+    formData.set("tutorUserId", tutorUserId);
+    formData.set("slotIso", selectedSlotIso);
+    formData.set("duration", String(duration));
+    startHandoff(async () => {
+      const { url } = await checkoutHandoffAction(formData);
+      router.push(url);
+      onClose();
+    });
+  }
 
   // Per-render derived-state: detect open transition (false→true) and
   // reset transient selection state in render rather than an effect.
@@ -553,20 +575,15 @@ export function BookingModal({
             </p>
           </div>
         ) : (
-          <form action={checkoutHandoffAction} className="p-4 border-t border-linen-border bg-white">
-            <input type="hidden" name="tutorUserId" value={tutorUserId} />
-            <input
-              type="hidden"
-              name="slotIso"
-              value={selectedSlotIso ?? ""}
-            />
-            <input type="hidden" name="duration" value={duration} />
+          <div className="p-4 border-t border-linen-border bg-white">
             <Button
-              type="submit"
+              type="button"
               variant="primary"
               size="lg"
               fullWidth
-              disabled={!selectedSlotIso}
+              disabled={!selectedSlotIso || handoffPending}
+              loading={handoffPending}
+              onClick={handleContinue}
             >
               המשך
             </Button>
@@ -578,7 +595,7 @@ export function BookingModal({
             <p className="text-[10px] text-secondary text-center mt-2">
               תשלום פיקטיבי — לא יבוצע חיוב כספי בפועל
             </p>
-          </form>
+          </div>
         )}
       </div>
     </div>

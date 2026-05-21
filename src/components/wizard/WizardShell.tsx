@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { logoutAction } from "@/components/layout/logout-action";
 
 /**
  * Five-phase wizard stepper shared across the tutor-onboarding routes.
@@ -40,12 +41,19 @@ export function WizardShell({ currentPhase, children }: WizardShellProps) {
               TeachMe
             </span>
           </Link>
-          <Link
-            href="/dashboard"
-            className="text-sm text-on-surface-variant transition hover:text-primary-container"
-          >
-            יציאה מהאשף
-          </Link>
+          {/* A tutor mid-onboarding has no in-app destination that doesn't
+              bounce straight back to the wizard (/dashboard → /tutor/me →
+              here, since there's no profile row yet). So "exit" logs out —
+              drafts are saved, and signing back in resumes the wizard. This
+              is also the only reachable logout for a profile-less tutor. */}
+          <form action={logoutAction}>
+            <button
+              type="submit"
+              className="cursor-pointer text-sm text-on-surface-variant transition hover:text-primary-container"
+            >
+              התנתקות
+            </button>
+          </form>
         </div>
       </header>
 

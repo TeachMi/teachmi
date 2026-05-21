@@ -8,14 +8,15 @@
 // while the server verified with the real secret — every "Continue"
 // click failed with sig_invalid.
 //
-// The action takes (tutorUserId, slotIso, duration), validates shape,
-// looks up the session, and redirects:
+// The action validates shape, looks up the session, and RETURNS the target
+// URL for the client to navigate to. It deliberately does NOT `redirect()`:
+// the caller does a soft `router.push`, so a soft navigation to the anon
+// `/signup` gate is caught by the `(.)signup` intercepting route and shown
+// as a modal instead of a full-page load.
 //   - signed-in → /checkout?...&sig=<real>
 //   - anon      → /signup?...&intent=book&...&sig=<real>
-//
-// `redirect()` throws — control flow never returns.
+//   - bad input → the tutor page (or home)
 
-import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth/auth";
 import { buildGateSignupUrl, buildSignedCheckoutUrl } from "./urls";
 
@@ -27,7 +28,14 @@ function coerceDuration(value: string): 45 | 60 | 75 | 90 | null {
   return n === 45 || n === 60 || n === 75 || n === 90 ? n : null;
 }
 
-export async function checkoutHandoffAction(formData: FormData): Promise<void> {
+export interface CheckoutHandoffResult {
+  /** Target the caller should `router.push` to. */
+  url: string;
+}
+
+export async function checkoutHandoffAction(
+  formData: FormData,
+): Promise<CheckoutHandoffResult> {
   const tutorUserId = String(formData.get("tutorUserId") ?? "");
   const slotIso = String(formData.get("slotIso") ?? "");
   const durationRaw = String(formData.get("duration") ?? "");
@@ -36,25 +44,24 @@ export async function checkoutHandoffAction(formData: FormData): Promise<void> {
   // Shape validation. Bail back to the tutor page (or home) on bad input
   // rather than throwing — a tampered hidden field shouldn't 500 the app.
   if (!UUID_REGEX.test(tutorUserId)) {
-    redirect("/");
+    return { url: "/" };
   }
   if (!ISO_UTC_REGEX.test(slotIso) || Number.isNaN(Date.parse(slotIso))) {
-    redirect(`/tutor/${tutorUserId}`);
+    return { url: `/tutor/${tutorUserId}` };
   }
   if (duration === null) {
-    redirect(`/tutor/${tutorUserId}`);
+    return { url: `/tutor/${tutorUserId}` };
   }
 
   const session = await auth();
 
   // Defense-in-depth: if a tutor managed to reach this action with their
-  // own user_id as `tutorUserId` (the BookingSidebar shouldn't render
-  // the form when `viewerIsOwner`, but a tampered hidden field bypasses
-  // that), bounce them back to /tutor/me. The booking action itself
-  // also rejects this — this is just a friendlier redirect than a form
-  // error on the next page.
+  // own user_id as `tutorUserId` (the BookingSidebar shouldn't render the
+  // form when `viewerIsOwner`, but a tampered hidden field bypasses that),
+  // bounce them back to /tutor/me. The booking action itself also rejects
+  // this — this is just a friendlier redirect than a form error.
   if (session?.user?.id && session.user.id === tutorUserId) {
-    redirect("/tutor/me");
+    return { url: "/tutor/me" };
   }
 
   // Only students book lessons. The single-role model (CLAUDE.md) means a
@@ -66,18 +73,14 @@ export async function checkoutHandoffAction(formData: FormData): Promise<void> {
   // bounce here, and the booking action re-checks server-side.
   const viewerRole = session?.user?.role;
   if (viewerRole === "tutor") {
-    redirect("/tutor/me");
+    return { url: "/tutor/me" };
   }
   if (viewerRole === "admin") {
-    redirect("/admin");
+    return { url: "/admin" };
   }
 
   if (session?.user?.id) {
-    redirect(
-      buildSignedCheckoutUrl({ tutorUserId, slotIso, duration: duration as 45 | 60 | 75 | 90 }),
-    );
+    return { url: buildSignedCheckoutUrl({ tutorUserId, slotIso, duration }) };
   }
-  redirect(
-    buildGateSignupUrl({ tutorUserId, slotIso, duration: duration as 45 | 60 | 75 | 90 }),
-  );
+  return { url: buildGateSignupUrl({ tutorUserId, slotIso, duration }) };
 }
