@@ -176,6 +176,7 @@ export async function runRegister(
   const { db, emailProvider, ip, origin, track } = deps;
   let userId: string;
   let token: string;
+  let verificationCode: string | null = null;
   // Hoisted so the post-tx block (email send + redirect) can branch on it.
   // Sourced from `deps.skipEmailVerification` which the action wrapper feeds
   // via `isEmailVerificationSkipEnabled()` (production-guarded).
@@ -278,6 +279,7 @@ export async function runRegister(
       } else {
         const generated = generateVerificationToken();
         token = generated.token;
+        verificationCode = generated.code;
         await db.insert(verificationTokens).values({
           identifier: email,
           token: generated.token,
@@ -324,6 +326,7 @@ export async function runRegister(
         templateId: EMAIL_TEMPLATES.AUTH_VERIFY_EMAIL.templateId,
         payload: {
           verifyUrl: buildVerificationUrl(token, origin, { next: deps.next }),
+          verificationCode,
           expiresInMinutes: 15,
           displayName: name,
         },

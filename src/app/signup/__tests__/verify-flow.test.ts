@@ -5,8 +5,8 @@ import {
   users,
   verificationTokens,
 } from "../../../lib/db/schema";
-import { runVerify } from "../verify-flow";
-import type { DbForVerify } from "../verify-flow";
+import { runVerify, runVerifyCode } from "../verify-flow";
+import type { DbForVerify, DbForVerifyCode } from "../verify-flow";
 import { FakeDb, TrackRecorder, silentLogger } from "./fake-db";
 
 function makeDeps(now: Date = new Date("2026-05-18T10:00:00.000Z")) {
@@ -21,6 +21,18 @@ function makeDeps(now: Date = new Date("2026-05-18T10:00:00.000Z")) {
       now: () => now,
       track: recorder.capture,
       logger: silentLogger,
+    },
+  };
+}
+
+function makeCodeDeps(now: Date = new Date("2026-05-18T10:00:00.000Z")) {
+  const { db, recorder, deps } = makeDeps(now);
+  return {
+    db,
+    recorder,
+    deps: {
+      ...deps,
+      db: db as unknown as DbForVerifyCode,
     },
   };
 }
@@ -210,5 +222,64 @@ describe("runVerify — session creation fails post-verify", () => {
     expect(recorder.events).toEqual([
       { event: "email_verified", userId: "user-1", role: "student" },
     ]);
+  });
+});
+
+describe("runVerifyCode", () => {
+  it("matches code against the user's active token, consumes that full token, and creates a session", async () => {
+    const { db, recorder, deps } = makeCodeDeps();
+    const expires = new Date("2026-05-18T10:14:00.000Z");
+    const token = "123456_secureOpaqueToken";
+
+    db.queueSelect([{ identifier: "user@example.com", token, expires }]);
+    db.queueReturning([{ identifier: "user@example.com", expires }]);
+    db.queueReturning([{ id: "user-1", role: "student" }]);
+
+    const result = await runVerifyCode(
+      { email: "USER@Example.com", code: "123456" },
+      deps,
+    );
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.userId).toBe("user-1");
+    expect(db.deletes).toHaveLength(1);
+    expect(db.updatedAt(users)).toHaveLength(1);
+    expect(db.insertedInto(sessions)).toHaveLength(1);
+    expect(recorder.events).toEqual([
+      { event: "email_verified", userId: "user-1", role: "student" },
+    ]);
+  });
+
+  it("returns missing without touching the DB when the submitted code is malformed", async () => {
+    const { db, deps } = makeCodeDeps();
+
+    const result = await runVerifyCode(
+      { email: "user@example.com", code: "12a456" },
+      deps,
+    );
+
+    expect(result).toEqual({ kind: "error", reason: "missing" });
+    expect(db.deletes).toHaveLength(0);
+    expect(db.inserts).toHaveLength(0);
+  });
+
+  it("returns not_found and does not consume a token when the code does not match the email", async () => {
+    const { db, deps } = makeCodeDeps();
+    const expires = new Date("2026-05-18T10:14:00.000Z");
+
+    db.queueSelect([
+      { identifier: "user@example.com", token: "654321_secureOpaqueToken", expires },
+    ]);
+
+    const result = await runVerifyCode(
+      { email: "user@example.com", code: "123456" },
+      deps,
+    );
+
+    expect(result).toEqual({ kind: "error", reason: "not_found" });
+    expect(db.deletes).toHaveLength(0);
+    expect(db.updatedAt(users)).toHaveLength(0);
+    expect(db.insertedInto(sessions)).toHaveLength(0);
   });
 });

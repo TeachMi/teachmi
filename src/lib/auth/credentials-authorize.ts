@@ -56,6 +56,11 @@ export interface AuthorizeInput {
   password: string;
 }
 
+export type CredentialsCheckResult =
+  | { kind: "authorized"; user: AuthorizedUser }
+  | { kind: "unverified"; email: string }
+  | { kind: "invalid" };
+
 export async function authorizeWithCredentials(
   input: AuthorizeInput,
   deps: AuthorizeDeps,
@@ -100,5 +105,56 @@ export async function authorizeWithCredentials(
     role: isAppRole(row.role) ? row.role : "student",
     emailVerified: row.emailVerified,
     image: row.image,
+  };
+}
+
+export async function checkCredentialsForSignin(
+  input: AuthorizeInput,
+  deps: AuthorizeDeps,
+): Promise<CredentialsCheckResult> {
+  const emailRaw = typeof input.email === "string" ? input.email.trim() : "";
+  const password = typeof input.password === "string" ? input.password : "";
+
+  if (!emailRaw || !password) return { kind: "invalid" };
+  if (!isValidEmailShape(emailRaw)) return { kind: "invalid" };
+
+  const email = emailRaw.toLowerCase();
+
+  const rows = await deps.db
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      role: users.role,
+      emailVerified: users.emailVerified,
+      image: users.image,
+      passwordHash: users.passwordHash,
+      deletedAt: users.deletedAt,
+    })
+    .from(users)
+    .where(eq(users.email, email));
+
+  const row = rows[0];
+  if (!row) return { kind: "invalid" };
+  if (row.deletedAt !== null) return { kind: "invalid" };
+  if (!row.passwordHash) return { kind: "invalid" };
+
+  const ok = await deps.verifyPassword(password, row.passwordHash);
+  if (!ok) return { kind: "invalid" };
+
+  if (!row.emailVerified) {
+    return { kind: "unverified", email: row.email };
+  }
+
+  return {
+    kind: "authorized",
+    user: {
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      role: isAppRole(row.role) ? row.role : "student",
+      emailVerified: row.emailVerified,
+      image: row.image,
+    },
   };
 }

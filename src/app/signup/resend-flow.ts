@@ -76,6 +76,7 @@ export async function runResend(
 
   let outcome: "sent" | "already_verified" | "no_account" | "rate_limited";
   let token: string | null = null;
+  let verificationCode: string | null = null;
 
   try {
     const windowStart = rateLimitWindowStart();
@@ -127,6 +128,7 @@ export async function runResend(
 
         const generated = generateVerificationToken();
         token = generated.token;
+        verificationCode = generated.code;
         await db.insert(verificationTokens).values({
           identifier: email,
           token: generated.token,
@@ -154,6 +156,7 @@ export async function runResend(
         templateId: EMAIL_TEMPLATES.AUTH_VERIFY_EMAIL.templateId,
         payload: {
           verifyUrl: buildVerificationUrl(token, origin, { next: deps.next }),
+          verificationCode,
           expiresInMinutes: 15,
         },
       });

@@ -1,5 +1,6 @@
 import { getProviderName } from "../../feature-flags/env-flags";
 import { getDb } from "../../db/client";
+import { ResendEmailProvider } from "./resend";
 import { StubEmailProvider, type OutboxDb } from "./stub";
 import type { EmailProvider } from "./types";
 
@@ -25,7 +26,5 @@ export function getEmailProvider(): EmailProvider {
     return new StubEmailProvider(adapter);
   }
 
-  throw new Error(
-    `EmailProvider "${name}" is not yet implemented. Resend (transactional emails) lands in Story 6.1.`,
-  );
+  return new ResendEmailProvider();
 }

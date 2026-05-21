@@ -120,7 +120,8 @@ describe("runRegister — happy path", () => {
 
     expect(email.sends).toHaveLength(1);
     expect(email.sends[0]?.toAddress).toBe("test@example.com");
-    expect(email.sends[0]?.templateId).toBe("auth-verify-email");
+    expect(email.sends[0]?.templateId).toBe("account-verification");
+    expect(email.sends[0]?.payload.verificationCode).toMatch(/^[0-9]{6}$/);
     expect(email.sends[0]?.payload.verifyUrl).toMatch(
       /^https:\/\/teachme\.test\/signup\/verify\?token=/,
     );

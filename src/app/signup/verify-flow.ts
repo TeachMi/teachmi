@@ -7,6 +7,7 @@ import { eq, sql } from "drizzle-orm";
 import { auditEvents, sessions, users, verificationTokens } from "../../lib/db/schema";
 import { toAuditEventValues } from "../../lib/db/audit";
 import { evaluateTokenValidity } from "../../lib/auth/email-verification";
+import { isValidEmailShape } from "../../lib/auth/email-validation";
 import { isAppRole, type AppRole } from "../../lib/auth/roles";
 import type { AnalyticsEvent } from "../../lib/analytics";
 
@@ -38,11 +39,24 @@ interface DeleteChain {
 interface InsertChain {
   values(value: unknown): Promise<unknown>;
 }
+interface SelectChain<TRow> {
+  from(table: unknown): { where(condition: unknown): Promise<TRow[]> };
+}
+
+interface VerificationCodeTokenRow {
+  identifier: string;
+  token: string;
+  expires: Date;
+}
 
 export interface DbForVerify {
   delete(table: unknown): DeleteChain;
   update(table: unknown): UpdateChain;
   insert(table: unknown): InsertChain;
+}
+
+export interface DbForVerifyCode extends DbForVerify {
+  select<TRow = VerificationCodeTokenRow>(cols: unknown): SelectChain<TRow>;
 }
 
 export interface VerifyDeps {
@@ -51,6 +65,11 @@ export interface VerifyDeps {
   now?: () => Date;
   track: (event: AnalyticsEvent) => void;
   logger?: { error: (message: string, err?: unknown) => void };
+}
+
+export interface VerifyCodeInput {
+  email: string;
+  code: string;
 }
 
 export async function runVerify(
@@ -167,4 +186,42 @@ export async function runVerify(
     });
     return { kind: "verified_no_session", userId: verifiedUserId, role: verifiedRole };
   }
+}
+
+export async function runVerifyCode(
+  input: VerifyCodeInput,
+  deps: Omit<VerifyDeps, "db"> & { db: DbForVerifyCode },
+): Promise<VerifyFlowResult> {
+  const log = deps.logger ?? { error: (message, err) => console.error(message, err) };
+  const emailRaw = input.email.trim();
+  const email = emailRaw.toLowerCase();
+  const code = input.code.trim();
+
+  if (!isValidEmailShape(emailRaw) || !/^[0-9]{6}$/.test(code)) {
+    return { kind: "error", reason: "missing" };
+  }
+
+  let rows: VerificationCodeTokenRow[];
+  try {
+    rows = await deps.db
+      .select({
+        identifier: verificationTokens.identifier,
+        token: verificationTokens.token,
+        expires: verificationTokens.expires,
+      })
+      .from(verificationTokens)
+      .where(eq(verificationTokens.identifier, email));
+  } catch (err) {
+    log.error("[runVerifyCode] token lookup failed", err);
+    return { kind: "error", reason: "internal" };
+  }
+
+  const matched = rows.find(
+    (row) => row.token === code || row.token.startsWith(`${code}_`),
+  );
+  if (!matched) {
+    return { kind: "error", reason: "not_found" };
+  }
+
+  return runVerify(matched.token, deps);
 }

@@ -9,10 +9,12 @@ import {
 describe("generateVerificationToken", () => {
   it("emits base64url chars only and expires 15 minutes in the future", () => {
     const now = new Date("2026-05-18T10:00:00.000Z");
-    const { token, expires } = generateVerificationToken(now);
+    const { token, code, expires } = generateVerificationToken(now);
 
     expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(token.length).toBeGreaterThanOrEqual(43);
+    expect(code).toMatch(/^[0-9]{6}$/);
+    expect(token.startsWith(`${code}_`)).toBe(true);
     expect(expires.getTime() - now.getTime()).toBe(VERIFICATION_TOKEN_TTL_MINUTES * 60 * 1000);
   });
 

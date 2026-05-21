@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { auditEvents, sessions, users } from "../../../lib/db/schema";
+import { auditEvents, sessions } from "../../../lib/db/schema";
 import { runSignin, type DbForSignin } from "../signin-flow";
 import {
   FakeDb,
@@ -180,6 +180,34 @@ describe("runSignin — happy path", () => {
 });
 
 describe("runSignin — wrong credentials", () => {
+  it("redirects an unverified user with a correct password to the verification-code prompt", async () => {
+    const { db, recorder, verifyCalls, deps } = makeDeps({
+      verifyResult: true,
+      callbackUrl: "/dashboard?tab=lessons",
+    });
+    db.queueSelect([]); // rate-limit count
+    db.queueSelect([userRow({ emailVerified: null })]); // user lookup happens, then verify succeeds
+
+    const result = await runSignin(validForm(), deps);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.redirectTo).toBe(
+      "/signup/verify-email-sent?email=verified%40example.com&next=%2Fdashboard%3Ftab%3Dlessons",
+    );
+    expect(result.state.formError).toBeUndefined();
+    expect(verifyCalls).toEqual([["hello12345", "$argon2id$v=19$m=19456,t=2,p=1$abc$def"]]);
+
+    // This is not a wrong-password failure: no failed audit, no session, no PostHog failure event.
+    const auditRows = db.insertedInto(auditEvents);
+    expect(auditRows).toHaveLength(1);
+    expect((auditRows[0]?.value as { eventType: string }).eventType).toBe(
+      "auth.signin_attempt",
+    );
+    expect(db.insertedInto(sessions)).toHaveLength(0);
+    expect(recorder.events).toEqual([]);
+  });
+
   it("returns generic error + writes auth.signin_failed + fires signin_failed PostHog when verifyPassword returns false", async () => {
     const { db, recorder, deps } = makeDeps({ verifyResult: false });
     db.queueSelect([]); // rate-limit count
