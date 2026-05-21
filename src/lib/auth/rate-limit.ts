@@ -16,6 +16,7 @@ export const UNKNOWN_IP = "unknown";
 export type AuthRateLimitAction =
   | "signup"
   | "signup_resend"
+  | "signup_verify_code"
   | "signin"
   | "password_reset_request"
   | "password_reset_confirm";
@@ -23,6 +24,7 @@ export type AuthRateLimitAction =
 export const RATE_LIMIT_EVENT_TYPES: Record<AuthRateLimitAction, string> = {
   signup: "auth.signup_attempt",
   signup_resend: "auth.signup_resend_attempt",
+  signup_verify_code: "auth.signup_verify_code_attempt",
   signin: "auth.signin_attempt",
   password_reset_request: "auth.password_reset_request_attempt",
   password_reset_confirm: "auth.password_reset_confirm_attempt",

@@ -37,7 +37,7 @@ import { auditEvents, sessions } from "../../lib/db/schema";
 import { toAuditEventValues } from "../../lib/db/audit";
 import { isValidEmailShape } from "../../lib/auth/email-validation";
 import {
-  authorizeWithCredentials,
+  checkCredentialsForSignin,
   type DbForAuthorize,
 } from "../../lib/auth/credentials-authorize";
 import { verifyPassword } from "../../lib/auth/password-hashing";
@@ -57,7 +57,7 @@ import type { SignInActionState } from "./signin-state";
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export type SigninFlowResult =
-  | { ok: false; state: SignInActionState }
+  | { ok: false; state: SignInActionState; redirectTo?: string }
   | {
       ok: true;
       redirectTo: string;
@@ -94,6 +94,12 @@ export interface SigninDeps {
 const GENERIC_INVALID_CREDS_HE = "אימייל או סיסמה לא נכונים.";
 const RATE_LIMITED_HE = "יותר מדי ניסיונות. נסו שוב בעוד דקה.";
 const UNEXPECTED_HE = "אירעה שגיאה. נסו שוב בעוד דקה.";
+
+function buildVerificationPromptUrl(email: string, callbackUrl: string | null): string {
+  const base = `/signup/verify-email-sent?email=${encodeURIComponent(email)}`;
+  const safeNext = getSafeCallbackUrl(callbackUrl, "");
+  return safeNext ? `${base}&next=${encodeURIComponent(safeNext)}` : base;
+}
 
 export async function runSignin(
   formData: FormData,
@@ -178,9 +184,9 @@ export async function runSignin(
   }
 
   // -- authorize: pure check against users.email + verifyPassword --
-  let user: Awaited<ReturnType<typeof authorizeWithCredentials>>;
+  let credentials: Awaited<ReturnType<typeof checkCredentialsForSignin>>;
   try {
-    user = await authorizeWithCredentials(
+    credentials = await checkCredentialsForSignin(
       { email, password },
       { db, verifyPassword: verify },
     );
@@ -196,7 +202,18 @@ export async function runSignin(
     };
   }
 
-  if (!user) {
+  if (credentials.kind === "unverified") {
+    return {
+      ok: false,
+      redirectTo: buildVerificationPromptUrl(credentials.email, deps.callbackUrl),
+      state: {
+        ok: false,
+        values: { email: emailRaw },
+      },
+    };
+  }
+
+  if (credentials.kind === "invalid") {
     // Wrong credentials path. Write the failed audit row (best-effort — do not
     // bubble a write failure to the user as an "unexpected" error; the auth
     // outcome is already determined).
@@ -231,6 +248,8 @@ export async function runSignin(
       },
     };
   }
+
+  const user = credentials.user;
 
   // -- success: mint a session token, insert sessions row, write audit --
   // Mirrors src/app/signup/verify/route.ts so that a Credentials signin and

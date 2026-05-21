@@ -1,17 +1,21 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 
 export const VERIFICATION_TOKEN_TTL_MINUTES = 15;
 const VERIFICATION_TOKEN_TTL_MS = VERIFICATION_TOKEN_TTL_MINUTES * 60 * 1000;
 
 export interface GeneratedVerificationToken {
+  /** Six-digit human code shown in the verification email. */
+  code: string;
+  /** Opaque token used by the email link and persisted in verification_tokens. */
   token: string;
   expires: Date;
 }
 
 export function generateVerificationToken(now: Date = new Date()): GeneratedVerificationToken {
-  const token = randomBytes(32).toString("base64url");
+  const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
+  const token = `${code}_${randomBytes(32).toString("base64url")}`;
   const expires = new Date(now.getTime() + VERIFICATION_TOKEN_TTL_MS);
-  return { token, expires };
+  return { code, token, expires };
 }
 
 export type TokenValidity =
