@@ -76,19 +76,22 @@ export function SubjectGrid({ subjects }: SubjectGridProps) {
           המקצועות הפופולריים
         </h2>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Phone (base) shows a compact 3-up grid of small icon tiles
+            (founder direction 2026-05-21); `sm:` and up keep the original
+            larger cards unchanged. */}
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-4">
           {shown.map((subject) => {
             const icon = SUBJECT_ICONS[subject.slug] ?? "school";
             return (
               <Link
                 key={subject.id}
                 href={`/browse?subject=${subject.slug}`}
-                className="group rounded-2xl border border-linen-border bg-surface-lowest p-5 text-start transition-all hover:border-primary-fixed-dim hover:shadow-lg"
+                className="group rounded-xl border border-linen-border bg-surface-lowest p-3 text-center transition-all hover:border-primary-fixed-dim hover:shadow-lg sm:rounded-2xl sm:p-5 sm:text-start"
               >
-                <span className="material-symbols-outlined mb-2 block text-3xl text-primary-container transition-colors group-hover:text-tertiary-accent">
+                <span className="material-symbols-outlined mx-auto mb-1 block text-2xl text-primary-container transition-colors group-hover:text-tertiary-accent sm:mx-0 sm:mb-2 sm:text-3xl">
                   {icon}
                 </span>
-                <h3 className="font-display text-lg font-bold text-on-surface">
+                <h3 className="font-display text-xs font-bold leading-tight text-on-surface sm:text-lg">
                   {subject.displayNameHe}
                 </h3>
               </Link>

@@ -142,8 +142,16 @@ export function HeroSearch({ subjects }: HeroSearchProps) {
 
 // One field = the Select on its own, 48px tall, filling its share of the
 // row. The visible label is the selected value itself.
+//
+// On phone the form stacks vertically: each field gets its own border so
+// it reads as a distinct tappable control alongside the full-width submit
+// button — three consistent blocks instead of two borderless text rows.
+// From `sm:` up the row is inline and the fields are borderless (the white
+// form is the frame).
 function HeroSearchField({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-12 min-w-0 flex-1 items-center px-3">{children}</div>
+    <div className="flex h-12 min-w-0 flex-1 items-center rounded-lg border border-linen-border px-3 sm:rounded-none sm:border-0">
+      {children}
+    </div>
   );
 }
